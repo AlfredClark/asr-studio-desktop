@@ -12,6 +12,7 @@
 | 改 Rust 命令 / 前后端契约 / 重生成绑定                     | `docs/WORKFLOW.md` 的「命令契约流程」               |
 | 改前后端文案 / 语言切换                                    | `docs/WORKFLOW.md` 的「国际化流程」                 |
 | 动配置项 / schema 迁移 / 崩溃兜底 / locale 数据流 / 初始化 | `docs/ARCHITECTURE.md` 的「设计不变量与原因」       |
+| 长耗时命令（模型下载 / 语音识别）                          | `docs/ARCHITECTURE.md` 的「长任务约定」             |
 | 改外观 / 配色主题 / 布局 / 新页面视觉                      | `DESIGN.md`（视觉系统）+ `PRODUCT.md`（产品上下文） |
 | 跑命令 / 依赖升级 / 构建产物 / 验证级别                    | `docs/WORKFLOW.md`                                  |
 | 发版 / CI / 提交钩子细节                                   | `docs/WORKFLOW.md` 的「CI」与「验证矩阵」           |
