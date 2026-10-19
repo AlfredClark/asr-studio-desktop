@@ -7,6 +7,7 @@
 #![allow(clippy::unnecessary_wraps)]
 
 pub mod config;
+pub mod shortcut;
 pub mod system;
 pub mod updater;
 
@@ -19,6 +20,7 @@ macro_rules! collect_commands {
             $crate::commands::config::get_config,
             $crate::commands::config::reset_config,
             $crate::commands::config::update_config,
+            $crate::commands::shortcut::is_shortcut_registered,
             $crate::commands::system::get_system_info,
             $crate::commands::system::quit_app,
             $crate::commands::system::open_log_dir,

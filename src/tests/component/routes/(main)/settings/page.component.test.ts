@@ -21,8 +21,8 @@ if (typeof ResizeObserver === "undefined") {
   } as unknown as typeof ResizeObserver;
 }
 
-// 纯替身：三个设置分组依赖的外部状态（后端配置、运行时语言、外观、主题、系统字体、提示）全部 mock，
-// 只验证设置页的组装——标题、通用/外观两分组、重置入口与开关接线。
+// 纯替身：四个设置分组依赖的外部状态（后端配置、运行时语言、外观、主题、系统字体、提示）全部 mock，
+// 只验证设置页的组装——标题、通用/外观/快捷键三分组、重置入口与开关接线。
 const updateConfigMock = vi.hoisted(() => vi.fn());
 const resetConfigMock = vi.hoisted(() => vi.fn());
 const setLocaleMock = vi.hoisted(() => vi.fn());
@@ -51,6 +51,7 @@ const defaults: Config_Serialize = {
   auto_check_update: false,
   tray_enabled: true,
   close_behavior: "prompt",
+  shortcut_quick_open: "",
   schema_version: 1,
 };
 
@@ -121,12 +122,13 @@ afterEach(() => {
 });
 
 describe("设置页", () => {
-  it("渲染页标题与通用外观两分组及重置入口", () => {
+  it("渲染页标题与三分组及重置入口", () => {
     render(Page);
 
     expect(screen.getByText("Settings")).not.toBeNull();
     expect(screen.getByText("General")).not.toBeNull();
     expect(screen.getByText("Appearance")).not.toBeNull();
+    expect(screen.getByText("Shortcuts")).not.toBeNull();
     expect(screen.getByText("Language")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Reset to defaults" })).not.toBeNull();
   });

@@ -26,6 +26,8 @@ const KEY_AUTO_CHECK_UPDATE: &str = "auto_check_update";
 const KEY_TRAY_ENABLED: &str = "tray_enabled";
 /// 关闭窗口行为在配置文件中的键名
 const KEY_CLOSE_BEHAVIOR: &str = "close_behavior";
+/// 快速打开应用的全局快捷键在配置文件中的键名；空字符串表示禁用
+const KEY_SHORTCUT_QUICK_OPEN: &str = "shortcut_quick_open";
 /// 当前配置结构版本：变更字段语义时递增，并在迁移链中补对应升级步骤
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -103,6 +105,10 @@ pub struct Config {
     #[serde(deserialize_with = "de_close_behavior")]
     #[specta(type = CloseBehavior)]
     pub close_behavior: CloseBehavior,
+    /// 快速打开应用的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败
+    #[serde(deserialize_with = "de_shortcut_quick_open")]
+    #[specta(type = String)]
+    pub shortcut_quick_open: String,
 }
 
 impl Default for Config {
@@ -115,6 +121,7 @@ impl Default for Config {
             auto_check_update: false,
             tray_enabled: default_tray_enabled(),
             close_behavior: CloseBehavior::default(),
+            shortcut_quick_open: String::new(),
         }
     }
 }
@@ -140,6 +147,8 @@ pub struct ConfigPatch {
     pub tray_enabled: Option<bool>,
     /// 关闭窗口行为
     pub close_behavior: Option<CloseBehavior>,
+    /// 快速打开应用的全局快捷键；空字符串表示禁用
+    pub shortcut_quick_open: Option<String>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -194,6 +203,19 @@ where
 {
     let value = Value::deserialize(deserializer)?;
     Ok(value.as_str().map(CloseBehavior::parse).unwrap_or_default())
+}
+
+/// 容错解析快速打开快捷键：经 `serde_json::Value` 中转，非字符串一律回落空字符串（禁用）
+fn de_shortcut_quick_open<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value
+        .as_str()
+        .map(str::trim)
+        .map(str::to_owned)
+        .unwrap_or_default())
 }
 
 /// 容错解析结构版本：经 `parse_schema_version` 统一处理脏值
@@ -300,6 +322,7 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         auto_check_update: load_auto_check_update(app),
         tray_enabled: load_tray_enabled(app),
         close_behavior: load_close_behavior(app),
+        shortcut_quick_open: load_shortcut_quick_open(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -341,6 +364,13 @@ fn load_tray_enabled(app: &tauri::AppHandle) -> bool {
 fn load_close_behavior(app: &tauri::AppHandle) -> CloseBehavior {
     read_key(app, KEY_CLOSE_BEHAVIOR)
         .and_then(|value| value.as_str().map(CloseBehavior::parse))
+        .unwrap_or_default()
+}
+
+/// 读取持久化的快速打开快捷键；未设置或类型不符时回落空字符串（禁用）
+fn load_shortcut_quick_open(app: &tauri::AppHandle) -> String {
+    read_key(app, KEY_SHORTCUT_QUICK_OPEN)
+        .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
         .unwrap_or_default()
 }
 
@@ -452,6 +482,7 @@ fn reset_patch() -> ConfigPatch {
         auto_check_update: Some(false),
         tray_enabled: Some(default_tray_enabled()),
         close_behavior: Some(CloseBehavior::default()),
+        shortcut_quick_open: Some(String::new()),
     }
 }
 
@@ -476,6 +507,12 @@ fn apply_runtime_effects(app: &tauri::AppHandle, before: &Config, after: &Config
     }
     if before.tray_enabled != after.tray_enabled {
         crate::cores::tray::set_visible(app, after.tray_enabled);
+    }
+    if crate::cores::shortcut::should_switch(
+        &before.shortcut_quick_open,
+        &after.shortcut_quick_open,
+    ) {
+        crate::cores::shortcut::apply(app, &before.shortcut_quick_open, &after.shortcut_quick_open);
     }
 }
 
@@ -520,6 +557,12 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
     }
     if let Some(close_behavior) = patch.close_behavior {
         entries.push((KEY_CLOSE_BEHAVIOR, Value::from(close_behavior.as_str())));
+    }
+    if let Some(shortcut_quick_open) = patch.shortcut_quick_open.as_deref() {
+        entries.push((
+            KEY_SHORTCUT_QUICK_OPEN,
+            Value::from(shortcut_quick_open.trim()),
+        ));
     }
     entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
     entries
@@ -670,6 +713,7 @@ mod tests {
         assert!(!config.auto_start);
         assert!(!config.remember_window);
         assert!(!config.auto_check_update);
+        assert_eq!(config.shortcut_quick_open, "");
         assert_eq!(config.schema_version, 0);
     }
 
@@ -682,12 +726,13 @@ mod tests {
             auto_check_update: true,
             tray_enabled: false,
             close_behavior: CloseBehavior::MinimizeToTray,
+            shortcut_quick_open: String::from("Ctrl+Shift+O"),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "schema_version": 1 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "schema_version": 1 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -794,6 +839,27 @@ mod tests {
     }
 
     #[test]
+    fn tolerates_missing_or_invalid_shortcut_quick_open() {
+        for (raw, expected) in [
+            (json!({}), ""),
+            (
+                json!({ "shortcut_quick_open": "Ctrl+Shift+O" }),
+                "Ctrl+Shift+O",
+            ),
+            (
+                json!({ "shortcut_quick_open": "  Ctrl+Shift+O  " }),
+                "Ctrl+Shift+O",
+            ),
+            (json!({ "shortcut_quick_open": "" }), ""),
+            (json!({ "shortcut_quick_open": 5 }), ""),
+            (json!({ "shortcut_quick_open": null }), ""),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(config.shortcut_quick_open, expected);
+        }
+    }
+
+    #[test]
     fn tolerates_missing_or_unrecognized_schema_version() {
         for (raw, expected) in [
             (json!({}), 0_u32),
@@ -850,6 +916,16 @@ mod tests {
         let closed: ConfigPatch =
             serde_json::from_value(json!({ "close_behavior": "exit" })).expect("behavior parsed");
         assert_eq!(closed.close_behavior, Some(CloseBehavior::Exit));
+
+        assert_eq!(absent.shortcut_quick_open, None);
+
+        let quick_open: ConfigPatch =
+            serde_json::from_value(json!({ "shortcut_quick_open": "Ctrl+Shift+O" }))
+                .expect("shortcut parsed");
+        assert_eq!(
+            quick_open.shortcut_quick_open,
+            Some(String::from("Ctrl+Shift+O"))
+        );
     }
 
     #[test]
@@ -868,6 +944,7 @@ mod tests {
             auto_check_update: Some(true),
             tray_enabled: Some(false),
             close_behavior: Some(CloseBehavior::Exit),
+            shortcut_quick_open: Some(String::from("Ctrl+Shift+O")),
         });
         assert_eq!(
             keys_of(&patched),
@@ -878,6 +955,7 @@ mod tests {
                 KEY_AUTO_CHECK_UPDATE,
                 KEY_TRAY_ENABLED,
                 KEY_CLOSE_BEHAVIOR,
+                KEY_SHORTCUT_QUICK_OPEN,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -887,6 +965,7 @@ mod tests {
         assert_eq!(patched[3].1, json!(true));
         assert_eq!(patched[4].1, json!(false));
         assert_eq!(patched[5].1, json!("exit"));
+        assert_eq!(patched[6].1, json!("Ctrl+Shift+O"));
     }
 
     #[test]
@@ -899,6 +978,7 @@ mod tests {
             auto_check_update: Some(true),
             tray_enabled: Some(false),
             close_behavior: Some(CloseBehavior::Exit),
+            shortcut_quick_open: Some(String::from("Ctrl+Shift+O")),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -912,6 +992,7 @@ mod tests {
         assert_eq!(entries[3].1, json!(false));
         assert_eq!(entries[4].1, json!(true));
         assert_eq!(entries[5].1, json!(CloseBehavior::default().as_str()));
+        assert_eq!(entries[6].1, json!(""));
     }
 
     #[test]
@@ -923,6 +1004,7 @@ mod tests {
             auto_check_update: false,
             tray_enabled: true,
             close_behavior: CloseBehavior::Prompt,
+            shortcut_quick_open: String::new(),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));

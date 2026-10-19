@@ -13,6 +13,8 @@ export const commands = {
 	 *  界面语言亦经此切换——运行时 `rust_i18n` 由 `config::apply_runtime_effects` 统一同步。
 	 */
 	updateConfig: (patch: ConfigPatch) => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("update_config", { patch })),
+	/**  查询某组合是否由本应用注册；空值与非法串一律返回 `false` */
+	isShortcutRegistered: (shortcut: string) => typedError<boolean, CommandError>(__TAURI_INVOKE("is_shortcut_registered", { shortcut })),
 	/**  采集运行平台信息；单项缺失时回落 `"unknown"`，绝不抛错 */
 	getSystemInfo: () => typedError<SystemInfo, CommandError>(__TAURI_INVOKE("get_system_info")),
 	/**  真退出应用进程；调用后进程结束，结果体永不可达（按 `CommandResult<()>` 保持命令类型统一） */
@@ -87,6 +89,8 @@ export type ConfigPatch = {
 	tray_enabled?: boolean | null,
 	/**  关闭窗口行为 */
 	close_behavior?: CloseBehavior | null,
+	/**  快速打开应用的全局快捷键；空字符串表示禁用 */
+	shortcut_quick_open?: string | null,
 };
 
 /**
@@ -118,6 +122,8 @@ export type Config_Deserialize = {
 	tray_enabled?: boolean,
 	/**  关闭窗口行为：缺失、类型不符或无法识别时回落弹窗提示，绝不让整包解析失败 */
 	close_behavior?: CloseBehavior,
+	/**  快速打开应用的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败 */
+	shortcut_quick_open?: string,
 };
 
 /**
@@ -149,6 +155,8 @@ export type Config_Serialize = {
 	tray_enabled: boolean,
 	/**  关闭窗口行为：缺失、类型不符或无法识别时回落弹窗提示，绝不让整包解析失败 */
 	close_behavior: CloseBehavior,
+	/**  快速打开应用的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败 */
+	shortcut_quick_open: string,
 };
 
 /**  应用支持的语言 */

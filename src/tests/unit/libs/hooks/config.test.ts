@@ -14,6 +14,7 @@ const saved: Config_Serialize = {
   auto_check_update: true,
   tray_enabled: true,
   close_behavior: "prompt",
+  shortcut_quick_open: "",
   schema_version: 1,
 };
 
@@ -115,6 +116,7 @@ describe("updateConfig", () => {
       auto_check_update: false,
       tray_enabled: true,
       close_behavior: "prompt",
+      shortcut_quick_open: "",
       schema_version: 1,
     };
     configState.value = previous;
@@ -142,6 +144,7 @@ describe("updateConfig", () => {
       auto_check_update: false,
       tray_enabled: true,
       close_behavior: "prompt",
+      shortcut_quick_open: "",
       schema_version: 1,
     };
     configState.value = previous;
@@ -164,6 +167,7 @@ describe("resetConfig", () => {
     auto_check_update: false,
     tray_enabled: true,
     close_behavior: "prompt",
+    shortcut_quick_open: "",
     schema_version: 1,
   };
 
