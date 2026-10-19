@@ -18,7 +18,6 @@
 - **后端支撑：** `serde` / `serde_json` + `chrono`（UTC 时间）+ `log` 门面 + `thiserror` / `anyhow`（统一错误 `CommandError` / `CommandResult`）。
 - **构建 / 质量：** Vite（固定端口 `1420`）+ `svelte-check` 严格 TS 检查 + ESLint / Prettier + vitest；包管理器 `pnpm`（`engines.node >= 24`）；`pnpm-lock.yaml` 与 `Cargo.lock` 均提交。
 - **部署：** GitHub Actions + Tauri bundler；入口 `.github/workflows/ci.yml`（质量门禁）、`release.yml`（打包发布）。
-- **上游示例索引：** 沙盒文件 / 对话框 / 通知 / 全局快捷键 / 网络请求的完整接线示例见上游仓库 `v0.3.0` 标签。
 
 **版本查询命令：**
 
@@ -34,7 +33,7 @@ rustc --version && cat rust-toolchain.toml && cat src-tauri/Cargo.toml | grep -A
 > 目录职责边界：只在对应目录做对应事，禁止跨层乱放。
 
 ```text
-tauri-desktop-template/
+asr-studio-desktop/
 ├── src/                            # 前端：SvelteKit 单页应用（adapter-static + fallback: index.html）
 │   ├── app.html                    # HTML 外壳，SvelteKit 在此注入脚本与样式
 │   ├── assets/                     # 需要经构建处理的资源（别名 #assets，见 package.json 的 imports 字段），icons/ 下为内联图标（app-icon / github-icon / svelte-icon / tauri-icon / vite-icon）
@@ -75,7 +74,7 @@ tauri-desktop-template/
 │   ├── build.rs                    # tauri-build 构建脚本
 │   ├── tauri.conf.json             # 窗口 / CSP / 打包目标 / updater 配置
 │   └── Cargo.toml                  # 后端依赖与 crate 元信息
-├── docs/                           # ARCHITECTURE.md（本文件）、WORKFLOW.md（命令与流程）、INITIAL.md（派生项目定制与发布清单）、README_zh-CN.md、images/（模板截图）
+├── docs/                           # ARCHITECTURE.md（本文件）、WORKFLOW.md（命令与流程）、README_zh-CN.md
 ├── static/                         # 原样拷贝到产物根目录的资源（favicon.png）
 ├── .github/workflows/              # ci.yml（质量门禁）、release.yml（打包发布）
 ├── Cargo.toml                      # 虚拟工作区 + 全局 lints / profile
@@ -126,7 +125,7 @@ Svelte 组件 → libs/commands（链式 API）→ commands/（Rust 薄封装）
 ### 崩溃边界（`cores/system.rs` + `components/common/error-boundary.svelte`）
 
 - 前端 `ErrorBoundary`：经 `@tauri-apps/plugin-log` 上报，堆栈仅 dev 显示；同步 `console.error` 留底 + 2s 节流防刷屏。
-- 后端 panic 钩子：先走常规日志，日志不可用时落盘到 `%TEMP%/my_app_crash.log` 兜底（二选一而非双写）；超 512KB 轮转为 `.1` 仅保留一份；时间戳用本地时间 RFC3339（`chrono::Local`）。
+- 后端 panic 钩子：先走常规日志，日志不可用时落盘到 `%TEMP%/asr_studio_crash.log` 兜底（二选一而非双写）；超 512KB 轮转为 `.1` 仅保留一份；时间戳用本地时间 RFC3339（`chrono::Local`）。
 - 两者互不替代，禁止另加并行机制。
 
 ### 语言数据流（`cores/locale.rs` + `cores/config.rs` + `libs/hooks/config.svelte.ts` + `libs/i18n/locale.svelte.ts`）

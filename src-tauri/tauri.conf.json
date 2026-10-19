@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tauri Desktop Template",
-  "version": "0.4.0",
-  "identifier": "io.github.alfredclark.tauri-desktop-template",
+  "productName": "ASR Studio",
+  "version": "0.1.0",
+  "identifier": "io.github.alfredclark.asr-studio-desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Tauri Desktop Template",
+        "title": "ASR Studio",
         "width": 1280,
         "height": 800,
         "minWidth": 1280,
@@ -72,13 +72,13 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["tdt"]
+        "schemes": ["asr-studio"]
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFENUQ2RjA3NzlBQ0Q4MTIKUldRUzJLeDVCMjlkcldOQVI3Rm0rWjVBZ2ROWXZJdnhIOWl6TUtZQWsvL2VzaFpjendLOWtycS8K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3NDQ1MTM3MENDNkI0MTgKUldRWXRNWU1OMUZFMTdwdjFkYUJoRUE5cTl1eFAyWjBRSjRVNVNLdWhrUUp0L1h6ZlV5LytxeGQK",
       "endpoints": [
-        "https://github.com/AlfredClark/tauri-desktop-template/releases/latest/download/latest.json"
+        "https://github.com/AlfredClark/asr-studio-desktop/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

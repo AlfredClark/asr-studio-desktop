@@ -1,6 +1,6 @@
 // 深链入口：冷启动（`getCurrent`）+ 运行中（`onOpenUrl`）+ 次实例转发（`app:open-urls`）。
 // 三路互斥（首启 / 运行中 OS 投递 / 次进程转发），另有短窗去重兜底。
-// 协议 `scheme` 的三处 touch 点（模板二次开发自定义时同步改）：
+// 协议 `scheme` 的三处 touch 点（改 scheme 时三处同步改）：
 // `tauri.conf.json` 的 `plugins.deep-link.desktop.schemes`、
 // 后端 `cores/deep_link.rs` 的 `SCHEME_PREFIX`、此处的 `DEEP_LINK_SCHEME`。
 import { goto } from "$app/navigation";
@@ -13,8 +13,8 @@ import { reportCommandFailure } from "#libs/commands/cores";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
 
-/** 模板占位 scheme，二次开发按需自定义（同步文件头列出三处 touch 点） */
-export const DEEP_LINK_SCHEME = "tdt";
+/** 项目深链 scheme，按初始化方案与三处 touch 点同源（`asr-studio`） */
+export const DEEP_LINK_SCHEME = "asr-studio";
 
 /** 次实例转发的 Rust 事件名，与 `plugins/single_instance.rs` 同名 */
 export const SECOND_INSTANCE_EVENT = "app:open-urls";

@@ -1,21 +1,22 @@
 {
-  "name": "tauri-desktop-template",
-  "version": "0.4.0",
-  "description": "Desktop application development template based on Tauri and Svelte.",
+  "name": "asr-studio-desktop",
+  "version": "0.1.0",
+  "description": "Local ASR desktop application.",
   "license": "GPL-3.0-only",
   "author": "Alfred Clark",
-  "homepage": "https://github.com/alfredclark/tauri-desktop-template",
+  "homepage": "https://github.com/AlfredClark/asr-studio-desktop",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alfredclark/tauri-desktop-template.git"
+    "url": "git+https://github.com/AlfredClark/asr-studio-desktop.git"
   },
   "bugs": {
-    "url": "https://github.com/alfredclark/tauri-desktop-template/issues"
+    "url": "https://github.com/AlfredClark/asr-studio-desktop/issues"
   },
   "keywords": [
     "tauri",
     "desktop",
-    "template"
+    "asr",
+    "studio"
   ],
   "type": "module",
   "imports": {
