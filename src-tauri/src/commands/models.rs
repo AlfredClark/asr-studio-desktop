@@ -1,7 +1,7 @@
-//! 模型命令：清单 / 下载 / 取消 / 校验 / 打开目录 / 删除的薄封装，逻辑在 `features::models`。
+//! 模型命令：清单 / 下载 / 取消 / 校验 / 目录树 / 打开目录 / 删除的薄封装，逻辑在 `features::models`。
 
 use crate::cores::types::CommandResult;
-use crate::features::models::{self, ModelEntry, VerifyReport};
+use crate::features::models::{self, ModelEntry, ModelFileEntry, VerifyReport};
 
 /// 列出全部模型及其本机状态；前端据此渲染分组与按钮
 #[tauri::command]
@@ -33,6 +33,14 @@ pub fn cancel_download(app: tauri::AppHandle, id: String) -> CommandResult<()> {
 #[allow(clippy::needless_pass_by_value)]
 pub fn verify_model(app: tauri::AppHandle, id: String) -> CommandResult<VerifyReport> {
     Ok(models::verify_model(&app, &id)?)
+}
+
+/// 列出模型目录树：供详情页展示核对；目录不存在返回空
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn list_model_files(app: tauri::AppHandle, id: String) -> CommandResult<Vec<ModelFileEntry>> {
+    Ok(models::list_model_files(&app, &id)?)
 }
 
 /// 在系统文件管理器中打开模型根目录（不存在即建）

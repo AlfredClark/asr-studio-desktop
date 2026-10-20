@@ -241,6 +241,123 @@ pub struct DownloadProgress {
     pub current: Option<String>,
 }
 
+/// 模型文件条目：清单内必需文件及其父目录，供详情页渲染目录树核对缺失
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ModelFileEntry {
+    /// 相对包顶层目录的路径，分隔符统一 `/`，目录不带尾部分隔符
+    pub path: String,
+    /// 期望字节数（清单值；目录为所含文件的期望之和）
+    pub size: u32,
+    /// 是否为目录
+    pub is_dir: bool,
+    /// 本文件/目录的核对结论：就绪 / 不完整（缺失或大小不符）/ 未下载（整目录缺失）
+    pub status: ModelStatus,
+}
+
+/// 列出模型目录树：仅含清单必需文件及其父目录，按相对路径排序；
+/// 包外多放的文件不展示（核对以清单为准，与 `verify_model` 同口径）
+pub fn list_model_files(app: &tauri::AppHandle, id: &str) -> anyhow::Result<Vec<ModelFileEntry>> {
+    let spec = find_spec(id).context("unknown model id")?;
+    let dir = model_dir(app, spec)?;
+    let (missing, mismatched) = if dir.is_dir() {
+        check_files(&dir, spec.files)
+    } else {
+        (
+            spec.files.iter().map(|file| file.path.to_owned()).collect(),
+            Vec::new(),
+        )
+    };
+    Ok(file_states(spec.files, &missing, &mismatched))
+}
+
+/// 单个清单文件的核对结论，供目录聚合复用
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FileVerdict {
+    Ready,
+    Missing,
+    Mismatched,
+}
+
+/// 目录聚合累加器：大小取所含期望之和
+#[derive(Default)]
+struct FolderFold {
+    size: u64,
+    total: usize,
+    missing: usize,
+    bad: usize,
+}
+
+/// 组装目录树：纯函数，可单测；`missing`/`mismatched` 来自 `check_files`
+fn file_states(
+    files: &[RequiredFile],
+    missing: &[String],
+    mismatched: &[String],
+) -> Vec<ModelFileEntry> {
+    let verdict = |path: &str| {
+        if missing.iter().any(|name| name == path) {
+            FileVerdict::Missing
+        } else if mismatched.iter().any(|name| name == path) {
+            FileVerdict::Mismatched
+        } else {
+            FileVerdict::Ready
+        }
+    };
+    let mut out: Vec<ModelFileEntry> = files
+        .iter()
+        .map(|file| {
+            let status = match verdict(file.path) {
+                FileVerdict::Ready => ModelStatus::Ready,
+                FileVerdict::Missing => ModelStatus::Missing,
+                FileVerdict::Mismatched => ModelStatus::Partial,
+            };
+            ModelFileEntry {
+                path: file.path.to_owned(),
+                size: sat_u32(file.size),
+                is_dir: false,
+                status,
+            }
+        })
+        .collect();
+    // 父目录聚合：大小取所含期望之和；全缺失即未下载，部分即不完整
+    let mut folders: std::collections::BTreeMap<&str, FolderFold> =
+        std::collections::BTreeMap::new();
+    for file in files {
+        let file_verdict = verdict(file.path);
+        let mut start = 0;
+        while let Some(end) = file.path[start..].find('/').map(|pos| start + pos) {
+            let fold = folders.entry(&file.path[..end]).or_default();
+            fold.size = fold.size.saturating_add(file.size);
+            fold.total += 1;
+            match file_verdict {
+                FileVerdict::Missing => {
+                    fold.missing += 1;
+                    fold.bad += 1;
+                }
+                FileVerdict::Mismatched => fold.bad += 1,
+                FileVerdict::Ready => {}
+            }
+            start = end + 1;
+        }
+    }
+    for (dir, fold) in folders {
+        let status = if fold.bad == 0 {
+            ModelStatus::Ready
+        } else if fold.missing == fold.total {
+            ModelStatus::Missing
+        } else {
+            ModelStatus::Partial
+        };
+        out.push(ModelFileEntry {
+            path: dir.to_owned(),
+            size: sat_u32(fold.size),
+            is_dir: true,
+            status,
+        });
+    }
+    out.sort_by(|left, right| left.path.cmp(&right.path));
+    out
+}
+
 /// 校验报告：`missing` 与 `mismatched` 均为空即就绪
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct VerifyReport {
@@ -865,5 +982,39 @@ mod tests {
         assert!(root.join("cat/wrapped/a.onnx").is_file());
         assert_eq!(seen, 2);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_states_marks_ready_missing_and_mismatch() {
+        let files = spec_files();
+        let states = file_states(&files, &[], &[]);
+        assert!(
+            states
+                .iter()
+                .all(|entry| entry.status == ModelStatus::Ready)
+        );
+
+        let states = file_states(&files, &["a.onnx".to_owned()], &["sub/b.txt".to_owned()]);
+        let by_path: std::collections::HashMap<&str, &ModelFileEntry> = states
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry))
+            .collect();
+        assert_eq!(by_path["a.onnx"].status, ModelStatus::Missing);
+        assert_eq!(by_path["sub/b.txt"].status, ModelStatus::Partial);
+        // 父目录部分缺失即不完整
+        assert_eq!(by_path["sub"].status, ModelStatus::Partial);
+        assert!(by_path["sub"].is_dir);
+    }
+
+    #[test]
+    fn file_states_folds_fully_missing_dir() {
+        let files = spec_files();
+        let states = file_states(&files, &["a.onnx".to_owned(), "sub/b.txt".to_owned()], &[]);
+        let sub = states.iter().find(|entry| entry.path == "sub").unwrap();
+        assert_eq!(sub.status, ModelStatus::Missing);
+        // 目录大小为所含期望之和，结果按路径排序
+        let paths: Vec<&str> = states.iter().map(|entry| entry.path.as_str()).collect();
+        assert_eq!(paths, vec!["a.onnx", "sub", "sub/b.txt"]);
+        assert_eq!(sub.size, 2);
     }
 }

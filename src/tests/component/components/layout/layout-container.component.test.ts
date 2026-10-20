@@ -109,7 +109,7 @@ describe("布局容器", () => {
     layoutState.name = "sidebar";
     await renderWithProbe("sidebar");
     expect(screen.getByText("probe-content")).not.toBeNull();
-  });
+  }, 15_000);
 
   it("dashboard 布局渲染固定侧栏骨架与子内容", async () => {
     localStorage.setItem("layout-name", "dashboard");

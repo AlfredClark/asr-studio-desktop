@@ -1,5 +1,5 @@
 // 模型下载的全局状态：切页不丢失，模型页独占读写，未来识别页只读复用。
-// 进度事件名与 Rust 侧 `cores::models::MODEL_DOWNLOAD_PROGRESS_EVENT` 会合，改名需两端同步。
+// 进度事件名与 Rust 侧 `features::models::MODEL_DOWNLOAD_PROGRESS_EVENT` 会合，改名需两端同步。
 import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
 import type { ModelEntry } from "#libs/commands/types";
@@ -16,7 +16,7 @@ export const modelsState = $state<{
 }>({ entries: [], progress: {} });
 
 /**
- * 下载进度事件载荷：与 Rust 侧 `cores::models::DownloadProgress` 同构 （事件载荷不进命令签名，specta
+ * 下载进度事件载荷：与 Rust 侧 `features::models::DownloadProgress` 同构 （事件载荷不进命令签名，specta
  * 不导出，改名需两端同步）。
  */
 export interface ModelDownloadProgress {
@@ -111,6 +111,28 @@ export async function verifyModel(id: string): Promise<void> {
       toast.error(m.models_verify_failed());
       reportCommandFailure("[models] verify failed", failure);
     });
+}
+
+/** 模型文件节点：与后端 `ModelFileEntry` 同构，详情页目录树用 */
+export interface ModelFileNode {
+  /** 相对包顶层目录的路径，分隔符统一 `/` */
+  path: string;
+  /** 期望字节数（目录为所含之和） */
+  size: number;
+  /** 是否为目录 */
+  is_dir: boolean;
+  /** 核对结论 */
+  status: ModelEntry["status"];
+}
+
+/** 拉取模型目录树：失败上报并回空，详情区直接隐藏该节 */
+export async function fetchModelFiles(id: string): Promise<ModelFileNode[]> {
+  const result = await commands.listModelFiles(id).result();
+  if (result.status === "error") {
+    reportCommandFailure("[models] list files failed", result.error);
+    return [];
+  }
+  return result.data;
 }
 
 /** 删除模型目录；二次确认由调用方弹窗负责，此处只做落盘与提示 */

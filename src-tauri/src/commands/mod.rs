@@ -26,6 +26,7 @@ macro_rules! collect_commands {
             $crate::commands::models::download_model,
             $crate::commands::models::cancel_download,
             $crate::commands::models::verify_model,
+            $crate::commands::models::list_model_files,
             $crate::commands::models::open_models_root,
             $crate::commands::models::open_model_dir,
             $crate::commands::models::delete_model,

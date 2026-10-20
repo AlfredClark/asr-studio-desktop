@@ -133,7 +133,7 @@ jobs:
         # toolchain 版本必须与 rust-toolchain.toml 保持一致
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.99.0
+          toolchain: 1.99.1
           components: rustfmt, clippy
 
       - name: Cache

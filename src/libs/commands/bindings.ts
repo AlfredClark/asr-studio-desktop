@@ -21,6 +21,8 @@ export const commands = {
 	cancelDownload: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("cancel_download", { id })),
 	/**  重新扫描校验：手动放置文件后点此确认 */
 	verifyModel: (id: string) => typedError<VerifyReport, CommandError>(__TAURI_INVOKE("verify_model", { id })),
+	/**  列出模型目录树：供详情页展示核对；目录不存在返回空 */
+	listModelFiles: (id: string) => typedError<ModelFileEntry[], CommandError>(__TAURI_INVOKE("list_model_files", { id })),
 	/**  在系统文件管理器中打开模型根目录（不存在即建） */
 	openModelsRoot: () => typedError<null, CommandError>(__TAURI_INVOKE("open_models_root")),
 	/**  在系统文件管理器中打开单个模型目录（不存在即建） */
@@ -241,6 +243,18 @@ export type ModelEntry = {
 	local_path: string | null,
 	/**  发布页地址（“前往下载页”按钮用） */
 	page_url: string,
+};
+
+/**  模型文件条目：清单内必需文件及其父目录，供详情页渲染目录树核对缺失 */
+export type ModelFileEntry = {
+	/**  相对包顶层目录的路径，分隔符统一 `/`，目录不带尾部分隔符 */
+	path: string,
+	/**  期望字节数（清单值；目录为所含文件的期望之和） */
+	size: number,
+	/**  是否为目录 */
+	is_dir: boolean,
+	/**  本文件/目录的核对结论：就绪 / 不完整（缺失或大小不符）/ 未下载（整目录缺失） */
+	status: ModelStatus,
 };
 
 /**  模型在本机的就绪状态 */

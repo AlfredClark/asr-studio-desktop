@@ -3,6 +3,7 @@ import {
   cancelDownload,
   deleteModel,
   downloadModel,
+  fetchModelFiles,
   modelsState,
   openModelDir,
   openModelsRoot,
@@ -20,6 +21,7 @@ vi.mock("#libs/commands", () => ({
     deleteModel: vi.fn(),
     openModelsRoot: vi.fn(),
     openModelDir: vi.fn(),
+    listModelFiles: vi.fn(),
   },
 }));
 
@@ -51,6 +53,7 @@ type FakeResult =
 function fakeCommand(result: FakeResult): {
   success: (handler: (data: never) => unknown) => unknown;
   failed: (failure: (never: never) => unknown) => unknown;
+  result: () => Promise<FakeResult>;
 } {
   const chain = {
     success(handler: (data: never) => unknown) {
@@ -60,6 +63,9 @@ function fakeCommand(result: FakeResult): {
     failed(handler: (failure: never) => unknown) {
       if (result.status === "error") handler(result.error as never);
       return chain;
+    },
+    result() {
+      return Promise.resolve(result);
     },
   };
   return chain;
@@ -81,6 +87,7 @@ beforeEach(() => {
   mocked.deleteModel.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
   mocked.openModelsRoot.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
   mocked.openModelDir.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
+  mocked.listModelFiles.mockReturnValue(fakeCommand({ status: "ok", data: [] }) as never);
 });
 
 describe("模型全局状态", () => {
@@ -177,5 +184,21 @@ describe("模型全局状态", () => {
     await openModelsRoot();
 
     expect(mockedToast.error).toHaveBeenCalled();
+  });
+
+  it("目录树成功时原样返回", async () => {
+    const rows = [{ path: "model.int8.onnx", size: 10, is_dir: false, status: "ready" }];
+    mocked.listModelFiles.mockReturnValue(fakeCommand({ status: "ok", data: rows }) as never);
+
+    await expect(fetchModelFiles(entry.id)).resolves.toEqual(rows);
+    expect(mocked.listModelFiles).toHaveBeenCalledWith(entry.id);
+  });
+
+  it("目录树失败时回空", async () => {
+    mocked.listModelFiles.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    await expect(fetchModelFiles(entry.id)).resolves.toEqual([]);
   });
 });

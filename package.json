@@ -24,7 +24,7 @@
     "#components/*": "./src/components/*",
     "#libs/*": "./src/libs/*"
   },
-  "packageManager": "pnpm@12.13.0",
+  "packageManager": "pnpm@12.14.0",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -112,6 +112,7 @@
     "jiti": "^2.7.0",
     "jsdom": "^30.1.3",
     "lint-staged": "^17.6.0",
+    "paneforge": "^1.0.2",
     "prettier": "^3.9.10",
     "prettier-plugin-css-order": "^2.2.0",
     "prettier-plugin-jsdoc": "^1.8.1",
