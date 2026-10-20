@@ -27,6 +27,20 @@ export const commands = {
 	openModelDir: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("open_model_dir", { id })),
 	/**  删除模型目录；下载中拒绝 */
 	deleteModel: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_model", { id })),
+	/**  列出输入设备；无设备返回空（前端展示“无可用设备”而非报错） */
+	listInputDevices: () => typedError<AudioDevice[], CommandError>(__TAURI_INVOKE("list_input_devices")),
+	/**  启动识别服务：模型须已下载校验；同服重复启动直接拒绝 */
+	startService: (modelId: string) => typedError<null, CommandError>(__TAURI_INVOKE("start_service", { modelId })),
+	/**  停止服务并释放识别器内存；未运行视为成功 */
+	stopService: () => typedError<null, CommandError>(__TAURI_INVOKE("stop_service")),
+	/**  查询服务状态快照；纯内存读 */
+	serviceStatus: () => typedError<ServiceStatus, CommandError>(__TAURI_INVOKE("service_status")),
+	/**  开始录制：设备不存在或已在录制则报错 */
+	startRecording: (deviceId: string) => typedError<null, CommandError>(__TAURI_INVOKE("start_recording", { deviceId })),
+	/**  结束录制并存档到 `records/`；未在录制则报错 */
+	stopRecording: () => typedError<RecordResult, CommandError>(__TAURI_INVOKE("stop_recording")),
+	/**  转写音频文件：服务必须运行中；路径收敛到应用数据目录内 */
+	transcribeFile: (path: string) => typedError<TranscribeResult, CommandError>(__TAURI_INVOKE("transcribe_file", { path })),
 	/**  查询某组合是否由本应用注册；空值与非法串一律返回 `false` */
 	isShortcutRegistered: (shortcut: string) => typedError<boolean, CommandError>(__TAURI_INVOKE("is_shortcut_registered", { shortcut })),
 	/**  采集运行平台信息；单项缺失时回落 `"unknown"`，绝不抛错 */
@@ -61,6 +75,16 @@ export const commands = {
 };
 
 /* Types */
+/**  录音设备条目：`id` 为枚举序号（字符串化），重名设备以序号区分 */
+export type AudioDevice = {
+	/**  设备序号（本次进程内枚举顺序） */
+	id: string,
+	/**  系统上报的设备名 */
+	name: string,
+	/**  是否为系统默认输入设备 */
+	is_default: boolean,
+};
+
 /**  关闭窗口行为：落盘值为 `snake_case` 字符串，未知一律回落弹窗提示 */
 export type CloseBehavior = "prompt" | "exit" | "minimize_to_tray";
 
@@ -216,6 +240,37 @@ export type ModelStatus =
 /**  后端正在下载或解压 */
 "downloading";
 
+/**  结束录制的回执：前端据此展示文件名与时长，再调转写命令 */
+export type RecordResult = {
+	/**  存档绝对路径 */
+	path: string,
+	/**  文件名（展示用） */
+	file_name: string,
+	/**  录制秒数 */
+	seconds: number | null,
+};
+
+/**  服务状态：启动中与运行中互斥，同一时刻只加载一个模型 */
+export type ServiceState = 
+/**  未加载任何模型 */
+"stopped" | 
+/**  正在加载模型（阻塞式加载，期间拒绝重复启动） */
+"starting" | 
+/**  已加载，可接受转写 */
+"running";
+
+/**  服务状态快照：前端据此渲染徽标与按钮可用性 */
+export type ServiceStatus = {
+	/**  当前状态 */
+	state: ServiceState,
+	/**  已加载（或正在加载）的模型 id */
+	model_id: string | null,
+	/**  已加载模型的展示名 */
+	display_name: string | null,
+	/**  模型加载耗时毫秒（仅运行中有效） */
+	load_ms: number | null,
+};
+
 /**  运行平台信息：经 `tauri-plugin-os` 采集，全字段必填，前端逐行展示 */
 export type SystemInfo = {
 	/**  操作系统平台（如 `linux` / `windows` / `macos`） */
@@ -226,6 +281,16 @@ export type SystemInfo = {
 	arch: string,
 	/**  主机名 */
 	hostname: string,
+};
+
+/**  文件转写结果：文本 + 音频时长 + 推理耗时，前端直接回显 */
+export type TranscribeResult = {
+	/**  识别文本（空音频或静音时为空字符串，不算失败） */
+	text: string,
+	/**  音频时长秒 */
+	audio_sec: number | null,
+	/**  推理耗时毫秒 */
+	infer_ms: number,
 };
 
 /**  可用的更新信息：只含前端展示所需字段，插件的 `Update` 句柄不出命令边界 */

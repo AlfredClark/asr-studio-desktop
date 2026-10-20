@@ -316,7 +316,7 @@ fn models_root(app: &tauri::AppHandle) -> anyhow::Result<std::path::PathBuf> {
 }
 
 /// 模型目录：`<app_data>/models/<分类>/<包目录>/`，不存在不建（`Missing` 态无路径副作用）
-fn model_dir(app: &tauri::AppHandle, spec: &ModelSpec) -> anyhow::Result<std::path::PathBuf> {
+pub fn model_dir(app: &tauri::AppHandle, spec: &ModelSpec) -> anyhow::Result<std::path::PathBuf> {
     let dir = app
         .path()
         .app_data_dir()
@@ -617,16 +617,19 @@ async fn extract_package(
     let part = part.to_owned();
     let models_root = models_root(&app)?;
     tokio::task::spawn_blocking(move || {
-        extract_blocking(&app, &id, &models_root, &category, &dir_name, &part)
+        let mut emit = |payload: DownloadProgress| emit_progress(&app, payload);
+        extract_inner(&mut emit, &id, &models_root, &category, &dir_name, &part)
     })
     .await
     .context("extract task failed")??;
     Ok(())
 }
 
-/// 解压实现（阻塞）：读包 → 落临时目录 → 顶层目录原名移到分类下
-fn extract_blocking(
-    app: &tauri::AppHandle,
+/// 解压实现（阻塞）：读包 → 落临时目录 → 顶层目录原名移到分类下；
+///
+/// 进度经调用方传入的 `emit` 回调推送，与 Tauri 运行时解耦，可单测。
+fn extract_inner(
+    emit: &mut dyn FnMut(DownloadProgress),
     id: &str,
     models_root: &std::path::Path,
     category: &str,
@@ -654,16 +657,13 @@ fn extract_blocking(
             .unpack_in(&staging)
             .context("failed to unpack package entry")?;
         done += 1;
-        emit_progress(
-            app,
-            DownloadProgress {
-                id: id.to_owned(),
-                phase: DownloadPhase::Extract,
-                downloaded: sat_u32(done),
-                total: None,
-                current: Some(file_name_of(&name)),
-            },
-        );
+        emit(DownloadProgress {
+            id: id.to_owned(),
+            phase: DownloadPhase::Extract,
+            downloaded: sat_u32(done),
+            total: None,
+            current: Some(file_name_of(&name)),
+        });
     }
 
     // 顶层目录原名保留：单顶层目录直接改名归位（与手动放置零差异）；
@@ -794,5 +794,75 @@ mod tests {
     fn throttle_allows_first_emit() {
         let mut throttle = ProgressThrottle::new();
         assert!(throttle.allow(0, Some(100)));
+    }
+
+    /// 就地打小包：`entries` 为包内路径与内容，返回 tar.bz2 路径
+    fn make_package(name: &str, entries: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("asr-studio-models-extract-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out: std::path::PathBuf = dir.join(format!("{name}.tar.bz2"));
+        let _ = std::fs::remove_file(&out);
+        let file = std::fs::File::create(&out).unwrap();
+        let encoder = bzip2::write::BzEncoder::new(file, bzip2::Compression::fast());
+        let mut archive = tar::Builder::new(encoder);
+        for (path, content) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_cksum();
+            archive.append_data(&mut header, path, *content).unwrap();
+        }
+        archive.into_inner().unwrap().finish().unwrap();
+        out
+    }
+
+    #[test]
+    fn extract_keeps_single_top_dir_name() {
+        let root = std::env::temp_dir().join("asr-studio-models-extract-target");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let part = make_package(
+            "single",
+            &[("top/a.onnx", b"1234"), ("top/sub/b.txt", b"56")],
+        );
+        let mut seen = Vec::new();
+        extract_inner(
+            &mut |payload: DownloadProgress| seen.push(payload),
+            "demo",
+            &root,
+            "cat",
+            "top",
+            &part,
+        )
+        .unwrap();
+        assert!(root.join("cat/top/a.onnx").is_file());
+        assert!(root.join("cat/top/sub/b.txt").is_file());
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen.iter()
+                .all(|payload| payload.phase == DownloadPhase::Extract)
+        );
+        assert_eq!(seen.last().unwrap().current.as_deref(), Some("b.txt"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_wraps_flat_files_with_package_name() {
+        let root = std::env::temp_dir().join("asr-studio-models-extract-flat");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let part = make_package("flat", &[("a.onnx", b"1234"), ("b.txt", b"56")]);
+        let mut seen = 0_usize;
+        extract_inner(
+            &mut |_: DownloadProgress| seen += 1,
+            "demo",
+            &root,
+            "cat",
+            "wrapped",
+            &part,
+        )
+        .unwrap();
+        assert!(root.join("cat/wrapped/a.onnx").is_file());
+        assert_eq!(seen, 2);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

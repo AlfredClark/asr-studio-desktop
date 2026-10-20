@@ -2,10 +2,13 @@
 //! `config`（应用配置持久化）、`deep_link`（深链 URL 提取纯函数，供单实例插件复用）、
 //! `specta`（绑定构建与导出）、`system`（panic 钩子与环境兼容）、
 //! `tray`（系统托盘，仅桌面端）、`updater`（更新检查与安装，需 `Tauri` 运行时故放 `cores` 而非 `features`）、
-//! `shortcut`（全局快捷键注册，仅桌面端）。
+//! `shortcut`（全局快捷键注册，仅桌面端）、`models`（模型下载管理，仅桌面端）、
+//! `audio`（录音设备与存档，仅桌面端）、`asr`（识别服务，仅桌面端）。
 
 use tauri_specta::Builder;
 
+pub mod asr;
+pub mod audio;
 pub mod config;
 pub mod deep_link;
 pub mod locale;

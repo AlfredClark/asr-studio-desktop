@@ -1,4 +1,5 @@
 import type {
+  AudioDevice,
   CloseBehavior,
   CommandError,
   Config,
@@ -8,7 +9,11 @@ import type {
   ModelCategory,
   ModelEntry,
   ModelStatus,
+  RecordResult,
+  ServiceState,
+  ServiceStatus,
   SystemInfo,
+  TranscribeResult,
   UpdateInfo,
   VerifyReport,
   commands as rawCommands,
@@ -36,6 +41,7 @@ export type CommandsMap = typeof rawCommands;
 export type EnhancedCommands = { [K in keyof CommandsMap]: WrappedFn<CommandsMap[K]> };
 
 export type {
+  AudioDevice,
   CloseBehavior,
   CommandError,
   Config,
@@ -45,7 +51,11 @@ export type {
   ModelCategory,
   ModelEntry,
   ModelStatus,
+  RecordResult,
+  ServiceState,
+  ServiceStatus,
   SystemInfo,
+  TranscribeResult,
   UpdateInfo,
   VerifyReport,
 };

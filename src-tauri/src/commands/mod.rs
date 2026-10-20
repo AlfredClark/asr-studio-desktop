@@ -6,6 +6,7 @@
 
 #![allow(clippy::unnecessary_wraps)]
 
+pub mod asr;
 pub mod config;
 pub mod models;
 pub mod shortcut;
@@ -28,6 +29,13 @@ macro_rules! collect_commands {
             $crate::commands::models::open_models_root,
             $crate::commands::models::open_model_dir,
             $crate::commands::models::delete_model,
+            $crate::commands::asr::list_input_devices,
+            $crate::commands::asr::start_service,
+            $crate::commands::asr::stop_service,
+            $crate::commands::asr::service_status,
+            $crate::commands::asr::start_recording,
+            $crate::commands::asr::stop_recording,
+            $crate::commands::asr::transcribe_file,
             $crate::commands::shortcut::is_shortcut_registered,
             $crate::commands::system::get_system_info,
             $crate::commands::system::quit_app,

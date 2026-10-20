@@ -1,0 +1,231 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  refreshServiceData,
+  selectDevice,
+  selectModel,
+  serviceState,
+  startService,
+  startTestRecording,
+  stopService,
+  stopTestRecording,
+} from "#libs/hooks/service.svelte";
+import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+
+vi.mock("#libs/commands", () => ({
+  default: {
+    listModels: vi.fn(),
+    listInputDevices: vi.fn(),
+    serviceStatus: vi.fn(),
+    startService: vi.fn(),
+    stopService: vi.fn(),
+    startRecording: vi.fn(),
+    stopRecording: vi.fn(),
+    transcribeFile: vi.fn(),
+  },
+}));
+
+vi.mock("#libs/utils/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+import commands from "#libs/commands";
+import { toast } from "#libs/utils/toast";
+
+const mocked = vi.mocked(commands);
+const mockedToast = vi.mocked(toast);
+
+const model: ModelEntry = {
+  id: "sense-voice-int8",
+  category: "sense_voice",
+  display_name: "SenseVoice int8",
+  tarball_bytes: 163_002_883,
+  required_bytes: 239_549_735,
+  status: "ready",
+  local_path: "/models",
+  page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+};
+
+const device: AudioDevice = { id: "0", name: "Microphone", is_default: true };
+
+type FakeResult =
+  { status: "ok"; data: unknown } | { status: "error"; error: { kind: string; message: string } };
+
+/** 与 `EnhancedCommand` 行为一致的替身：按分支跑回调后结算结果 */
+function fakeCommand(result: FakeResult): {
+  success: (handler: (data: never) => unknown) => unknown;
+  failed: (failure: (never: never) => unknown) => unknown;
+  result: () => Promise<FakeResult>;
+} {
+  const chain = {
+    success(handler: (data: never) => unknown) {
+      if (result.status === "ok") handler(result.data as never);
+      return chain;
+    },
+    failed(handler: (failure: never) => unknown) {
+      if (result.status === "error") handler(result.error as never);
+      return chain;
+    },
+    result() {
+      return Promise.resolve(result);
+    },
+  };
+  return chain;
+}
+
+function runningStatus(): void {
+  mocked.serviceStatus.mockReturnValue(
+    fakeCommand({
+      status: "ok",
+      data: {
+        state: "running",
+        model_id: model.id,
+        display_name: model.display_name,
+        load_ms: 800,
+      },
+    }) as never,
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  serviceState.status = null;
+  serviceState.models = [];
+  serviceState.devices = [];
+  serviceState.selectedModel = null;
+  serviceState.selectedDevice = null;
+  serviceState.recording = false;
+  serviceState.recognizing = false;
+  serviceState.switching = false;
+  serviceState.result = null;
+  mocked.listModels.mockReturnValue(fakeCommand({ status: "ok", data: [model] }) as never);
+  mocked.listInputDevices.mockReturnValue(fakeCommand({ status: "ok", data: [device] }) as never);
+  mocked.serviceStatus.mockReturnValue(
+    fakeCommand({
+      status: "ok",
+      data: { state: "stopped", model_id: null, display_name: null, load_ms: null },
+    }) as never,
+  );
+  mocked.startService.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
+  mocked.stopService.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
+  mocked.startRecording.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
+  mocked.stopRecording.mockReturnValue(
+    fakeCommand({
+      status: "ok",
+      data: { path: "/records/a.wav", file_name: "a.wav", seconds: 2.5 },
+    }) as never,
+  );
+  mocked.transcribeFile.mockReturnValue(
+    fakeCommand({ status: "ok", data: { text: "你好", audio_sec: 2.5, infer_ms: 300 } }) as never,
+  );
+});
+
+describe("识别服务状态", () => {
+  it("刷新补齐默认选中", async () => {
+    await refreshServiceData();
+
+    expect(serviceState.models).toEqual([model]);
+    expect(serviceState.selectedModel).toBe(model.id);
+    expect(serviceState.selectedDevice).toBe(device.id);
+    expect(serviceState.status?.state).toBe("stopped");
+  });
+
+  it("启动服务成功后同步快照并提示", async () => {
+    runningStatus();
+    serviceState.selectedModel = model.id;
+
+    await startService();
+
+    expect(mocked.startService).toHaveBeenCalledWith(model.id);
+    expect(serviceState.status?.state).toBe("running");
+    expect(mockedToast.success).toHaveBeenCalled();
+  });
+
+  it("启动失败时报错且不抛错", async () => {
+    mocked.startService.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+    serviceState.selectedModel = model.id;
+
+    await startService();
+
+    expect(mockedToast.error).toHaveBeenCalled();
+  });
+
+  it("停止服务后同步快照", async () => {
+    await stopService();
+
+    expect(mocked.stopService).toHaveBeenCalledOnce();
+    expect(mockedToast.success).toHaveBeenCalled();
+  });
+
+  it("运行中切模型自动停旧启新", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    const other = { ...model, id: "qwen3-0.6b-int8" };
+
+    await selectModel(other.id);
+
+    expect(mocked.stopService).toHaveBeenCalledOnce();
+    expect(mocked.startService).toHaveBeenCalledWith(other.id);
+    expect(serviceState.selectedModel).toBe(other.id);
+    expect(serviceState.switching).toBe(false);
+  });
+
+  it("停止态切模型只记录选择不启停", async () => {
+    await selectModel(model.id);
+
+    expect(serviceState.selectedModel).toBe(model.id);
+    expect(mocked.stopService).not.toHaveBeenCalled();
+    expect(mocked.startService).not.toHaveBeenCalled();
+  });
+
+  it("录制中切换设备被拦截", () => {
+    serviceState.recording = true;
+    serviceState.selectedDevice = device.id;
+
+    selectDevice("1");
+
+    expect(serviceState.selectedDevice).toBe(device.id);
+  });
+
+  it("完整测试链路回写结果", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+
+    await startTestRecording();
+    expect(serviceState.recording).toBe(true);
+    expect(serviceState.result).toBeNull();
+
+    await stopTestRecording();
+
+    expect(serviceState.recording).toBe(false);
+    expect(serviceState.recognizing).toBe(false);
+    expect(serviceState.result?.text).toBe("你好");
+    expect(serviceState.result?.fileName).toBe("a.wav");
+  });
+
+  it("服务未运行时不开始录制", async () => {
+    serviceState.selectedDevice = device.id;
+
+    await startTestRecording();
+
+    expect(mocked.startRecording).not.toHaveBeenCalled();
+  });
+
+  it("转写失败时报错且不回写结果", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+    mocked.transcribeFile.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    await startTestRecording();
+    await stopTestRecording();
+
+    expect(serviceState.result).toBeNull();
+    expect(serviceState.recognizing).toBe(false);
+    expect(mockedToast.error).toHaveBeenCalled();
+  });
+});
