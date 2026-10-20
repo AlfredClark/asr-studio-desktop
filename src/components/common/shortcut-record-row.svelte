@@ -1,6 +1,7 @@
 <script lang="ts">
   // 快捷键录制行：徽标展示 + 录制按钮 + 清除按钮，两种快捷键（快速显示 / 语音识别）共用。
   // 文案与配置键按 `kind` 内聚在此，调用方只传 kind；落盘与注册查询走同一链路。
+  // 语音路注册与服务运行态同生命周期：停止态只落盘不查注册（启动成功后自动接管并核验）。
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
   import PencilIcon from "@lucide/svelte/icons/pencil";
@@ -8,6 +9,7 @@
   import commands from "#libs/commands";
   import { reportCommandFailure } from "#libs/commands/cores";
   import { configState, updateConfig } from "#libs/hooks/config.svelte";
+  import { serviceState } from "#libs/hooks/service.svelte";
   import { m } from "#libs/i18n/paraglide/messages";
   import {
     formatAccelerator,
@@ -122,7 +124,10 @@
     await saveShortcut(combo);
   }
 
-  /** 落盘并即时注册；注册失败保留新值，提示换组合 */
+  /**
+   * 落盘并即时注册；注册失败保留新值，提示换组合。 语音路停止态只落盘：注册查询恒为假（注册与服务运行态同生命周期），
+   * 查了反而误报，启动成功后由服务状态机统一核验。
+   */
   async function saveShortcut(value: string): Promise<void> {
     if (saving) return;
     saving = true;
@@ -133,6 +138,11 @@
         return;
       }
       if (value === "") {
+        toast.success(texts.updated);
+        return;
+      }
+      const live = kind === "quick_open" || serviceState.status?.state === "running";
+      if (!live) {
         toast.success(texts.updated);
         return;
       }

@@ -1,7 +1,11 @@
 //! 全局快捷键管理：两路快捷键（快速打开 / 语音识别）的注册、解绑、启动恢复与状态查询。
 //!
-//! 仅桌面端启用（移动端为空操作）；快速打开只显示主窗口，
-//! 语音识别按键无条件发射事件交前端处理（运行态守卫在前端，避免本层反向依赖 `features::asr`）。
+//! 仅桌面端启用（移动端为空操作）；快速显示常驻注册，只显示主窗口。
+//! 语音识别按键只在服务运行时注册：`features::asr` 在启动成功后接管注册、停止时解绑，
+//! 启动恢复（`setup`）与配置更新（`apply`）都不碰语音路——服务未运行时按键不归本应用，
+//! 前端订阅的触发事件也就只在服务运行时才会到来。
+
+use std::sync::{Mutex, OnceLock};
 
 use tauri::{AppHandle, Manager};
 
@@ -19,7 +23,9 @@ pub fn should_switch(before: &str, after: &str) -> bool {
     before.trim() != after.trim()
 }
 
-/// 启动恢复：从磁盘读取存量并注册两路快捷键；空值跳过，失败只记日志
+/// 启动恢复：从磁盘读取快速打开存量并注册；空值跳过，失败只记日志。
+/// 语音路不在此注册——服务启动成功后由 `features::asr` 经 `set_voice_active` 接管，
+/// 未启动前按键不归本应用。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn setup(app: &tauri::App) {
     let handle = app.handle();
@@ -27,19 +33,17 @@ pub fn setup(app: &tauri::App) {
     if let Err(err) = register_quick_open(handle, config.shortcut_quick_open.trim()) {
         log::warn!("failed to register quick-open shortcut on setup: {err:#}");
     }
-    if let Err(err) = register_voice(handle, config.shortcut_voice.trim()) {
-        log::warn!("failed to register voice shortcut on setup: {err:#}");
-    }
 }
 
 /// 启动恢复；移动端无全局快捷键，直接返回
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub fn setup(_app: &tauri::App) {}
 
-/// 配置更新后的切换：两路各自先解绑旧值再注册新值；空值只解绑，失败只记日志
+/// 配置更新后的切换：只处理快速打开（先解绑旧值再注册新值；空值只解绑），失败只记日志。
+/// 语音路不在此切换——持久化已由 `config::update` 成功，运行时注册由
+/// `features::asr::sync_voice_shortcut` 按服务运行态统一对账（调用方在命令层补调）。
 ///
-/// 持久化已在 `config::update` 内成功，此处失败不回滚落盘值，
-/// 前端经状态查询命令自行提示用户换组合。
+/// 失败不回滚落盘值，前端经状态查询命令自行提示用户换组合。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn apply(
     app: &AppHandle,
@@ -51,12 +55,6 @@ pub fn apply(
         &before.shortcut_quick_open,
         &after.shortcut_quick_open,
         register_quick_open,
-    );
-    switch_one(
-        app,
-        &before.shortcut_voice,
-        &after.shortcut_voice,
-        register_voice,
     );
 }
 
@@ -109,6 +107,49 @@ pub fn is_registered(_app: &AppHandle, _shortcut: &str) -> bool {
     false
 }
 
+/// 本模块实际注册出去的语音组合：对账时先解绑它，再按需注册存量值，
+/// 配置更新改键、重置清空都不会把旧组合漏在全局快捷键里
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn voice_registered() -> &'static Mutex<String> {
+    static VOICE_REGISTERED: OnceLock<Mutex<String>> = OnceLock::new();
+    VOICE_REGISTERED.get_or_init(|| Mutex::new(String::new()))
+}
+
+/// 语音快捷键的生命周期开关：服务启动成功后调 `active = true` 接管注册，
+/// 服务停止时调 `active = false` 释放；`features::asr` 在启停与配置更新后调用，
+/// 本层不反向读取服务状态。
+///
+/// 对账语义：先解绑上次注册出去的组合，再按存量决定是否注册——改键不泄漏旧键，
+/// 清空与停止只解绑。注册失败只记日志，调用方经 `is_registered` 自行提示换组合。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_voice_active(app: &AppHandle, active: bool) {
+    let current = crate::cores::config::load_config(app)
+        .shortcut_voice
+        .trim()
+        .to_owned();
+    let mut registered = voice_registered().lock().unwrap_or_else(|poison| {
+        log::error!("voice shortcut lock poisoned, continuing with recovered guard");
+        poison.into_inner()
+    });
+    if !registered.is_empty() {
+        unregister_shortcut(app, &registered);
+    }
+    if active && !current.is_empty() {
+        if let Err(err) = register_voice(app, &current) {
+            log::warn!("failed to register voice shortcut on service start: {err:#}");
+            *registered = String::new();
+            return;
+        }
+        *registered = current;
+    } else {
+        *registered = String::new();
+    }
+}
+
+/// 语音快捷键的生命周期开关；移动端无全局快捷键，直接返回
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn set_voice_active(_app: &AppHandle, _active: bool) {}
+
 /// 注册快速打开快捷键并绑定唤起处理：只显示主窗口；空值跳过，调用方保证已 trim
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn register_quick_open(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
@@ -125,7 +166,7 @@ fn register_quick_open(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 注册语音识别快捷键并绑定唤起处理：按键即发事件交前端，前端按服务运行态决定开始还是丢弃；空值跳过
+/// 注册语音识别快捷键并绑定唤起处理：按键即发事件交前端；只在服务运行时注册，空值跳过
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn register_voice(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
     if shortcut.is_empty() {
@@ -141,8 +182,8 @@ fn register_voice(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 语音快捷键按下处理：无条件发射事件交前端；服务未运行时前端静默丢弃，
-/// 不打扰用户；服务运行时不显示本窗口（焦点必须留在用户当前应用）
+/// 语音快捷键按下处理：发射事件交前端；已注册即服务运行中（注册与运行态同生命周期），
+/// 前端仍保留运行态守卫防停启竞态；服务运行时不显示本窗口（焦点必须留在用户当前应用）
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn on_voice_shortcut_pressed(app: &AppHandle) {
     use tauri::Emitter;

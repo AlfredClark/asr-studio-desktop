@@ -24,7 +24,7 @@
       class={cn("size-4 shrink-0 transition-transform duration-100", !expanded && "-rotate-90")}
     />
     <span class="font-medium">{title}</span>
-    <span class="ml-auto text-xs">{count}</span>
+    <span class="ml-auto text-xs tabular-nums">{count}</span>
   </button>
   {#if expanded}
     <div class="mt-1 flex flex-col gap-0.5">

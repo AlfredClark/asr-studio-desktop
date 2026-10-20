@@ -6,11 +6,15 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 export const commands = {
 	/**  读取完整应用配置；各字段缺失或无法识别时逐项回落默认值 */
 	getConfig: () => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("get_config")),
-	/**  重置全部已知配置项为默认值，返回写后的完整配置 */
+	/**
+	 *  重置全部已知配置项为默认值，返回写后的完整配置；
+	 *  语音快捷键同样按运行态对账（重置清空后不再占用全局按键）。
+	 */
 	resetConfig: () => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("reset_config")),
 	/**
 	 *  局部更新配置：只写提交的字段，返回写后的完整配置（前端据此回写内存态，无需再读一次）。
 	 *  界面语言亦经此切换——运行时 `rust_i18n` 由 `config::apply_runtime_effects` 统一同步。
+	 *  语音快捷键注册与服务运行态同生命周期：落盘成功后按运行态对账（改键 / 清空即时生效）。
 	 */
 	updateConfig: (patch: ConfigPatch) => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("update_config", { patch })),
 	/**  列出全部模型及其本机状态；前端据此渲染分组与按钮 */
@@ -33,7 +37,7 @@ export const commands = {
 	listInputDevices: () => typedError<AudioDevice[], CommandError>(__TAURI_INVOKE("list_input_devices")),
 	/**  启动识别服务：模型须已下载校验；同服重复启动直接拒绝 */
 	startService: (modelId: string) => typedError<null, CommandError>(__TAURI_INVOKE("start_service", { modelId })),
-	/**  停止服务并释放识别器内存；未运行视为成功 */
+	/**  停止服务并释放识别器内存，同时解绑语音快捷键；未运行视为成功 */
 	stopService: () => typedError<null, CommandError>(__TAURI_INVOKE("stop_service")),
 	/**  查询服务状态快照；纯内存读 */
 	serviceStatus: () => typedError<ServiceStatus, CommandError>(__TAURI_INVOKE("service_status")),

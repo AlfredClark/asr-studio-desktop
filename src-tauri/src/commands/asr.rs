@@ -20,11 +20,12 @@ pub async fn start_service(app: tauri::AppHandle, model_id: String) -> CommandRe
     Ok(asr::start(&app, &model_id).await?)
 }
 
-/// 停止服务并释放识别器内存；未运行视为成功
+/// 停止服务并释放识别器内存，同时解绑语音快捷键；未运行视为成功
 #[tauri::command]
 #[specta::specta]
-pub fn stop_service() -> CommandResult<()> {
-    asr::stop();
+#[allow(clippy::needless_pass_by_value)]
+pub fn stop_service(app: tauri::AppHandle) -> CommandResult<()> {
+    asr::stop(&app);
     Ok(())
 }
 

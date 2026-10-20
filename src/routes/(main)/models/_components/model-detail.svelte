@@ -1,12 +1,15 @@
 <script lang="ts">
-  // 模型详情：标题 + 徽标、简介、大小与目录、目录树，上方滚动，操作按钮沉底。
-  // 操作行为与旧卡片一致：下载中禁用互斥操作；删除走二次确认弹窗；前往下载页经网关。
+  // 模型详情：标题 + 徽标 + 外链、简介、结构化元信息（体积 / 位置可复制），上方滚动，操作按钮沉底。
+  // 操作按状态收敛：下载中禁用互斥操作；missing 只有下载；partial 可删残留；ready 主行动去服务页。
+  // 删除走二次确认弹窗；前往下载页经网关。目录树默认只展顶层，非就绪节点才挂徽标。
   import { SvelteSet } from "svelte/reactivity";
   import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import ConfirmDialog from "#components/common/confirm-dialog.svelte";
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import CopyIcon from "@lucide/svelte/icons/copy";
+  import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
   import FileIcon from "@lucide/svelte/icons/file";
   import { Progress } from "#components/shadcn-svelte/progress";
   import { cn } from "#libs/utils/shadcn-svelte";
@@ -45,7 +48,7 @@
   /** 目录树：随条目与状态刷新，失败回空（该节隐藏） */
   let files = $state<ModelFileNode[]>([]);
 
-  /** 收起的目录路径集合：本身响应式，默认全展开，切模型即清空 */
+  /** 收起的目录路径集合：本身响应式，深层目录默认收起，切模型即重算 */
   let collapsed = new SvelteSet<string>();
 
   // 下载进度（本模型）：事件推送写全局表，此处只读
@@ -53,7 +56,10 @@
   // 下载中：后端事件驱动，前端不做本地推断
   const busy = $derived(entry.status === "downloading" || progress !== undefined);
 
-  /** 进度百分比：解压阶段总数未知，固定转圈不定值展示 */
+  /** 未就绪文件数：目录树组头一次说清，避免逐行徽标 */
+  const pendingCount = $derived(files.filter((file) => file.status !== "ready").length);
+
+  /** 进度百分比：解压阶段总数未知，转不定值条展示 */
   const percent = $derived.by(() => {
     if (!progress || progress.total == null) return null;
     if (progress.total === 0) return 0;
@@ -74,14 +80,20 @@
     return `${m.models_phase_download()}${suffix}`;
   });
 
-  // 条目或状态变化即重拉：竞态用取消标记拦截，旧请求不覆盖新结果
+  // 条目或状态变化即重拉：竞态用取消标记拦截，旧请求不覆盖新结果；
+  // 深层目录默认收起，顶层保持展开（渐进披露）
   $effect(() => {
     const id = entry.id;
     void entry.status;
     collapsed.clear();
     let cancelled = false;
     void fetchModelFiles(id).then((rows) => {
-      if (!cancelled) files = rows;
+      if (cancelled) return;
+      collapsed.clear();
+      for (const row of rows) {
+        if (row.is_dir && row.path.includes("/")) collapsed.add(row.path);
+      }
+      files = rows;
     });
     return () => {
       cancelled = true;
@@ -114,6 +126,18 @@
     if (!(await openExternal(entry.page_url))) toast.error(m.models_open_page_failed());
   }
 
+  /** 复制安装路径：剪贴板不可用（如非安全上下文）即提示失败 */
+  async function handleCopyPath(): Promise<void> {
+    const path = entry.local_path;
+    if (!path) return;
+    try {
+      await navigator.clipboard.writeText(path);
+      toast.success(m.models_path_copied());
+    } catch {
+      toast.error(m.models_path_copy_failed());
+    }
+  }
+
   /** 确认删除：弹窗已由通用组件关闭，失败不刷新（后端没动） */
   async function handleDelete(): Promise<void> {
     if (deleting) return;
@@ -129,20 +153,58 @@
 <div data-testid="model-detail" class="flex h-full flex-col gap-4 p-4">
   <ScrollArea class="min-h-0 flex-1">
     <div class="flex flex-col gap-3 pr-1">
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="text-2xl font-medium">{entry.display_name}</h2>
+      <div class="flex items-center gap-2">
+        <h2 class="min-w-0 flex-1 truncate text-xl font-medium">{entry.display_name}</h2>
         <Badge variant={entry.status === "ready" ? "default" : "secondary"}>
           {modelStatusLabel(entry.status, progress !== undefined)}
         </Badge>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onclick={() => void handleOpenPage()}
+          aria-label={m.models_open_page()}
+          title={m.models_open_page()}
+        >
+          <ExternalLinkIcon />
+        </Button>
       </div>
       <p class="text-sm text-muted-foreground">{intros[entry.category]()}</p>
-      {#if entry.local_path}
-        <p class="text-xs break-all text-muted-foreground">{entry.local_path}</p>
-      {/if}
-      <p class="text-xs text-muted-foreground">{formatBytes(entry.tarball_bytes)}</p>
+      <div class="flex flex-col gap-1.5 rounded-lg bg-muted/50 p-2.5 text-xs">
+        <div class="flex items-center justify-between gap-2">
+          <span class="shrink-0 text-muted-foreground">{m.models_detail_size_label()}</span>
+          <span class="tabular-nums">{formatBytes(entry.tarball_bytes)}</span>
+        </div>
+        {#if entry.local_path}
+          <div class="flex items-center gap-2">
+            <span class="shrink-0 text-muted-foreground">{m.models_detail_path_label()}</span>
+            <span class="min-w-0 flex-1 truncate text-right" title={entry.local_path}>
+              {entry.local_path}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onclick={() => void handleCopyPath()}
+              aria-label={m.models_copy_path()}
+              title={m.models_copy_path()}
+            >
+              <CopyIcon />
+            </Button>
+          </div>
+        {/if}
+        {#if entry.status === "partial"}
+          <p class="text-muted-foreground">{m.models_partial_hint()}</p>
+        {/if}
+      </div>
       {#if files.length > 0}
         <div>
-          <p class="text-xs font-medium text-muted-foreground">{m.models_detail_tree()}</p>
+          <div class="flex items-baseline gap-2">
+            <p class="text-xs font-medium text-muted-foreground">{m.models_detail_tree()}</p>
+            {#if pendingCount > 0}
+              <span class="text-xs text-muted-foreground tabular-nums">
+                {m.models_tree_pending({ count: pendingCount })}
+              </span>
+            {/if}
+          </div>
           <ul class="mt-1 flex flex-col">
             {#each files as file (file.path)}
               {@const segments = file.path.split("/")}
@@ -153,7 +215,7 @@
                   {#if file.is_dir}
                     <button
                       type="button"
-                      class="flex h-7 w-full items-center gap-2 rounded-md pr-1 text-left text-sm hover:bg-accent"
+                      class="flex h-8 w-full items-center gap-2 rounded-md pr-1 text-left text-sm hover:bg-accent"
                       style={`padding-left: ${depth * 16}px`}
                       aria-expanded={!collapsed.has(file.path)}
                       onclick={() => toggleDir(file.path)}
@@ -168,13 +230,15 @@
                       <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
                         {formatBytes(file.size)}
                       </span>
-                      <Badge variant={badgeVariant(file.status)}>
-                        {modelStatusLabel(file.status, false)}
-                      </Badge>
+                      {#if file.status !== "ready"}
+                        <Badge variant={badgeVariant(file.status)}>
+                          {modelStatusLabel(file.status, false)}
+                        </Badge>
+                      {/if}
                     </button>
                   {:else}
                     <div
-                      class="flex h-7 items-center gap-2 pr-1 text-sm"
+                      class="flex h-8 items-center gap-2 pr-1 text-sm"
                       style={`padding-left: ${depth * 16 + 24}px`}
                     >
                       <FileIcon class="size-4 shrink-0 text-muted-foreground" />
@@ -182,9 +246,11 @@
                       <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
                         {formatBytes(file.size)}
                       </span>
-                      <Badge variant={badgeVariant(file.status)}>
-                        {modelStatusLabel(file.status, false)}
-                      </Badge>
+                      {#if file.status !== "ready"}
+                        <Badge variant={badgeVariant(file.status)}>
+                          {modelStatusLabel(file.status, false)}
+                        </Badge>
+                      {/if}
                     </div>
                   {/if}
                 </li>
@@ -200,9 +266,20 @@
       <div class="mb-2 space-y-1">
         {#if percent != null}
           <Progress value={percent} max={100} aria-label={phaseText ?? ""} />
+        {:else}
+          <div
+            class="h-1 w-full overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-label={phaseText ?? m.models_phase_extract()}
+          >
+            <div class="h-full w-1/3 animate-pulse rounded-full bg-primary"></div>
+          </div>
         {/if}
         {#if phaseText}
           <p class="text-xs text-muted-foreground">{phaseText}</p>
+        {/if}
+        {#if progress.phase === "extract"}
+          <p class="text-xs text-muted-foreground">{m.models_extract_wait()}</p>
         {/if}
       </div>
     {/if}
@@ -212,7 +289,35 @@
           {m.models_cancel()}
         </Button>
       {:else if entry.status === "ready"}
-        <Button variant="outline" size="sm" onclick={() => void verifyModel(entry.id)}>
+        <Button
+          variant="outline"
+          size="sm"
+          title={m.models_verify_hint()}
+          onclick={() => void verifyModel(entry.id)}
+        >
+          {m.models_verify()}
+        </Button>
+        <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
+          {m.models_open_dir()}
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          disabled={deleting}
+          onclick={() => (confirmOpen = true)}
+        >
+          {m.models_delete()}
+        </Button>
+      {:else if entry.status === "partial"}
+        <Button size="sm" onclick={() => void downloadModel(entry.id)}>
+          {m.models_download()}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          title={m.models_verify_hint()}
+          onclick={() => void verifyModel(entry.id)}
+        >
           {m.models_verify()}
         </Button>
         <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
@@ -229,17 +334,6 @@
       {:else}
         <Button size="sm" onclick={() => void downloadModel(entry.id)}>
           {m.models_download()}
-        </Button>
-        {#if entry.status === "partial"}
-          <Button variant="outline" size="sm" onclick={() => void verifyModel(entry.id)}>
-            {m.models_verify()}
-          </Button>
-        {/if}
-        <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
-          {m.models_open_dir()}
-        </Button>
-        <Button variant="link" size="sm" class="ml-auto" onclick={() => void handleOpenPage()}>
-          {m.models_open_page()}
         </Button>
       {/if}
     </div>

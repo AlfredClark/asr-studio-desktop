@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import Row from "../../../../../../routes/(main)/settings/_components/shortcut-record-row.svelte";
+import Row from "../../../../../../components/common/shortcut-record-row.svelte";
 import Group from "../../../../../../routes/(main)/settings/_components/shortcut-settings.svelte";
 
 // 纯替身：配置状态、注册查询与提示全部 mock，只验证录制接线——
@@ -9,6 +9,9 @@ import Group from "../../../../../../routes/(main)/settings/_components/shortcut
 const updateConfigMock = vi.hoisted(() => vi.fn());
 const isShortcutRegisteredMock = vi.hoisted(() => vi.fn());
 const reportFailureMock = vi.hoisted(() => vi.fn());
+const serviceStateMock = vi.hoisted((): { status: { state: string } | null } => ({
+  status: null,
+}));
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -40,6 +43,10 @@ vi.mock("#libs/commands", () => ({
 
 vi.mock("#libs/commands/cores", () => ({
   reportCommandFailure: reportFailureMock,
+}));
+
+vi.mock("#libs/hooks/service.svelte", () => ({
+  serviceState: serviceStateMock,
 }));
 
 vi.mock("#libs/utils/toast", () => ({ toast: toastMocks }));
@@ -77,6 +84,7 @@ beforeEach(() => {
       return true;
     },
   );
+  serviceStateMock.status = null;
   isShortcutRegisteredMock.mockReturnValue(fakeCommand({ status: "ok", data: true }));
 });
 
@@ -85,11 +93,11 @@ afterEach(() => {
 });
 
 describe("快捷键设置分组", () => {
-  it("渲染两行：快速显示与语音识别", () => {
+  it("只渲染快速显示一行，语音识别已移到服务页", () => {
     render(Group);
 
     expect(screen.getByText("Quick open app")).not.toBeNull();
-    expect(screen.getByText("Voice recognition")).not.toBeNull();
+    expect(screen.queryByText("Voice recognition")).toBeNull();
   });
 });
 
@@ -110,6 +118,39 @@ describe("快捷键录制行", () => {
     expect(scope.getByText("Shift")).not.toBeNull();
     expect(scope.getByText("O")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Clear" })).not.toBeNull();
+  });
+
+  it("停止态保存语音键只落盘不查注册", async () => {
+    const user = userEvent.setup();
+    serviceStateMock.status = null;
+    render(Row, { props: { kind: "voice" } });
+    await user.click(screen.getByRole("button", { name: "Record shortcut" }));
+    fireEvent.keyDown(window, { key: "v", ctrlKey: true, altKey: true });
+
+    await vi.waitFor(() => {
+      expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_voice: "Ctrl+Alt+V" });
+    });
+    await vi.waitFor(() => {
+      expect(toastMocks.success).toHaveBeenCalled();
+    });
+    expect(isShortcutRegisteredMock).not.toHaveBeenCalled();
+  });
+
+  it("运行态保存语音键查注册，未注册提示换组合", async () => {
+    const user = userEvent.setup();
+    serviceStateMock.status = { state: "running" };
+    isShortcutRegisteredMock.mockReturnValue(fakeCommand({ status: "ok", data: false }));
+    render(Row, { props: { kind: "voice" } });
+    await user.click(screen.getByRole("button", { name: "Record shortcut" }));
+    fireEvent.keyDown(window, { key: "v", ctrlKey: true, altKey: true });
+
+    await vi.waitFor(() => {
+      expect(isShortcutRegisteredMock).toHaveBeenCalledWith("Ctrl+Alt+V");
+    });
+    await vi.waitFor(() => {
+      expect(toastMocks.warning).toHaveBeenCalled();
+    });
+    expect(toastMocks.success).not.toHaveBeenCalled();
   });
 
   it("语音行读写独立字段", async () => {

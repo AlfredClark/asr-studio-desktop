@@ -13,17 +13,23 @@ pub fn get_config(app: tauri::AppHandle) -> CommandResult<Config> {
 
 /// 局部更新配置：只写提交的字段，返回写后的完整配置（前端据此回写内存态，无需再读一次）。
 /// 界面语言亦经此切换——运行时 `rust_i18n` 由 `config::apply_runtime_effects` 统一同步。
+/// 语音快捷键注册与服务运行态同生命周期：落盘成功后按运行态对账（改键 / 清空即时生效）。
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
 pub fn update_config(app: tauri::AppHandle, patch: ConfigPatch) -> CommandResult<Config> {
-    Ok(config::update(&app, &patch)?)
+    let config = config::update(&app, &patch)?;
+    crate::features::asr::sync_voice_shortcut(&app);
+    Ok(config)
 }
 
-/// 重置全部已知配置项为默认值，返回写后的完整配置
+/// 重置全部已知配置项为默认值，返回写后的完整配置；
+/// 语音快捷键同样按运行态对账（重置清空后不再占用全局按键）。
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
 pub fn reset_config(app: tauri::AppHandle) -> CommandResult<Config> {
-    Ok(config::reset(&app)?)
+    let config = config::reset(&app)?;
+    crate::features::asr::sync_voice_shortcut(&app);
+    Ok(config)
 }

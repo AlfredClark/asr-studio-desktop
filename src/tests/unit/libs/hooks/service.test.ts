@@ -13,7 +13,9 @@ import {
   stopTestRecording,
 } from "#libs/hooks/service.svelte";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+import { configState, type AppConfig } from "#libs/hooks/config.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
+import { summarizeHistory } from "#libs/hooks/service.svelte";
 
 vi.mock("#libs/commands", () => ({
   default: {
@@ -26,6 +28,7 @@ vi.mock("#libs/commands", () => ({
     stopRecording: vi.fn(),
     transcribeFile: vi.fn(),
     outputText: vi.fn(),
+    isShortcutRegistered: vi.fn(),
   },
 }));
 
@@ -105,6 +108,7 @@ beforeEach(() => {
   serviceState.recognizing = false;
   serviceState.switching = false;
   serviceState.result = null;
+  serviceState.history = [];
   mocked.listModels.mockReturnValue(fakeCommand({ status: "ok", data: [model] }) as never);
   mocked.listInputDevices.mockReturnValue(fakeCommand({ status: "ok", data: [device] }) as never);
   mocked.serviceStatus.mockReturnValue(
@@ -128,6 +132,8 @@ beforeEach(() => {
   mocked.outputText.mockReturnValue(
     fakeCommand({ status: "ok", data: { via: "clipboard", fallback: false } }) as never,
   );
+  mocked.isShortcutRegistered.mockReturnValue(fakeCommand({ status: "ok", data: true }) as never);
+  configState.value = null;
 });
 
 describe("识别服务状态", () => {
@@ -174,6 +180,41 @@ describe("识别服务状态", () => {
     expect(mocked.startService).toHaveBeenCalledWith(model.id);
     expect(serviceState.status?.state).toBe("running");
     expect(mockedToast.success).toHaveBeenCalled();
+  });
+
+  it("启动成功后语音键已注册不打扰", async () => {
+    runningStatus();
+    serviceState.selectedModel = model.id;
+    configState.value = { shortcut_voice: "Ctrl+Alt+V" } as AppConfig;
+
+    await startService();
+
+    expect(mocked.isShortcutRegistered).toHaveBeenCalledWith("Ctrl+Alt+V");
+    expect(mockedToast.warning).not.toHaveBeenCalled();
+  });
+
+  it("启动成功后语音键未注册提示换组合", async () => {
+    runningStatus();
+    serviceState.selectedModel = model.id;
+    configState.value = { shortcut_voice: "Ctrl+Alt+V" } as AppConfig;
+    mocked.isShortcutRegistered.mockReturnValue(
+      fakeCommand({ status: "ok", data: false }) as never,
+    );
+
+    await startService();
+
+    expect(mockedToast.warning).toHaveBeenCalled();
+  });
+
+  it("启动失败或未配置语音键时不核验注册", async () => {
+    mocked.startService.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+    serviceState.selectedModel = model.id;
+
+    await startService();
+
+    expect(mocked.isShortcutRegistered).not.toHaveBeenCalled();
   });
 
   it("启动失败时报错且不抛错", async () => {
@@ -239,6 +280,9 @@ describe("识别服务状态", () => {
     expect(serviceState.recognizing).toBe(false);
     expect(serviceState.result?.text).toBe("你好");
     expect(serviceState.result?.fileName).toBe("a.wav");
+    // 同一内核：成功结果记入会话历史（测试与快捷键两路共用）
+    expect(serviceState.history).toHaveLength(1);
+    expect(serviceState.history[0]?.text).toBe("你好");
   });
 
   it("服务未运行时不开始录制", async () => {
@@ -263,6 +307,53 @@ describe("识别服务状态", () => {
     expect(serviceState.result).toBeNull();
     expect(serviceState.recognizing).toBe(false);
     expect(mockedToast.error).toHaveBeenCalled();
+  });
+
+  it("转写失败时不记入会话历史", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+    mocked.transcribeFile.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    await startTestRecording();
+    await stopTestRecording();
+
+    expect(serviceState.history).toHaveLength(0);
+  });
+
+  it("会话历史超限截尾，最新在前", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+    serviceState.history = Array.from({ length: 100 }, (_, index) => ({
+      text: `旧${index}`,
+      audioSec: 1,
+      inferMs: 100,
+      fileName: `old-${index}.wav`,
+      id: index + 1,
+      at: index,
+    }));
+
+    await startTestRecording();
+    await stopTestRecording();
+
+    expect(serviceState.history).toHaveLength(100);
+    expect(serviceState.history[0]?.text).toBe("你好");
+  });
+
+  it("历史统计：空历史归零", () => {
+    expect(summarizeHistory([])).toEqual({ count: 0, totalChars: 0, avgInferMs: null });
+  });
+
+  it("历史统计：条数、字符总数与推理耗时均值", () => {
+    const stats = summarizeHistory([
+      { text: "你好", audioSec: 2, inferMs: 1000, fileName: "a.wav", id: 1, at: 1 },
+      { text: "世界！", audioSec: 3, inferMs: 3000, fileName: "b.wav", id: 2, at: 2 },
+    ]);
+
+    expect(stats).toEqual({ count: 2, totalChars: 5, avgInferMs: 2000 });
   });
 
   it("快捷键空闲时直接开始录制，不切页面不抢焦点", async () => {

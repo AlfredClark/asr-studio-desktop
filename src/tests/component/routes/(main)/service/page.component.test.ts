@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+import type { RecognitionRecord } from "#libs/hooks/service.svelte";
 import Page from "../../../../../routes/(main)/service/+page.svelte";
 
 // bits-ui 组件在 jsdom 下缺失的浏览器 API，就地补齐（同设置页测试）。
@@ -29,7 +30,7 @@ const startServiceMock = vi.hoisted(() => vi.fn());
 const stopServiceMock = vi.hoisted(() => vi.fn());
 const startTestRecordingMock = vi.hoisted(() => vi.fn());
 const stopTestRecordingMock = vi.hoisted(() => vi.fn());
-const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 const updateConfigMock = vi.hoisted(() => vi.fn());
 const configStateMock = vi.hoisted((): { value: { shortcut_output: string } | null } => ({
   value: { shortcut_output: "clipboard" },
@@ -45,6 +46,7 @@ const serviceStateMock = vi.hoisted(
     recognizing: boolean;
     switching: boolean;
     result: { text: string; audioSec: number; inferMs: number; fileName: string } | null;
+    history: RecognitionRecord[];
   } => ({
     status: null,
     models: [],
@@ -55,6 +57,7 @@ const serviceStateMock = vi.hoisted(
     recognizing: false,
     switching: false,
     result: null,
+    history: [],
   }),
 );
 
@@ -71,17 +74,21 @@ const modelEntry: ModelEntry = {
 
 const deviceEntry: AudioDevice = { id: "0", name: "Microphone", is_default: true };
 
-vi.mock("#libs/hooks/service.svelte", () => ({
-  serviceState: serviceStateMock,
-  deviceLabel: (device: AudioDevice) => device.name,
-  refreshServiceData: refreshServiceDataMock,
-  selectModel: selectModelMock,
-  selectDevice: selectDeviceMock,
-  startService: startServiceMock,
-  stopService: stopServiceMock,
-  startTestRecording: startTestRecordingMock,
-  stopTestRecording: stopTestRecordingMock,
-}));
+vi.mock("#libs/hooks/service.svelte", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#libs/hooks/service.svelte")>();
+  return {
+    ...actual,
+    serviceState: serviceStateMock,
+    deviceLabel: (device: AudioDevice) => device.name,
+    refreshServiceData: refreshServiceDataMock,
+    selectModel: selectModelMock,
+    selectDevice: selectDeviceMock,
+    startService: startServiceMock,
+    stopService: stopServiceMock,
+    startTestRecording: startTestRecordingMock,
+    stopTestRecording: stopTestRecordingMock,
+  };
+});
 
 vi.mock("#libs/utils/toast", () => ({ toast: toastMocks }));
 
@@ -102,6 +109,7 @@ beforeEach(() => {
   serviceStateMock.recognizing = false;
   serviceStateMock.switching = false;
   serviceStateMock.result = null;
+  serviceStateMock.history = [];
   configStateMock.value = { shortcut_output: "clipboard" };
   updateConfigMock.mockResolvedValue(true);
 });
@@ -112,16 +120,58 @@ afterEach(() => {
 });
 
 describe("服务页", () => {
-  it("挂载即刷新并渲染标题与徽标", async () => {
+  it("挂载即刷新并渲染统计、记录与状态徽标", async () => {
     render(Page);
 
     await waitFor(() => {
       expect(refreshServiceDataMock).toHaveBeenCalledOnce();
     });
-    expect(screen.getByText("Service")).not.toBeNull();
+    expect(screen.getByText("Recognitions")).not.toBeNull();
+    expect(screen.getByText("Total characters")).not.toBeNull();
+    expect(screen.getByText("Avg recognition time")).not.toBeNull();
+    expect(screen.getByText("Recognition history")).not.toBeNull();
     expect(screen.getByText("Stopped")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Start service" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Start recognizing" })).not.toBeNull();
+  });
+
+  it("空历史显示零统计与空态提示", () => {
+    render(Page);
+
+    const stats = within(screen.getByTestId("service-stats"));
+    expect(stats.getAllByText("0", { exact: true })).toHaveLength(2);
+    expect(stats.getByText("0 s")).not.toBeNull();
+    expect(screen.getByText("No recognitions yet — records will appear here")).not.toBeNull();
+  });
+
+  it("历史记录渲染统计与条目，点击展开全文", async () => {
+    const user = userEvent.setup();
+    const longText = `识别结果全文${"补字".repeat(40)}结尾`;
+    serviceStateMock.history = [
+      { text: "你好世界", audioSec: 2.5, inferMs: 300, fileName: "a.wav", id: 2, at: 2 },
+      {
+        text: longText,
+        audioSec: 5,
+        inferMs: 1500,
+        fileName: "b.wav",
+        id: 1,
+        at: 1,
+      },
+    ];
+    render(Page);
+
+    // 条数 2、字符总数、推理耗时均值 (300+1500)/2=900ms → 0.9 s
+    const stats = screen.getByTestId("service-stats");
+    expect(stats.textContent).toContain("2");
+    expect(stats.textContent).toContain("0.9 s");
+    expect(screen.getByText("你好世界")).not.toBeNull();
+
+    const recordButton = screen.getByRole("button", { name: new RegExp("补字") });
+    expect(recordButton.getAttribute("aria-expanded")).toBe("false");
+    await user.click(recordButton);
+
+    expect(recordButton.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText(longText)).not.toBeNull();
   });
 
   it("服务未运行时录制按钮禁用", () => {
@@ -164,8 +214,7 @@ describe("服务页", () => {
     expect(button.hasAttribute("disabled")).toBe(true);
   });
 
-  it("识别结果回显文本与用时", () => {
-    serviceStateMock.status = { state: "running", modelId: modelEntry.id, loadMs: 800 };
+  it("旧结果回显已由历史列表承接，不再单独展示", () => {
     serviceStateMock.result = {
       text: "你好世界",
       audioSec: 2.5,
@@ -174,8 +223,7 @@ describe("服务页", () => {
     };
     render(Page);
 
-    expect(screen.getByText("你好世界")).not.toBeNull();
-    expect(screen.getByText("recording-20261020", { exact: false })).not.toBeNull();
+    expect(screen.queryByText("recording-20261020-100000.wav")).toBeNull();
   });
 
   it("运行时显示停止按钮", async () => {
@@ -186,6 +234,17 @@ describe("服务页", () => {
     await user.click(screen.getByRole("button", { name: "Stop service" }));
 
     expect(stopServiceMock).toHaveBeenCalledOnce();
+  });
+
+  it("控制分组含语音快捷键行", () => {
+    render(Page);
+
+    expect(screen.getByText("Voice recognition")).not.toBeNull();
+    expect(
+      screen.getByText("Press the global shortcut to start or stop recognition", {
+        exact: false,
+      }),
+    ).not.toBeNull();
   });
 
   it("无模型时提示去下载", () => {

@@ -91,19 +91,19 @@ beforeEach(() => {
 });
 
 describe("模型全局状态", () => {
-  it("刷新写入条目", async () => {
-    await refreshModels();
+  it("刷新写入条目并返回真", async () => {
+    await expect(refreshModels()).resolves.toBe(true);
 
     expect(mocked.listModels).toHaveBeenCalledOnce();
     expect(modelsState.entries).toEqual([entry]);
   });
 
-  it("刷新失败时上报且不抛错", async () => {
+  it("刷新失败时上报、返回假且不抛错", async () => {
     mocked.listModels.mockReturnValue(
       fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
     );
 
-    await refreshModels();
+    await expect(refreshModels()).resolves.toBe(false);
 
     expect(modelsState.entries).toEqual([]);
   });

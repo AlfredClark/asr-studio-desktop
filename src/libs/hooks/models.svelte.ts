@@ -49,16 +49,15 @@ async function ensureProgressListener(): Promise<void> {
   }
 }
 
-/** 刷新模型清单；失败上报但不打扰（页面空态由调用方渲染） */
-export async function refreshModels(): Promise<void> {
-  await commands
-    .listModels()
-    .success((entries) => {
-      modelsState.entries = entries;
-    })
-    .failed((failure) => {
-      reportCommandFailure("[models] failed to load models", failure);
-    });
+/** 刷新模型清单；成功返回真，失败上报并返回假（页面据此渲染空态或重试） */
+export async function refreshModels(): Promise<boolean> {
+  const result = await commands.listModels().result();
+  if (result.status === "error") {
+    reportCommandFailure("[models] failed to load models", result.error);
+    return false;
+  }
+  modelsState.entries = result.data;
+  return true;
 }
 
 /** 开始下载：先订进度再发命令，避免首包事件丢失 */

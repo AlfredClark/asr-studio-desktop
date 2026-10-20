@@ -607,8 +607,9 @@ fn apply_runtime_effects(app: &tauri::AppHandle, before: &Config, after: &Config
     if crate::cores::shortcut::should_switch(
         &before.shortcut_quick_open,
         &after.shortcut_quick_open,
-    ) || crate::cores::shortcut::should_switch(&before.shortcut_voice, &after.shortcut_voice)
-    {
+    ) {
+        // 只切快速打开；语音路注册与服务运行态同生命周期，
+        // 由 `features::asr` 在启停时与命令层在配置更新后经 `sync_voice_shortcut` 对账
         crate::cores::shortcut::apply(app, before, after);
     }
 }

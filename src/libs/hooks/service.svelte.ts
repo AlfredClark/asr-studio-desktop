@@ -4,6 +4,7 @@
 import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+import { configState } from "#libs/hooks/config.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
 
@@ -29,6 +30,37 @@ export interface TestResult {
   fileName: string;
 }
 
+/** 会话级识别记录：`TestResult` 加 id 与完成时间戳；只放会话内存，重启即失效 */
+export interface RecognitionRecord extends TestResult {
+  /** 会话内自增 id */
+  id: number;
+  /** 完成时间戳（UTC 毫秒，展示层转本地时区） */
+  at: number;
+}
+
+/** 历史上限：最新在前，超限截尾，避免长会话内存膨胀 */
+export const HISTORY_LIMIT = 100;
+
+/** 会话内记录 id 计数器：模块级，重启即清零 */
+let recordSeq = 0;
+
+/** 历史统计：条数 / 字符总数（`text.length` 求和）/ 推理耗时均值毫秒（空历史为 `null`） */
+export function summarizeHistory(records: RecognitionRecord[]): {
+  count: number;
+  totalChars: number;
+  avgInferMs: number | null;
+} {
+  const count = records.length;
+  if (count === 0) return { count: 0, totalChars: 0, avgInferMs: null };
+  let totalChars = 0;
+  let totalInferMs = 0;
+  for (const record of records) {
+    totalChars += record.text.length;
+    totalInferMs += record.inferMs;
+  }
+  return { count, totalChars, avgInferMs: totalInferMs / count };
+}
+
 /** 跨页面共享的服务状态；选择项只放会话内存，不落盘 */
 export const serviceState = $state<{
   /** 后端状态快照 */
@@ -49,6 +81,8 @@ export const serviceState = $state<{
   switching: boolean;
   /** 最近一次识别结果 */
   result: TestResult | null;
+  /** 会话级识别历史：最新在前，只放会话内存，重启即失效 */
+  history: RecognitionRecord[];
 }>({
   status: null,
   models: [],
@@ -59,6 +93,7 @@ export const serviceState = $state<{
   recognizing: false,
   switching: false,
   result: null,
+  history: [],
 });
 
 /** “系统默认”输入选项 id：与后端 `features::audio::DEFAULT_DEVICE_ID` 同字面量， 改名需两端同步 */
@@ -127,7 +162,7 @@ export async function refreshServiceData(): Promise<void> {
   await syncStatus();
 }
 
-/** 启动服务：只接受已选中的就绪模型，成功后同步快照 */
+/** 启动服务：只接受已选中的就绪模型，成功后同步快照并核验语音键注册 */
 export async function startService(): Promise<void> {
   const id = serviceState.selectedModel;
   if (id == null || serviceState.switching) return;
@@ -146,6 +181,7 @@ export async function startService(): Promise<void> {
   } finally {
     serviceState.switching = false;
   }
+  await warnIfVoiceShortcutInactive();
 }
 
 /** 停止服务：幂等成功，后端未运行也视为成功 */
@@ -181,6 +217,22 @@ export async function selectModel(id: string): Promise<void> {
     await syncStatus();
   } finally {
     serviceState.switching = false;
+  }
+  await warnIfVoiceShortcutInactive();
+}
+
+/** 启动成功后核验语音快捷键：存量组合未注册（被占用或非法）即提示换组合。 停止态与未配置直接跳过——注册与服务运行态同生命周期，查了也是假阴性。 */
+async function warnIfVoiceShortcutInactive(): Promise<void> {
+  if (serviceState.status?.state !== "running") return;
+  const combo = configState.value?.shortcut_voice?.trim();
+  if (!combo) return;
+  const result = await commands.isShortcutRegistered(combo).result();
+  if (result.status === "error") {
+    reportCommandFailure("[service] voice shortcut check failed", result.error);
+    return;
+  }
+  if (!result.data) {
+    toast.warning(m.settings_voice_not_registered());
   }
 }
 
@@ -220,7 +272,10 @@ export async function stopTestRecording(): Promise<void> {
   if (result) serviceState.result = result;
 }
 
-/** 停止录制并转写（共用内核）：测试按钮只取回显，快捷键流程拿到结果再按配置输出。 失败已在内部提示并上报，调用方按 `null` 收尾即可。 */
+/**
+ * 停止录制并转写（共用内核）：测试按钮只取回显，快捷键流程拿到结果再按配置输出。 失败已在内部提示并上报，调用方按 `null`
+ * 收尾即可；成功结果同时记入会话历史。
+ */
 async function stopAndTranscribe(): Promise<TestResult | null> {
   if (!serviceState.recording || serviceState.recognizing) return null;
   serviceState.recording = false;
@@ -239,12 +294,20 @@ async function stopAndTranscribe(): Promise<TestResult | null> {
       reportCommandFailure("[service] transcribe failed", transcribed.error);
       return null;
     }
-    return {
+    const entry: RecognitionRecord = {
       text: transcribed.data.text,
       audioSec: transcribed.data.audio_sec ?? 0,
       inferMs: transcribed.data.infer_ms,
       fileName,
+      id: (recordSeq += 1),
+      at: Date.now(),
     };
+    // 会话历史：测试按钮与快捷键两路共用同一内核，此处一次记入，最新在前、超限截尾
+    serviceState.history.unshift(entry);
+    if (serviceState.history.length > HISTORY_LIMIT) {
+      serviceState.history.length = HISTORY_LIMIT;
+    }
+    return entry;
   } finally {
     serviceState.recognizing = false;
   }

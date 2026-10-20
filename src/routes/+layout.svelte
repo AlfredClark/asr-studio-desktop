@@ -136,8 +136,9 @@
     };
   });
 
-  // 快捷键语音触发：会话级单例订阅，按下快捷键时按录制态开始或结束识别；
-  // 非 Tauri 环境无事件，直接跳过
+  // 快捷键语音触发：会话级单例订阅，按下快捷键时按录制态开始或结束识别。
+  // 注册与服务运行态同生命周期（后端在启动成功后接管、停止时解绑），
+  // 故事件只在服务运行时到来；前端运行态守卫保留，防停启竞态。非 Tauri 环境无事件，直接跳过
   $effect(() => {
     void listenShortcutVoice().catch((error: unknown) =>
       reportCommandFailure("[service] shortcut voice listener failed", error),
