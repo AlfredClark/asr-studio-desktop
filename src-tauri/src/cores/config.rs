@@ -28,6 +28,10 @@ const KEY_TRAY_ENABLED: &str = "tray_enabled";
 const KEY_CLOSE_BEHAVIOR: &str = "close_behavior";
 /// 快速打开应用的全局快捷键在配置文件中的键名；空字符串表示禁用
 const KEY_SHORTCUT_QUICK_OPEN: &str = "shortcut_quick_open";
+/// 语音识别的全局快捷键在配置文件中的键名；空字符串表示禁用
+const KEY_SHORTCUT_VOICE: &str = "shortcut_voice";
+/// 快捷键语音识别结果的输出方式在配置文件中的键名
+const KEY_SHORTCUT_OUTPUT: &str = "shortcut_output";
 /// 当前配置结构版本：变更字段语义时递增，并在迁移链中补对应升级步骤
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -56,6 +60,39 @@ impl CloseBehavior {
         match raw.trim() {
             "exit" => Self::Exit,
             "minimize_to_tray" => Self::MinimizeToTray,
+            _ => Self::default(),
+        }
+    }
+}
+
+/// 快捷键语音识别结果的输出方式：落盘值为 `snake_case` 字符串，未知一律回落写入剪贴板
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutOutput {
+    /// 模拟输入法：Unicode 逐字注入（等价于 demo 的 `SendInput` 做法）
+    Ime,
+    /// 写入剪贴板：全平台可用，默认选项
+    #[default]
+    Clipboard,
+    /// 模拟复制粘贴：先写剪贴板再发 Ctrl+V
+    Paste,
+}
+
+impl ShortcutOutput {
+    /// 取对应的落盘标签，与 `serde` 值一致，前后端契约共用
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ime => "ime",
+            Self::Clipboard => "clipboard",
+            Self::Paste => "paste",
+        }
+    }
+
+    /// 容错解析输出方式标签：未知一律回落写入剪贴板
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim() {
+            "ime" => Self::Ime,
+            "paste" => Self::Paste,
             _ => Self::default(),
         }
     }
@@ -109,6 +146,14 @@ pub struct Config {
     #[serde(deserialize_with = "de_shortcut_quick_open")]
     #[specta(type = String)]
     pub shortcut_quick_open: String,
+    /// 语音识别的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败
+    #[serde(deserialize_with = "de_shortcut_voice")]
+    #[specta(type = String)]
+    pub shortcut_voice: String,
+    /// 快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板
+    #[serde(deserialize_with = "de_shortcut_output")]
+    #[specta(type = ShortcutOutput)]
+    pub shortcut_output: ShortcutOutput,
 }
 
 impl Default for Config {
@@ -122,6 +167,8 @@ impl Default for Config {
             tray_enabled: default_tray_enabled(),
             close_behavior: CloseBehavior::default(),
             shortcut_quick_open: String::new(),
+            shortcut_voice: String::new(),
+            shortcut_output: ShortcutOutput::default(),
         }
     }
 }
@@ -149,6 +196,10 @@ pub struct ConfigPatch {
     pub close_behavior: Option<CloseBehavior>,
     /// 快速打开应用的全局快捷键；空字符串表示禁用
     pub shortcut_quick_open: Option<String>,
+    /// 语音识别的全局快捷键；空字符串表示禁用
+    pub shortcut_voice: Option<String>,
+    /// 快捷键语音识别结果的输出方式
+    pub shortcut_output: Option<ShortcutOutput>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -215,6 +266,31 @@ where
         .as_str()
         .map(str::trim)
         .map(str::to_owned)
+        .unwrap_or_default())
+}
+
+/// 容错解析语音识别快捷键：经 `serde_json::Value` 中转，非字符串一律回落空字符串（禁用）
+fn de_shortcut_voice<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value
+        .as_str()
+        .map(str::trim)
+        .map(str::to_owned)
+        .unwrap_or_default())
+}
+
+/// 容错解析输出方式：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
+fn de_shortcut_output<'de, D>(deserializer: D) -> Result<ShortcutOutput, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value
+        .as_str()
+        .map(ShortcutOutput::parse)
         .unwrap_or_default())
 }
 
@@ -323,6 +399,8 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         tray_enabled: load_tray_enabled(app),
         close_behavior: load_close_behavior(app),
         shortcut_quick_open: load_shortcut_quick_open(app),
+        shortcut_voice: load_shortcut_voice(app),
+        shortcut_output: load_shortcut_output(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -371,6 +449,20 @@ fn load_close_behavior(app: &tauri::AppHandle) -> CloseBehavior {
 fn load_shortcut_quick_open(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_SHORTCUT_QUICK_OPEN)
         .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// 读取持久化的语音识别快捷键；未设置或类型不符时回落空字符串（禁用）
+fn load_shortcut_voice(app: &tauri::AppHandle) -> String {
+    read_key(app, KEY_SHORTCUT_VOICE)
+        .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// 读取持久化的输出方式；未设置、类型不符或无法识别时回落写入剪贴板
+fn load_shortcut_output(app: &tauri::AppHandle) -> ShortcutOutput {
+    read_key(app, KEY_SHORTCUT_OUTPUT)
+        .and_then(|value| value.as_str().map(ShortcutOutput::parse))
         .unwrap_or_default()
 }
 
@@ -483,6 +575,8 @@ fn reset_patch() -> ConfigPatch {
         tray_enabled: Some(default_tray_enabled()),
         close_behavior: Some(CloseBehavior::default()),
         shortcut_quick_open: Some(String::new()),
+        shortcut_voice: Some(String::new()),
+        shortcut_output: Some(ShortcutOutput::default()),
     }
 }
 
@@ -511,8 +605,9 @@ fn apply_runtime_effects(app: &tauri::AppHandle, before: &Config, after: &Config
     if crate::cores::shortcut::should_switch(
         &before.shortcut_quick_open,
         &after.shortcut_quick_open,
-    ) {
-        crate::cores::shortcut::apply(app, &before.shortcut_quick_open, &after.shortcut_quick_open);
+    ) || crate::cores::shortcut::should_switch(&before.shortcut_voice, &after.shortcut_voice)
+    {
+        crate::cores::shortcut::apply(app, before, after);
     }
 }
 
@@ -563,6 +658,12 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
             KEY_SHORTCUT_QUICK_OPEN,
             Value::from(shortcut_quick_open.trim()),
         ));
+    }
+    if let Some(shortcut_output) = patch.shortcut_output {
+        entries.push((KEY_SHORTCUT_OUTPUT, Value::from(shortcut_output.as_str())));
+    }
+    if let Some(shortcut_voice) = patch.shortcut_voice.as_deref() {
+        entries.push((KEY_SHORTCUT_VOICE, Value::from(shortcut_voice.trim())));
     }
     entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
     entries
@@ -714,6 +815,8 @@ mod tests {
         assert!(!config.remember_window);
         assert!(!config.auto_check_update);
         assert_eq!(config.shortcut_quick_open, "");
+        assert_eq!(config.shortcut_voice, "");
+        assert_eq!(config.shortcut_output, ShortcutOutput::Clipboard);
         assert_eq!(config.schema_version, 0);
     }
 
@@ -727,12 +830,14 @@ mod tests {
             tray_enabled: false,
             close_behavior: CloseBehavior::MinimizeToTray,
             shortcut_quick_open: String::from("Ctrl+Shift+O"),
+            shortcut_voice: String::from("Ctrl+Alt+V"),
+            shortcut_output: ShortcutOutput::Paste,
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "schema_version": 1 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_output": "paste", "schema_version": 1 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -860,6 +965,57 @@ mod tests {
     }
 
     #[test]
+    fn tolerates_missing_or_invalid_shortcut_voice() {
+        for (raw, expected) in [
+            (json!({}), ""),
+            (json!({ "shortcut_voice": "Ctrl+Alt+V" }), "Ctrl+Alt+V"),
+            (json!({ "shortcut_voice": "  Ctrl+Alt+V  " }), "Ctrl+Alt+V"),
+            (json!({ "shortcut_voice": "" }), ""),
+            (json!({ "shortcut_voice": 5 }), ""),
+            (json!({ "shortcut_voice": null }), ""),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(config.shortcut_voice, expected);
+        }
+    }
+
+    #[test]
+    fn shortcut_output_falls_back_to_clipboard() {
+        for (raw, expected) in [
+            (json!({}), ShortcutOutput::Clipboard),
+            (json!({ "shortcut_output": "ime" }), ShortcutOutput::Ime),
+            (
+                json!({ "shortcut_output": "clipboard" }),
+                ShortcutOutput::Clipboard,
+            ),
+            (json!({ "shortcut_output": "paste" }), ShortcutOutput::Paste),
+            (
+                json!({ "shortcut_output": "carrier-pigeon" }),
+                ShortcutOutput::Clipboard,
+            ),
+            (json!({ "shortcut_output": 5 }), ShortcutOutput::Clipboard),
+            (
+                json!({ "shortcut_output": null }),
+                ShortcutOutput::Clipboard,
+            ),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(config.shortcut_output, expected);
+        }
+    }
+
+    #[test]
+    fn shortcut_output_round_trips_through_as_str() {
+        for output in [
+            ShortcutOutput::Ime,
+            ShortcutOutput::Clipboard,
+            ShortcutOutput::Paste,
+        ] {
+            assert_eq!(ShortcutOutput::parse(output.as_str()), output);
+        }
+    }
+
+    #[test]
     fn tolerates_missing_or_unrecognized_schema_version() {
         for (raw, expected) in [
             (json!({}), 0_u32),
@@ -918,6 +1074,8 @@ mod tests {
         assert_eq!(closed.close_behavior, Some(CloseBehavior::Exit));
 
         assert_eq!(absent.shortcut_quick_open, None);
+        assert_eq!(absent.shortcut_voice, None);
+        assert_eq!(absent.shortcut_output, None);
 
         let quick_open: ConfigPatch =
             serde_json::from_value(json!({ "shortcut_quick_open": "Ctrl+Shift+O" }))
@@ -926,6 +1084,14 @@ mod tests {
             quick_open.shortcut_quick_open,
             Some(String::from("Ctrl+Shift+O"))
         );
+
+        let output: ConfigPatch =
+            serde_json::from_value(json!({ "shortcut_output": "paste" })).expect("output parsed");
+        assert_eq!(output.shortcut_output, Some(ShortcutOutput::Paste));
+
+        let voice: ConfigPatch = serde_json::from_value(json!({ "shortcut_voice": "Ctrl+Alt+V" }))
+            .expect("voice parsed");
+        assert_eq!(voice.shortcut_voice, Some(String::from("Ctrl+Alt+V")));
     }
 
     #[test]
@@ -945,6 +1111,8 @@ mod tests {
             tray_enabled: Some(false),
             close_behavior: Some(CloseBehavior::Exit),
             shortcut_quick_open: Some(String::from("Ctrl+Shift+O")),
+            shortcut_voice: Some(String::from("Ctrl+Alt+V")),
+            shortcut_output: Some(ShortcutOutput::Ime),
         });
         assert_eq!(
             keys_of(&patched),
@@ -956,6 +1124,8 @@ mod tests {
                 KEY_TRAY_ENABLED,
                 KEY_CLOSE_BEHAVIOR,
                 KEY_SHORTCUT_QUICK_OPEN,
+                KEY_SHORTCUT_OUTPUT,
+                KEY_SHORTCUT_VOICE,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -966,6 +1136,8 @@ mod tests {
         assert_eq!(patched[4].1, json!(false));
         assert_eq!(patched[5].1, json!("exit"));
         assert_eq!(patched[6].1, json!("Ctrl+Shift+O"));
+        assert_eq!(patched[7].1, json!("ime"));
+        assert_eq!(patched[8].1, json!("Ctrl+Alt+V"));
     }
 
     #[test]
@@ -979,6 +1151,8 @@ mod tests {
             tray_enabled: Some(false),
             close_behavior: Some(CloseBehavior::Exit),
             shortcut_quick_open: Some(String::from("Ctrl+Shift+O")),
+            shortcut_output: Some(ShortcutOutput::Paste),
+            shortcut_voice: Some(String::from("Ctrl+Alt+V")),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -993,6 +1167,9 @@ mod tests {
         assert_eq!(entries[4].1, json!(true));
         assert_eq!(entries[5].1, json!(CloseBehavior::default().as_str()));
         assert_eq!(entries[6].1, json!(""));
+        assert_eq!(entries[7].1, json!(ShortcutOutput::default().as_str()));
+        assert_eq!(entries[8].1, json!(""));
+        assert_eq!(entries[9].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -1005,6 +1182,8 @@ mod tests {
             tray_enabled: true,
             close_behavior: CloseBehavior::Prompt,
             shortcut_quick_open: String::new(),
+            shortcut_voice: String::new(),
+            shortcut_output: ShortcutOutput::default(),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));

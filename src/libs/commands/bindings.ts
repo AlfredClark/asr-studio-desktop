@@ -41,6 +41,8 @@ export const commands = {
 	stopRecording: () => typedError<RecordResult, CommandError>(__TAURI_INVOKE("stop_recording")),
 	/**  转写音频文件：服务必须运行中；路径收敛到应用数据目录内 */
 	transcribeFile: (path: string) => typedError<TranscribeResult, CommandError>(__TAURI_INVOKE("transcribe_file", { path })),
+	/**  按配置输出识别文本：返回实际投递通道与是否降级，调用方据此提示 */
+	outputText: (text: string) => typedError<OutputReport, CommandError>(__TAURI_INVOKE("output_text", { text })),
 	/**  查询某组合是否由本应用注册；空值与非法串一律返回 `false` */
 	isShortcutRegistered: (shortcut: string) => typedError<boolean, CommandError>(__TAURI_INVOKE("is_shortcut_registered", { shortcut })),
 	/**  采集运行平台信息；单项缺失时回落 `"unknown"`，绝不抛错 */
@@ -129,6 +131,10 @@ export type ConfigPatch = {
 	close_behavior?: CloseBehavior | null,
 	/**  快速打开应用的全局快捷键；空字符串表示禁用 */
 	shortcut_quick_open?: string | null,
+	/**  语音识别的全局快捷键；空字符串表示禁用 */
+	shortcut_voice?: string | null,
+	/**  快捷键语音识别结果的输出方式 */
+	shortcut_output?: ShortcutOutput | null,
 };
 
 /**
@@ -162,6 +168,10 @@ export type Config_Deserialize = {
 	close_behavior?: CloseBehavior,
 	/**  快速打开应用的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败 */
 	shortcut_quick_open?: string,
+	/**  语音识别的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败 */
+	shortcut_voice?: string,
+	/**  快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板 */
+	shortcut_output?: ShortcutOutput,
 };
 
 /**
@@ -195,6 +205,10 @@ export type Config_Serialize = {
 	close_behavior: CloseBehavior,
 	/**  快速打开应用的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败 */
 	shortcut_quick_open: string,
+	/**  语音识别的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败 */
+	shortcut_voice: string,
+	/**  快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板 */
+	shortcut_output: ShortcutOutput,
 };
 
 /**  应用支持的语言 */
@@ -240,6 +254,23 @@ export type ModelStatus =
 /**  后端正在下载或解压 */
 "downloading";
 
+/**  输出结果：实际通道 + 是否发生过降级 */
+export type OutputReport = {
+	/**  实际投递通道 */
+	via: OutputVia,
+	/**  是否发生过降级（前端据此提示用户） */
+	fallback: boolean,
+};
+
+/**  实际投递通道：成功走配置项，降级走剪贴板 */
+export type OutputVia = 
+/**  模拟输入法：Unicode 逐字注入 */
+"ime" | 
+/**  写入剪贴板 */
+"clipboard" | 
+/**  模拟复制粘贴：写剪贴板后发 Ctrl+V */
+"paste";
+
 /**  结束录制的回执：前端据此展示文件名与时长，再调转写命令 */
 export type RecordResult = {
 	/**  存档绝对路径 */
@@ -270,6 +301,15 @@ export type ServiceStatus = {
 	/**  模型加载耗时毫秒（仅运行中有效） */
 	load_ms: number | null,
 };
+
+/**  快捷键语音识别结果的输出方式：落盘值为 `snake_case` 字符串，未知一律回落写入剪贴板 */
+export type ShortcutOutput = 
+/**  模拟输入法：Unicode 逐字注入（等价于 demo 的 `SendInput` 做法） */
+"ime" | 
+/**  写入剪贴板：全平台可用，默认选项 */
+"clipboard" | 
+/**  模拟复制粘贴：先写剪贴板再发 Ctrl+V */
+"paste";
 
 /**  运行平台信息：经 `tauri-plugin-os` 采集，全字段必填，前端逐行展示 */
 export type SystemInfo = {

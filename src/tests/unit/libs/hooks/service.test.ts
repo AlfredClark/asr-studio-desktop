@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  handleShortcutTrigger,
   refreshServiceData,
   selectDevice,
   selectModel,
@@ -21,12 +22,16 @@ vi.mock("#libs/commands", () => ({
     startRecording: vi.fn(),
     stopRecording: vi.fn(),
     transcribeFile: vi.fn(),
+    outputText: vi.fn(),
   },
 }));
 
 vi.mock("#libs/utils/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
+
+const gotoMock = vi.hoisted(() => vi.fn());
+vi.mock("$app/navigation", () => ({ goto: gotoMock }));
 
 import commands from "#libs/commands";
 import { toast } from "#libs/utils/toast";
@@ -116,6 +121,9 @@ beforeEach(() => {
   );
   mocked.transcribeFile.mockReturnValue(
     fakeCommand({ status: "ok", data: { text: "你好", audio_sec: 2.5, infer_ms: 300 } }) as never,
+  );
+  mocked.outputText.mockReturnValue(
+    fakeCommand({ status: "ok", data: { via: "clipboard", fallback: false } }) as never,
   );
 });
 
@@ -227,5 +235,62 @@ describe("识别服务状态", () => {
     expect(serviceState.result).toBeNull();
     expect(serviceState.recognizing).toBe(false);
     expect(mockedToast.error).toHaveBeenCalled();
+  });
+
+  it("快捷键空闲时直接开始录制，不切页面不抢焦点", async () => {
+    runningStatus();
+    serviceState.selectedDevice = device.id;
+
+    await handleShortcutTrigger();
+
+    expect(gotoMock).not.toHaveBeenCalled();
+    expect(mocked.startRecording).toHaveBeenCalledWith(device.id);
+    expect(serviceState.recording).toBe(true);
+  });
+
+  it("快捷键录制中按第二次停止转写并输出", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+    serviceState.recording = true;
+
+    await handleShortcutTrigger();
+
+    expect(serviceState.recording).toBe(false);
+    expect(serviceState.result?.text).toBe("你好");
+    expect(mocked.outputText).toHaveBeenCalledWith("你好");
+    expect(mockedToast.warning).not.toHaveBeenCalled();
+  });
+
+  it("快捷键降级输出时提示用户", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+    serviceState.recording = true;
+    mocked.outputText.mockReturnValue(
+      fakeCommand({ status: "ok", data: { via: "clipboard", fallback: true } }) as never,
+    );
+
+    await handleShortcutTrigger();
+
+    expect(mockedToast.warning).toHaveBeenCalled();
+  });
+
+  it("快捷键识别中直接忽略", async () => {
+    serviceState.recognizing = true;
+
+    await handleShortcutTrigger();
+
+    expect(mocked.stopRecording).not.toHaveBeenCalled();
+    expect(gotoMock).not.toHaveBeenCalled();
+  });
+
+  it("快捷键服务未运行时不做任何事", async () => {
+    serviceState.selectedDevice = device.id;
+
+    await handleShortcutTrigger();
+
+    expect(gotoMock).not.toHaveBeenCalled();
+    expect(mocked.startRecording).not.toHaveBeenCalled();
   });
 });

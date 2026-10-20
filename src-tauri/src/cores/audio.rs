@@ -65,6 +65,14 @@ fn parse_device_index(id: &str) -> Option<usize> {
     id.parse().ok()
 }
 
+/// 伪设备判定：名字含 `jack`（服务没起）或 `oss`（无 /dev/dsp）的跳过；
+///
+/// 打开它们只会让 ALSA 库往 stderr 刷错，本身也录不了音。纯函数，可单测。
+fn is_pseudo_device(name: &str) -> bool {
+    let lowered = name.to_lowercase();
+    lowered.contains("jack") || lowered.contains("oss")
+}
+
 /// 按名称去重并默认置顶：ALSA 同一麦克风有多个同名 PCM 入口，只留第一个；
 ///
 /// 纯函数，可单测。排序是稳定的，非默认设备保持枚举顺序。
@@ -95,11 +103,16 @@ pub fn list_input_devices() -> Vec<AudioDevice> {
         let Ok(description) = device.description() else {
             continue;
         };
+        let name = description.name().to_owned();
+        // 跳过 jack/oss 伪设备：JACK 服务没起、现代内核无 /dev/dsp，
+        // 打开它们只会让 ALSA 库往 stderr 刷错，本身也录不了音
+        if is_pseudo_device(&name) {
+            continue;
+        }
         // 打不开默认输入配置的直接过滤：坏入口或被独占，本来也录不了音
         if device.default_input_config().is_err() {
             continue;
         }
-        let name = description.name().to_owned();
         let is_default = !default_marked && default_name.as_deref() == Some(name.as_str());
         if is_default {
             default_marked = true;
@@ -312,6 +325,17 @@ mod tests {
             name: name.to_owned(),
             is_default,
         }
+    }
+
+    #[test]
+    fn pseudo_device_matches_jack_and_oss() {
+        assert!(is_pseudo_device("jack"));
+        assert!(is_pseudo_device("JACK plug"));
+        assert!(is_pseudo_device("oss"));
+        assert!(is_pseudo_device("/dev/dsp OSS emulation"));
+        assert!(!is_pseudo_device("default"));
+        assert!(!is_pseudo_device("pulse"));
+        assert!(!is_pseudo_device("USB Microphone"));
     }
 
     #[test]

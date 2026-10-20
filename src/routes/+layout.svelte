@@ -10,6 +10,7 @@
   import { initAppearance } from "#libs/hooks/appearance.svelte";
   import { configState, hydrateConfig } from "#libs/hooks/config.svelte";
   import { initDeepLinks } from "#libs/hooks/deep-link.svelte";
+  import { listenShortcutVoice } from "#libs/hooks/service.svelte";
   import { maybeAutoCheckForUpdate } from "#libs/hooks/updater.svelte";
   import ConfirmDialog from "#components/common/confirm-dialog.svelte";
   import ErrorBoundary from "#components/common/error-boundary.svelte";
@@ -133,6 +134,14 @@
       cancelled = true;
       stop?.();
     };
+  });
+
+  // 快捷键语音触发：会话级单例订阅，按下快捷键时按录制态开始或结束识别；
+  // 非 Tauri 环境无事件，直接跳过
+  $effect(() => {
+    void listenShortcutVoice().catch((error: unknown) =>
+      reportCommandFailure("[service] shortcut voice listener failed", error),
+    );
   });
 </script>
 

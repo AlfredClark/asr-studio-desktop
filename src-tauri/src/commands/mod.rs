@@ -36,6 +36,7 @@ macro_rules! collect_commands {
             $crate::commands::asr::start_recording,
             $crate::commands::asr::stop_recording,
             $crate::commands::asr::transcribe_file,
+            $crate::commands::asr::output_text,
             $crate::commands::shortcut::is_shortcut_registered,
             $crate::commands::system::get_system_info,
             $crate::commands::system::quit_app,

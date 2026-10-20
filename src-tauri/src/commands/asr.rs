@@ -2,6 +2,7 @@
 
 use crate::cores::asr::{self, ServiceStatus, TranscribeResult};
 use crate::cores::audio::{self, AudioDevice, RecordResult};
+use crate::cores::output::{self, OutputReport};
 use crate::cores::types::CommandResult;
 
 /// 列出输入设备；无设备返回空（前端展示“无可用设备”而非报错）
@@ -59,4 +60,19 @@ pub async fn transcribe_file(
     path: String,
 ) -> CommandResult<TranscribeResult> {
     Ok(asr::transcribe_file(&app, &path).await?)
+}
+
+/// 按配置输出识别文本：返回实际投递通道与是否降级，调用方据此提示
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn output_text(app: tauri::AppHandle, text: String) -> CommandResult<OutputReport> {
+    use anyhow::Context;
+
+    let app = app.clone();
+    Ok(
+        tokio::task::spawn_blocking(move || output::output_text(&app, &text))
+            .await
+            .context("output task failed")??,
+    )
 }

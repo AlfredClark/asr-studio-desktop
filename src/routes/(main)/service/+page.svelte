@@ -15,6 +15,9 @@
     SelectValue,
   } from "#components/shadcn-svelte/select";
   import { m } from "#libs/i18n/paraglide/messages";
+  import { configState, updateConfig } from "#libs/hooks/config.svelte";
+  import type { ShortcutOutput } from "#libs/commands/types";
+  import { toast } from "#libs/utils/toast";
   import {
     refreshServiceData,
     selectDevice,
@@ -53,6 +56,24 @@
       !serviceState.switching &&
       serviceState.selectedDevice != null,
   );
+
+  /** 输出方式选项：值与后端 `ShortcutOutput` 落盘标签一一对应 */
+  const outputItems: { value: ShortcutOutput; label: string }[] = [
+    { value: "ime", label: m.service_output_option_ime() },
+    { value: "clipboard", label: m.service_output_option_clipboard() },
+    { value: "paste", label: m.service_output_option_paste() },
+  ];
+
+  /** 输出方式经命令落盘后端；失败不乐观更新，下拉自动回滚 */
+  async function handleOutputChange(value: string): Promise<void> {
+    const output = outputItems.find((item) => item.value === value)?.value;
+    if (!output) return;
+    if (await updateConfig({ shortcut_output: output })) {
+      toast.success(m.service_output_updated());
+    } else {
+      toast.error(m.service_output_update_failed());
+    }
+  }
 
   onMount(() => {
     void refreshServiceData();
@@ -150,6 +171,28 @@
           </Button>
         {/if}
       </div>
+    </CardSection>
+
+    <CardSection title={m.service_output_title()} description={m.service_output_description()}>
+      <CardRow label={m.service_output_label()} description="">
+        {#snippet control()}
+          <Select
+            type="single"
+            value={configState.value?.shortcut_output ?? "clipboard"}
+            items={outputItems}
+            onValueChange={(value) => void handleOutputChange(value)}
+          >
+            <SelectTrigger class="w-(--control-column-width)" aria-label={m.service_output_label()}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ime">{m.service_output_option_ime()}</SelectItem>
+              <SelectItem value="clipboard">{m.service_output_option_clipboard()}</SelectItem>
+              <SelectItem value="paste">{m.service_output_option_paste()}</SelectItem>
+            </SelectContent>
+          </Select>
+        {/snippet}
+      </CardRow>
     </CardSection>
 
     <CardSection title={m.service_test_title()} description={m.service_test_description()}>

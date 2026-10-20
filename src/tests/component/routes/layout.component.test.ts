@@ -65,6 +65,10 @@ vi.mock("#libs/hooks/deep-link.svelte", () => ({
   initDeepLinks: vi.fn(async () => async () => {}),
 }));
 
+vi.mock("#libs/hooks/service.svelte", () => ({
+  listenShortcutVoice: vi.fn(async () => {}),
+}));
+
 vi.mock("#libs/hooks/updater.svelte", () => ({
   maybeAutoCheckForUpdate: vi.fn(),
 }));
@@ -141,6 +145,8 @@ describe("根布局启动水合", () => {
     tray_enabled: true,
     close_behavior: "prompt",
     shortcut_quick_open: "",
+    shortcut_output: "clipboard",
+    shortcut_voice: "",
     schema_version: 1,
   };
 

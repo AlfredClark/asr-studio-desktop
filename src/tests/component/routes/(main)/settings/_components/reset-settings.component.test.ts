@@ -39,6 +39,8 @@ const defaults: Config_Serialize = {
   tray_enabled: true,
   close_behavior: "prompt",
   shortcut_quick_open: "",
+  shortcut_output: "clipboard",
+  shortcut_voice: "",
   schema_version: 1,
 };
 

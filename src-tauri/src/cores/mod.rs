@@ -13,6 +13,7 @@ pub mod config;
 pub mod deep_link;
 pub mod locale;
 pub mod models;
+pub mod output;
 pub mod shortcut;
 pub mod specta;
 pub mod system;

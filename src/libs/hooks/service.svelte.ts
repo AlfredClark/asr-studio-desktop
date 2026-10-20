@@ -96,6 +96,9 @@ export async function refreshServiceData(): Promise<void> {
   await commands
     .listInputDevices()
     .success((devices) => {
+      // 设备列表会话内只取一次：枚举会打开硬件，进页就刷又慢又刷屏；
+      // 热插拔暂不支持，需要时重启应用重取
+      if (serviceState.devices.length > 0) return;
       serviceState.devices = devices;
       if (
         serviceState.selectedDevice == null ||
@@ -199,9 +202,15 @@ export async function startTestRecording(): Promise<void> {
     });
 }
 
-/** 结束录制并识别：存档落盘后调转写，结果回显，用时一并展示 */
+/** 结束录制并识别：存档落盘后调转写，结果回显，用时一并展示；仅回显不输出 */
 export async function stopTestRecording(): Promise<void> {
-  if (!serviceState.recording || serviceState.recognizing) return;
+  const result = await stopAndTranscribe();
+  if (result) serviceState.result = result;
+}
+
+/** 停止录制并转写（共用内核）：测试按钮只取回显，快捷键流程拿到结果再按配置输出。 失败已在内部提示并上报，调用方按 `null` 收尾即可。 */
+async function stopAndTranscribe(): Promise<TestResult | null> {
+  if (!serviceState.recording || serviceState.recognizing) return null;
   serviceState.recording = false;
   serviceState.recognizing = true;
   try {
@@ -209,16 +218,16 @@ export async function stopTestRecording(): Promise<void> {
     if (record.status === "error") {
       toast.error(m.service_record_failed());
       reportCommandFailure("[service] stop record failed", record.error);
-      return;
+      return null;
     }
     const fileName = record.data.path.split("/").pop() ?? record.data.path;
     const transcribed = await commands.transcribeFile(record.data.path).result();
     if (transcribed.status === "error") {
       toast.error(m.service_recognize_failed());
       reportCommandFailure("[service] transcribe failed", transcribed.error);
-      return;
+      return null;
     }
-    serviceState.result = {
+    return {
       text: transcribed.data.text,
       audioSec: transcribed.data.audio_sec ?? 0,
       inferMs: transcribed.data.infer_ms,
@@ -226,5 +235,55 @@ export async function stopTestRecording(): Promise<void> {
     };
   } finally {
     serviceState.recognizing = false;
+  }
+}
+
+/** 快捷键语音触发事件名（与 Rust 侧同名字面量会合，改名需两端同步） */
+const SHORTCUT_VOICE_TRIGGER_EVENT = "shortcut-voice-trigger";
+
+let shortcutVoiceListening = false;
+
+/** 订阅快捷键语音触发（全局单例，根布局挂载一次）； 非 Tauri 环境无事件可订，失败仅上报不抛错。 */
+export async function listenShortcutVoice(): Promise<void> {
+  if (shortcutVoiceListening) return;
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    await listen(SHORTCUT_VOICE_TRIGGER_EVENT, () => {
+      void handleShortcutTrigger();
+    });
+    shortcutVoiceListening = true;
+  } catch (error) {
+    reportCommandFailure("[service] shortcut voice listener unavailable", error);
+  }
+}
+
+/**
+ * 快捷键触发处理：录制中则停止、转写并按配置输出；空闲且服务运行时直接开始录制。 全程不显示本窗口、不切换页面，焦点留在用户当前应用；结果进回显供事后查看。
+ * 切换中或识别中直接忽略（防重入）。
+ */
+export async function handleShortcutTrigger(): Promise<void> {
+  if (serviceState.switching || serviceState.recognizing) return;
+  if (serviceState.recording) {
+    const result = await stopAndTranscribe();
+    if (!result) return;
+    serviceState.result = result;
+    await outputResult(result.text);
+    return;
+  }
+  await refreshServiceData();
+  if (serviceState.status?.state !== "running") return;
+  await startTestRecording();
+}
+
+/** 按配置输出识别文本；降级或失败时提示用户（文本仍保留在回显区） */
+async function outputResult(text: string): Promise<void> {
+  const delivered = await commands.outputText(text).result();
+  if (delivered.status === "error") {
+    toast.error(m.service_output_failed());
+    reportCommandFailure("[service] output failed", delivered.error);
+    return;
+  }
+  if (delivered.data.fallback) {
+    toast.warning(m.service_output_fallback());
   }
 }

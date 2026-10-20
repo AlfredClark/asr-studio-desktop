@@ -30,6 +30,10 @@ const stopServiceMock = vi.hoisted(() => vi.fn());
 const startTestRecordingMock = vi.hoisted(() => vi.fn());
 const stopTestRecordingMock = vi.hoisted(() => vi.fn());
 const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const updateConfigMock = vi.hoisted(() => vi.fn());
+const configStateMock = vi.hoisted((): { value: { shortcut_output: string } | null } => ({
+  value: { shortcut_output: "clipboard" },
+}));
 const serviceStateMock = vi.hoisted(
   (): {
     status: { state: string; modelId: string | null; loadMs: number | null } | null;
@@ -80,6 +84,11 @@ vi.mock("#libs/hooks/service.svelte", () => ({
 
 vi.mock("#libs/utils/toast", () => ({ toast: toastMocks }));
 
+vi.mock("#libs/hooks/config.svelte", () => ({
+  configState: configStateMock,
+  updateConfig: updateConfigMock,
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   // 纯对象替身无响应式：渲染前预填，组件首帧即读到
@@ -92,6 +101,8 @@ beforeEach(() => {
   serviceStateMock.recognizing = false;
   serviceStateMock.switching = false;
   serviceStateMock.result = null;
+  configStateMock.value = { shortcut_output: "clipboard" };
+  updateConfigMock.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -184,5 +195,18 @@ describe("服务页", () => {
     expect(
       screen.getByText("No models available yet, download one on the Models page first"),
     ).not.toBeNull();
+  });
+
+  it("切换输出方式经命令落盘", async () => {
+    const user = userEvent.setup();
+    render(Page);
+
+    await user.click(screen.getByRole("button", { name: "Output method" }));
+    await waitFor(() => {
+      expect(document.querySelector('[data-value="paste"]')).not.toBeNull();
+    });
+    await user.click(document.querySelector('[data-value="paste"]') as HTMLElement);
+
+    expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_output: "paste" });
   });
 });
