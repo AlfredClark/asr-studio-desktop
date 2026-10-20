@@ -13,6 +13,20 @@ export const commands = {
 	 *  界面语言亦经此切换——运行时 `rust_i18n` 由 `config::apply_runtime_effects` 统一同步。
 	 */
 	updateConfig: (patch: ConfigPatch) => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("update_config", { patch })),
+	/**  列出全部模型及其本机状态；前端据此渲染分组与按钮 */
+	listModels: () => typedError<ModelEntry[], CommandError>(__TAURI_INVOKE("list_models")),
+	/**  下载并解压模型：后台长任务，进度经事件推送；同模型并发直接拒绝 */
+	downloadModel: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("download_model", { id })),
+	/**  取消下载并清理 `.part` 包；无任务返回错误 */
+	cancelDownload: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("cancel_download", { id })),
+	/**  重新扫描校验：手动放置文件后点此确认 */
+	verifyModel: (id: string) => typedError<VerifyReport, CommandError>(__TAURI_INVOKE("verify_model", { id })),
+	/**  在系统文件管理器中打开模型根目录（不存在即建） */
+	openModelsRoot: () => typedError<null, CommandError>(__TAURI_INVOKE("open_models_root")),
+	/**  在系统文件管理器中打开单个模型目录（不存在即建） */
+	openModelDir: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("open_model_dir", { id })),
+	/**  删除模型目录；下载中拒绝 */
+	deleteModel: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_model", { id })),
 	/**  查询某组合是否由本应用注册；空值与非法串一律返回 `false` */
 	isShortcutRegistered: (shortcut: string) => typedError<boolean, CommandError>(__TAURI_INVOKE("is_shortcut_registered", { shortcut })),
 	/**  采集运行平台信息；单项缺失时回落 `"unknown"`，绝不抛错 */
@@ -162,6 +176,46 @@ export type Config_Serialize = {
 /**  应用支持的语言 */
 export type Locale = "en" | "zh-CN";
 
+/**  模型分类：同时是 `models/` 下的一级目录名 */
+export type ModelCategory = 
+/**  `FunASR Nano` 系：`funasr-nano` */
+"funasr_nano" | 
+/**  `Qwen3-ASR` 系：`qwen3-asr` */
+"qwen3_asr" | 
+/**  `SenseVoice` 系：`sense-voice` */
+"sense_voice";
+
+/**  前端展示的模型条目：状态由后端实时判定，前端不做本地推断 */
+export type ModelEntry = {
+	/**  模型 id（与 `ModelSpec::id` 一一对应） */
+	id: string,
+	/**  所属分类 */
+	category: ModelCategory,
+	/**  展示名 */
+	display_name: string,
+	/**  压缩包字节数（展示用，均小于 4GB，见 `registry_sizes_fit_u32`） */
+	tarball_bytes: number,
+	/**  必需文件字节数之和（展示用） */
+	required_bytes: number,
+	/**  本机状态 */
+	status: ModelStatus,
+	/**  模型目录绝对路径（`Missing` 时为 `None`） */
+	local_path: string | null,
+	/**  发布页地址（“前往下载页”按钮用） */
+	page_url: string,
+};
+
+/**  模型在本机的就绪状态 */
+export type ModelStatus = 
+/**  目标目录无任何必需文件 */
+"missing" | 
+/**  部分必需文件缺失或大小不符 */
+"partial" | 
+/**  全部必需文件齐全且大小一致 */
+"ready" | 
+/**  后端正在下载或解压 */
+"downloading";
+
 /**  运行平台信息：经 `tauri-plugin-os` 采集，全字段必填，前端逐行展示 */
 export type SystemInfo = {
 	/**  操作系统平台（如 `linux` / `windows` / `macos`） */
@@ -182,6 +236,18 @@ export type UpdateInfo = {
 	current_version: string,
 	/**  发布说明（`latest.json` 的 `body`，可能缺失） */
 	body: string | null,
+};
+
+/**  校验报告：`missing` 与 `mismatched` 均为空即就绪 */
+export type VerifyReport = {
+	/**  模型 id */
+	id: string,
+	/**  校验结论 */
+	status: ModelStatus,
+	/**  缺失的必需文件（相对包顶层目录） */
+	missing: string[],
+	/**  大小不符的必需文件（相对包顶层目录） */
+	mismatched: string[],
 };
 
 /* Tauri Specta runtime */

@@ -7,6 +7,7 @@
 #![allow(clippy::unnecessary_wraps)]
 
 pub mod config;
+pub mod models;
 pub mod shortcut;
 pub mod system;
 pub mod updater;
@@ -20,6 +21,13 @@ macro_rules! collect_commands {
             $crate::commands::config::get_config,
             $crate::commands::config::reset_config,
             $crate::commands::config::update_config,
+            $crate::commands::models::list_models,
+            $crate::commands::models::download_model,
+            $crate::commands::models::cancel_download,
+            $crate::commands::models::verify_model,
+            $crate::commands::models::open_models_root,
+            $crate::commands::models::open_model_dir,
+            $crate::commands::models::delete_model,
             $crate::commands::shortcut::is_shortcut_registered,
             $crate::commands::system::get_system_info,
             $crate::commands::system::quit_app,

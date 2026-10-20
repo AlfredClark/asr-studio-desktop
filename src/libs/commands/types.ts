@@ -5,8 +5,12 @@ import type {
   ConfigPatch,
   Config_Serialize,
   Locale,
+  ModelCategory,
+  ModelEntry,
+  ModelStatus,
   SystemInfo,
   UpdateInfo,
+  VerifyReport,
   commands as rawCommands,
 } from "#libs/commands/bindings";
 import type { EnhancedCommand } from "#libs/commands/cores";
@@ -38,6 +42,10 @@ export type {
   ConfigPatch,
   Config_Serialize,
   Locale,
+  ModelCategory,
+  ModelEntry,
+  ModelStatus,
   SystemInfo,
   UpdateInfo,
+  VerifyReport,
 };
