@@ -61,6 +61,14 @@ export const serviceState = $state<{
   result: null,
 });
 
+/** “系统默认”输入选项 id：与后端 `features::audio::DEFAULT_DEVICE_ID` 同字面量， 改名需两端同步 */
+export const DEFAULT_DEVICE_ID = "default";
+
+/** 设备下拉展示名：合成项走本地化文案，否则用系统上报的原名 */
+export function deviceLabel(device: AudioDevice): string {
+  return device.id === DEFAULT_DEVICE_ID ? m.service_device_system_default() : device.name;
+}
+
 /** 同步后端状态快照到内存；失败仅上报（调用方决定是否提示） */
 async function syncStatus(): Promise<void> {
   await commands
@@ -104,8 +112,12 @@ export async function refreshServiceData(): Promise<void> {
         serviceState.selectedDevice == null ||
         !devices.some((device) => device.id === serviceState.selectedDevice)
       ) {
+        // 默认采用系统默认输入：合成项 → 物理默认标记 → 第 1 个
         serviceState.selectedDevice =
-          devices.find((device) => device.is_default)?.id ?? devices[0]?.id ?? null;
+          devices.find((device) => device.id === DEFAULT_DEVICE_ID)?.id ??
+          devices.find((device) => device.is_default)?.id ??
+          devices[0]?.id ??
+          null;
       }
     })
     .failed((failure) => {
@@ -220,7 +232,7 @@ async function stopAndTranscribe(): Promise<TestResult | null> {
       reportCommandFailure("[service] stop record failed", record.error);
       return null;
     }
-    const fileName = record.data.path.split("/").pop() ?? record.data.path;
+    const fileName = record.data.path.split(/[/\\]/).pop() ?? record.data.path;
     const transcribed = await commands.transcribeFile(record.data.path).result();
     if (transcribed.status === "error") {
       toast.error(m.service_recognize_failed());

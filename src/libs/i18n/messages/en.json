@@ -105,6 +105,7 @@
   "service_device_label": "Microphone",
   "service_device_description": "Pick a microphone, cannot switch while recording",
   "service_device_empty": "No devices available",
+  "service_device_system_default": "System default",
   "service_start": "Start service",
   "service_stop": "Stop service",
   "service_switching": "Switching…",

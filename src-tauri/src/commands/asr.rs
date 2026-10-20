@@ -1,9 +1,9 @@
-//! 服务命令：录音设备 / 服务启停 / 录制 / 转写的薄封装，逻辑在 `cores::audio` 与 `cores::asr`。
+//! 服务命令：录音设备 / 服务启停 / 录制 / 转写的薄封装，逻辑在 `features::audio` 与 `features::asr`。
 
-use crate::cores::asr::{self, ServiceStatus, TranscribeResult};
-use crate::cores::audio::{self, AudioDevice, RecordResult};
-use crate::cores::output::{self, OutputReport};
 use crate::cores::types::CommandResult;
+use crate::features::asr::{self, ServiceStatus, TranscribeResult};
+use crate::features::audio::{self, AudioDevice, RecordResult};
+use crate::features::output::{self, OutputReport};
 
 /// 列出输入设备；无设备返回空（前端展示“无可用设备”而非报错）
 #[tauri::command]

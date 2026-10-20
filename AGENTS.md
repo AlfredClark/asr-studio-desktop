@@ -41,10 +41,10 @@
 
 > 每条都是硬约束；机制细节与原因见 `docs/ARCHITECTURE.md` 的「设计不变量与原因」。
 
-1. **分层单向依赖：** `Svelte 组件 → libs/commands（链式 API）→ commands/（Rust 薄封装）→ features/ · cores/`，禁止反向调用与跨层跳跃（如组件裸 `invoke`、命令层写业务逻辑）。纯前端 UI 偏好走 `localStorage` 是有意例外，不经 commands 链。
+1. **分层单向依赖：** `Svelte 组件 → libs/commands（链式 API）→ commands/（Rust 薄封装）→ features/（业务）· cores/（共享能力）`，`features/` 可依赖 `cores/`，`cores/` 不得反向依赖 `features/`。禁止反向调用与跨层跳跃（如组件裸 `invoke`、命令层写业务逻辑）。纯前端 UI 偏好走 `localStorage` 是有意例外，不经 commands 链。
 2. **前后端契约优先：** 改命令必须先改 `features/` + `commands/`（`#[tauri::command]` + `#[specta::specta]` + `collect_commands!`），再 `cargo test` 重生成 `bindings.ts`，最后改前端调用。禁止手改 `bindings.ts`、禁止跳过重生成直接改前端。
 3. **状态归属：** Svelte 5 runes（`$state` / `$props` / `$effect`）优先，禁用旧式 store；页面私有状态用局部 state，跨页面共享才考虑提升。主题经 `mode-watcher` 全局管理，语言归后端 `config.json`，禁止各页面自建。
-4. **错误处理分层：** `features/` 返回业务错误 → `commands/` 转 `CommandResult`（错误统一 `CommandError::Internal(...)`，`anyhow::Error` 经已有 `From` 自动转换）→ 前端经链式 API 处理。关键取值用 `.result()` 按 `status` 分支（`.value()` 的回落会把失败与空数据压成同一个值）；回调内只做幂等赋值 / toast 且保证不抛错；多步分支 / 跨状态机流转必须 `result()` 后置分支。未注册 `.failed()` 的失败会自动经 plugin-log 上报，不会静默丢失；`features/` 禁止耦合 Tauri 运行时。
+4. **错误处理分层：** `features/` 返回业务错误 → `commands/` 转 `CommandResult`（错误统一 `CommandError::Internal(...)`，`anyhow::Error` 经已有 `From` 自动转换）→ 前端经链式 API 处理。关键取值用 `.result()` 按 `status` 分支（`.value()` 的回落会把失败与空数据压成同一个值）；回调内只做幂等赋值 / toast 且保证不抛错；多步分支 / 跨状态机流转必须 `result()` 后置分支。未注册 `.failed()` 的失败会自动经 plugin-log 上报，不会静默丢失；`cores/` 不得依赖 `features/`，业务编排由 `features/` 与 `commands/` 承担。
 5. **配置唯一来源与迁移：** Paraglide 编译选项唯一来源 `src/libs/i18n/project.inlang/paraglide.config.ts`；路径别名唯一来源 `package.json` 的 `imports`；新增外部 URL 同步 `capabilities/*.json` 与 CSP；新增 / 变更配置项必须同步 `cores/config.rs` 的 `CURRENT_SCHEMA_VERSION` 与 `MIGRATIONS` 迁移链，配置写入只走 `update` / `save_locale` / `migrate` 三入口；新增 / 变更配置项时对照 `docs/ARCHITECTURE.md` 的「成对维护的配置」表。
 6. **崩溃边界：** 前端 `ErrorBoundary` + 后端 panic 钩子（`cores/system.rs`，兜底落盘 `%TEMP%/asr_studio_crash.log`）。两者互不替代，禁止另加并行机制。
 7. **语言数据流：** 唯一持久化点是 `config.json` 的 `locale` 键（`Locale` 枚举，`"en" | "zh-CN"`，禁止裸 `string` 或类型断言）；切换先经 `commands.updateConfig` 落盘再改内存，按返回值分支（禁用状态相等代理推断）；前端渲染期文案经 `libs/i18n/locale.svelte.ts` 桥接响应式（`overwriteGetLocale` 读 `$state`），**不重载的语言变更只允许经 `alignLocale`**；`restart` 桌面端永不结算（勿 `await`）。完整时序见 `docs/ARCHITECTURE.md`。
@@ -63,7 +63,7 @@ docs/         文档（常驻规则 + 按需层）；static/ 原样拷贝资源�
 （完整目录树与各目录职责见 `docs/ARCHITECTURE.md`。）
 
 - 前端：页面专有组件放所属路由的 `_components/`（页面内相对导入）；仅跨页共享的手写组件放 `components/common/`；注册表类（路径、图标、顺序等应用知识）放 `libs/<领域>/`（如 `libs/navigation/`），`libs/utils/` 只放不含业务 / 应用知识的通用工具。
-- 后端：`commands/` 只做薄封装（参数与结果转换 + 注册）；业务逻辑进 `features/`（纯函数）；跨层共享能力进 `cores/`；不另设 `utils/`。
+- 后端：`commands/` 只做薄封装（参数与结果转换 + 注册）；具体业务功能进 `features/`（可用 Tauri 运行时，只能依赖 `cores/`）；跨业务共享能力进 `cores/`（不得反向依赖 `features/`）；不另设 `utils/`。
 - 布局子系统在 `components/layout/`（`layout-container` + tabs / sidebar / dashboard + `parts/`）；新增布局类型必须在 `libs/hooks/appearance.svelte.ts` 的注册表中登记。
 - 生成物禁手改：`bindings.ts`（`cargo test` 重生成，需要提交）、`paraglide/`（`i18n:compile` 重生成，禁编辑、禁从外部导入其内部文件）。
 

@@ -1,7 +1,7 @@
 //! 录音能力：输入设备枚举、录制启停与 WAV 存档。
 //!
-//! 需要本机音频栈（`cpal`），故放在 `cores`；识别启停在 `cores::asr`，两者经命令层组装，
-//! 互不依赖。存档统一单声道 16 位 WAV，采样率沿用设备原生（sherpa 解码侧自动重采样）。
+//! 需要本机音频栈（`cpal`）；具体业务功能，故放在 `features`。
+//! 识别启停在 `features::asr`，两者经命令层组装，互不依赖。存档统一单声道 16 位 WAV，采样率沿用设备原生（sherpa 解码侧自动重采样）。
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -33,6 +33,14 @@ pub struct RecordResult {
 /// 存档目录名：`<app_data>/records/`
 pub const RECORDS_DIR_NAME: &str = "records";
 
+/// “系统默认”输入选项 id：前后端以此字符串会合，前端下拉硬编码同字面量，
+/// 改名需两端同步（`default_device_id_is_stable` 测试锁定取值）。
+pub const DEFAULT_DEVICE_ID: &str = "default";
+
+/// “系统默认”输入选项展示名（英文原文）：前端按 id 映射到本地化文案后渲染，
+/// 此处只做回落展示，不直接上屏。
+pub const DEFAULT_DEVICE_NAME: &str = "System default";
+
 /// 进行中的录制：音频流必须持有（`drop` 即停），采样进共享缓冲
 struct RecordingSession {
     /// 持有即采集，释放即停止
@@ -60,17 +68,46 @@ fn lock_recording() -> std::sync::MutexGuard<'static, Option<RecordingSession>> 
     })
 }
 
-/// 序号解析：非数字一律返回 `None`（命令层转“设备不存在”错误）
+/// 序号解析：非数字一律返回 `None`（命令层转“设备不存在”错误）；
+/// “系统默认”走独立分支，此处只处理序号
 fn parse_device_index(id: &str) -> Option<usize> {
+    if id == DEFAULT_DEVICE_ID {
+        return None;
+    }
     id.parse().ok()
 }
 
+/// 解析录制设备：“系统默认”走实时默认输入（跟随系统切换与热插拔），
+/// 序号走枚举位置；非法 id 直接报错。碰硬件的分支不单测。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn resolve_device(host: &cpal::Host, device_id: &str) -> anyhow::Result<cpal::Device> {
+    use anyhow::Context as _;
+
+    if device_id == DEFAULT_DEVICE_ID {
+        return host
+            .default_input_device()
+            .context("no default input device");
+    }
+    let index = parse_device_index(device_id).context("unknown audio device")?;
+    host.input_devices()
+        .context("failed to list input devices")?
+        .enumerate()
+        .nth(index)
+        .map(|(_, device)| device)
+        .context("unknown audio device")
+}
+
 /// 伪设备判定：名字含 `jack`（服务没起）或 `oss`（无 /dev/dsp）的跳过；
+/// ALSA 的 `null` 空设备（描述为 `Discard all samples ...`，无真硬件，
+/// 捕获全是零采样）同样跳过，否则无麦机器默认选中它，录的全是静音。
 ///
 /// 打开它们只会让 ALSA 库往 stderr 刷错，本身也录不了音。纯函数，可单测。
 fn is_pseudo_device(name: &str) -> bool {
     let lowered = name.to_lowercase();
-    lowered.contains("jack") || lowered.contains("oss")
+    lowered.contains("jack")
+        || lowered.contains("oss")
+        || lowered == "null"
+        || lowered.contains("discard all samples")
 }
 
 /// 按名称去重并默认置顶：ALSA 同一麦克风有多个同名 PCM 入口，只留第一个；
@@ -86,12 +123,14 @@ fn dedupe_devices(devices: Vec<AudioDevice>) -> Vec<AudioDevice> {
     kept
 }
 
-/// 列出输入设备；无设备返回空（前端展示“无可用设备”而非报错）
+/// 列出输入设备；系统默认输入存在时首位加“系统默认”入口（启动录制时实时解析，
+/// 跟随系统切换与热插拔）；无设备返回空（前端展示“无可用设备”而非报错）
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn list_input_devices() -> Vec<AudioDevice> {
     let host = cpal::default_host();
-    let default_name = host
-        .default_input_device()
+    let default_device = host.default_input_device();
+    let default_name = default_device
+        .as_ref()
         .and_then(|device| device.description().ok())
         .map(|description| description.name().to_owned());
     let mut devices = Vec::new();
@@ -123,7 +162,19 @@ pub fn list_input_devices() -> Vec<AudioDevice> {
             is_default,
         });
     }
-    dedupe_devices(devices)
+    let mut devices = dedupe_devices(devices);
+    // 系统默认入口置顶：有默认输入才给，没有不给，避免选中后启动即报错
+    if default_device.is_some() {
+        devices.insert(
+            0,
+            AudioDevice {
+                id: DEFAULT_DEVICE_ID.to_owned(),
+                name: DEFAULT_DEVICE_NAME.to_owned(),
+                is_default: true,
+            },
+        );
+    }
+    devices
 }
 
 /// 列出输入设备；移动端无此能力，返回空列表
@@ -138,15 +189,8 @@ pub fn start_recording(device_id: &str) -> anyhow::Result<()> {
     if lock_recording().is_some() {
         anyhow::bail!("already recording");
     }
-    let index = parse_device_index(device_id).context("unknown audio device")?;
     let host = cpal::default_host();
-    let device = host
-        .input_devices()
-        .context("failed to list input devices")?
-        .enumerate()
-        .nth(index)
-        .map(|(_, device)| device)
-        .context("unknown audio device")?;
+    let device = resolve_device(&host, device_id)?;
     let config = device
         .default_input_config()
         .context("failed to query device config")?;
@@ -317,6 +361,21 @@ mod tests {
         assert_eq!(parse_device_index("12"), Some(12));
         assert_eq!(parse_device_index(""), None);
         assert_eq!(parse_device_index("default"), None);
+        assert_eq!(parse_device_index("unknown"), None);
+    }
+
+    #[test]
+    fn default_device_id_is_stable() {
+        // 前端下拉硬编码同字面量，改名需两端同步
+        assert_eq!(DEFAULT_DEVICE_ID, "default");
+    }
+
+    #[test]
+    fn resolve_device_rejects_garbage_id() {
+        // 非法 id 在碰硬件前即报错，无副作用，可单测
+        let host = cpal::default_host();
+        assert!(resolve_device(&host, "not-a-device").is_err());
+        assert!(resolve_device(&host, "").is_err());
     }
 
     fn entry(id: &str, name: &str, is_default: bool) -> AudioDevice {
@@ -336,6 +395,18 @@ mod tests {
         assert!(!is_pseudo_device("default"));
         assert!(!is_pseudo_device("pulse"));
         assert!(!is_pseudo_device("USB Microphone"));
+    }
+
+    #[test]
+    fn pseudo_device_matches_alsa_null() {
+        assert!(is_pseudo_device("null"));
+        assert!(is_pseudo_device("NULL"));
+        assert!(is_pseudo_device(
+            "Discard all samples (playback) or generate zero samples (capture)"
+        ));
+        assert!(!is_pseudo_device("default"));
+        assert!(!is_pseudo_device("sysdefault"));
+        assert!(!is_pseudo_device("hw:0,0"));
     }
 
     #[test]

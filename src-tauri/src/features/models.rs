@@ -1,6 +1,7 @@
 //! 模型管理：sherpa-onnx 模型清单、下载、解压、校验与删除。
 //!
-//! 需要 Tauri 运行时（应用数据目录、事件推送），故放在 `cores` 而非纯函数的 `features`。
+//! 具体业务功能，故放在 `features`；可用 Tauri 运行时（应用数据目录、事件推送），
+//! 只能依赖 `cores` 的共享能力，`cores` 不得反向依赖本模块。
 //! 命令层（`commands::models`）只做薄封装；下载进度经 `MODEL_DOWNLOAD_PROGRESS_EVENT`
 //! 事件推送，前端在 `libs/hooks/models.svelte.ts` 订阅（事件名两端以该常量为准）。
 //! 下载任务由本模块持有（`DOWNLOADS`），页面切换不中断；取消走独立命令。

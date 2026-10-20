@@ -19,6 +19,7 @@
   import type { ShortcutOutput } from "#libs/commands/types";
   import { toast } from "#libs/utils/toast";
   import {
+    deviceLabel,
     refreshServiceData,
     selectDevice,
     selectModel,
@@ -57,11 +58,11 @@
       serviceState.selectedDevice != null,
   );
 
-  /** 输出方式选项：值与后端 `ShortcutOutput` 落盘标签一一对应 */
+  /** 输出方式选项：值与后端 `ShortcutOutput` 落盘标签一一对应，粘贴优先、输入法置末 */
   const outputItems: { value: ShortcutOutput; label: string }[] = [
-    { value: "ime", label: m.service_output_option_ime() },
-    { value: "clipboard", label: m.service_output_option_clipboard() },
     { value: "paste", label: m.service_output_option_paste() },
+    { value: "clipboard", label: m.service_output_option_clipboard() },
+    { value: "ime", label: m.service_output_option_ime() },
   ];
 
   /** 输出方式经命令落盘后端；失败不乐观更新，下拉自动回滚 */
@@ -129,7 +130,7 @@
               value={serviceState.selectedDevice ?? undefined}
               items={serviceState.devices.map((device) => ({
                 value: device.id,
-                label: device.name,
+                label: deviceLabel(device),
               }))}
               onValueChange={(value) => selectDevice(value)}
               disabled={serviceState.recording || serviceState.recognizing}
@@ -142,7 +143,7 @@
               </SelectTrigger>
               <SelectContent>
                 {#each serviceState.devices as device (device.id)}
-                  <SelectItem value={device.id}>{device.name}</SelectItem>
+                  <SelectItem value={device.id}>{deviceLabel(device)}</SelectItem>
                 {/each}
               </SelectContent>
             </Select>
@@ -178,7 +179,7 @@
         {#snippet control()}
           <Select
             type="single"
-            value={configState.value?.shortcut_output ?? "clipboard"}
+            value={configState.value?.shortcut_output ?? "paste"}
             items={outputItems}
             onValueChange={(value) => void handleOutputChange(value)}
           >
@@ -186,9 +187,9 @@
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="ime">{m.service_output_option_ime()}</SelectItem>
-              <SelectItem value="clipboard">{m.service_output_option_clipboard()}</SelectItem>
               <SelectItem value="paste">{m.service_output_option_paste()}</SelectItem>
+              <SelectItem value="clipboard">{m.service_output_option_clipboard()}</SelectItem>
+              <SelectItem value="ime">{m.service_output_option_ime()}</SelectItem>
             </SelectContent>
           </Select>
         {/snippet}

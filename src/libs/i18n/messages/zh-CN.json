@@ -105,6 +105,7 @@
   "service_device_label": "录音设备",
   "service_device_description": "选择麦克风，录制中不可切换",
   "service_device_empty": "无可用设备",
+  "service_device_system_default": "系统默认",
   "service_start": "启动服务",
   "service_stop": "停止服务",
   "service_switching": "切换中…",

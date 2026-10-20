@@ -65,16 +65,17 @@ impl CloseBehavior {
     }
 }
 
-/// 快捷键语音识别结果的输出方式：落盘值为 `snake_case` 字符串，未知一律回落写入剪贴板
+/// 快捷键语音识别结果的输出方式：落盘值为 `snake_case` 字符串；
+/// 缺键回落默认（粘贴），未知标签与非字符串一律回落写入剪贴板（脏值永不触发注入）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ShortcutOutput {
     /// 模拟输入法：Unicode 逐字注入（等价于 demo 的 `SendInput` 做法）
     Ime,
-    /// 写入剪贴板：全平台可用，默认选项
-    #[default]
+    /// 写入剪贴板：全平台可用
     Clipboard,
-    /// 模拟复制粘贴：先写剪贴板再发 Ctrl+V
+    /// 模拟复制粘贴：先写剪贴板再发 Ctrl+V，默认选项
+    #[default]
     Paste,
 }
 
@@ -88,12 +89,12 @@ impl ShortcutOutput {
         }
     }
 
-    /// 容错解析输出方式标签：未知一律回落写入剪贴板
+    /// 容错解析输出方式标签：未知一律回落写入剪贴板，不走默认（脏值永不触发注入）
     pub fn parse(raw: &str) -> Self {
         match raw.trim() {
             "ime" => Self::Ime,
             "paste" => Self::Paste,
-            _ => Self::default(),
+            _ => Self::Clipboard,
         }
     }
 }
@@ -282,7 +283,7 @@ where
         .unwrap_or_default())
 }
 
-/// 容错解析输出方式：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
+/// 容错解析输出方式：未知标签与非字符串一律回落剪贴板；缺键走字段默认值
 fn de_shortcut_output<'de, D>(deserializer: D) -> Result<ShortcutOutput, D::Error>
 where
     D: Deserializer<'de>,
@@ -290,8 +291,7 @@ where
     let value = Value::deserialize(deserializer)?;
     Ok(value
         .as_str()
-        .map(ShortcutOutput::parse)
-        .unwrap_or_default())
+        .map_or(ShortcutOutput::Clipboard, ShortcutOutput::parse))
 }
 
 /// 容错解析结构版本：经 `parse_schema_version` 统一处理脏值
@@ -459,11 +459,13 @@ fn load_shortcut_voice(app: &tauri::AppHandle) -> String {
         .unwrap_or_default()
 }
 
-/// 读取持久化的输出方式；未设置、类型不符或无法识别时回落写入剪贴板
+/// 读取持久化的输出方式；未设置回落默认（粘贴），类型不符或无法识别回落剪贴板
 fn load_shortcut_output(app: &tauri::AppHandle) -> ShortcutOutput {
-    read_key(app, KEY_SHORTCUT_OUTPUT)
-        .and_then(|value| value.as_str().map(ShortcutOutput::parse))
-        .unwrap_or_default()
+    read_key(app, KEY_SHORTCUT_OUTPUT).map_or_else(ShortcutOutput::default, |value| {
+        value
+            .as_str()
+            .map_or(ShortcutOutput::Clipboard, ShortcutOutput::parse)
+    })
 }
 
 /// 读取持久化的配置结构版本；未设置或类型不符时回落 `0`
@@ -816,7 +818,7 @@ mod tests {
         assert!(!config.auto_check_update);
         assert_eq!(config.shortcut_quick_open, "");
         assert_eq!(config.shortcut_voice, "");
-        assert_eq!(config.shortcut_output, ShortcutOutput::Clipboard);
+        assert_eq!(config.shortcut_output, ShortcutOutput::Paste);
         assert_eq!(config.schema_version, 0);
     }
 
@@ -980,9 +982,10 @@ mod tests {
     }
 
     #[test]
-    fn shortcut_output_falls_back_to_clipboard() {
+    fn shortcut_output_fallback_rules() {
+        // 缺键走新默认（粘贴），脏值一律回落剪贴板（永不触发注入）
         for (raw, expected) in [
-            (json!({}), ShortcutOutput::Clipboard),
+            (json!({}), ShortcutOutput::Paste),
             (json!({ "shortcut_output": "ime" }), ShortcutOutput::Ime),
             (
                 json!({ "shortcut_output": "clipboard" }),

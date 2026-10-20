@@ -1,6 +1,6 @@
 //! Tauri 应用后端入口：串联插件注册、命令处理器与核心初始化。
 //!
-//! 模块分层：`commands`（命令封装）/ `cores`（通用能力与跨层共享类型）/ `features`（业务逻辑）/
+//! 模块分层：`commands`（命令封装）/ `cores`（通用能力与跨层共享类型）/ `features`（具体业务功能）/
 //! `plugins`（插件初始化）。新增命令的流程见 `commands/mod.rs`。
 
 mod commands;

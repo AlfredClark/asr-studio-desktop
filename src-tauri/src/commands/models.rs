@@ -1,7 +1,7 @@
-//! 模型命令：清单 / 下载 / 取消 / 校验 / 打开目录 / 删除的薄封装，逻辑在 `cores::models`。
+//! 模型命令：清单 / 下载 / 取消 / 校验 / 打开目录 / 删除的薄封装，逻辑在 `features::models`。
 
-use crate::cores::models::{self, ModelEntry, VerifyReport};
 use crate::cores::types::CommandResult;
+use crate::features::models::{self, ModelEntry, VerifyReport};
 
 /// 列出全部模型及其本机状态；前端据此渲染分组与按钮
 #[tauri::command]

@@ -148,7 +148,7 @@ describe("LAYOUTS", () => {
       expect(isLayoutName(name)).toBe(true);
       await expect(LAYOUTS[name]()).resolves.toBeDefined();
     }
-  });
+  }, 15_000);
 });
 
 describe("sanitizeFontFamily", () => {

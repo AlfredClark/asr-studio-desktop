@@ -302,13 +302,16 @@ export type ServiceStatus = {
 	load_ms: number | null,
 };
 
-/**  快捷键语音识别结果的输出方式：落盘值为 `snake_case` 字符串，未知一律回落写入剪贴板 */
+/**
+ *  快捷键语音识别结果的输出方式：落盘值为 `snake_case` 字符串；
+ *  缺键回落默认（粘贴），未知标签与非字符串一律回落写入剪贴板（脏值永不触发注入）
+ */
 export type ShortcutOutput = 
 /**  模拟输入法：Unicode 逐字注入（等价于 demo 的 `SendInput` 做法） */
 "ime" | 
-/**  写入剪贴板：全平台可用，默认选项 */
+/**  写入剪贴板：全平台可用 */
 "clipboard" | 
-/**  模拟复制粘贴：先写剪贴板再发 Ctrl+V */
+/**  模拟复制粘贴：先写剪贴板再发 Ctrl+V，默认选项 */
 "paste";
 
 /**  运行平台信息：经 `tauri-plugin-os` 采集，全字段必填，前端逐行展示 */

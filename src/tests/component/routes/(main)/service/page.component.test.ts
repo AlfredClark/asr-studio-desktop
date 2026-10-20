@@ -73,6 +73,7 @@ const deviceEntry: AudioDevice = { id: "0", name: "Microphone", is_default: true
 
 vi.mock("#libs/hooks/service.svelte", () => ({
   serviceState: serviceStateMock,
+  deviceLabel: (device: AudioDevice) => device.name,
   refreshServiceData: refreshServiceDataMock,
   selectModel: selectModelMock,
   selectDevice: selectDeviceMock,

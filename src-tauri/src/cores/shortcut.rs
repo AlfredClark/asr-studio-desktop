@@ -1,7 +1,7 @@
 //! 全局快捷键管理：两路快捷键（快速打开 / 语音识别）的注册、解绑、启动恢复与状态查询。
 //!
 //! 仅桌面端启用（移动端为空操作）；快速打开只显示主窗口，
-//! 语音识别在服务运行时显示主窗口并通知前端开始/结束录制，服务未运行则静默丢弃。
+//! 语音识别按键无条件发射事件交前端处理（运行态守卫在前端，避免本层反向依赖 `features::asr`）。
 
 use tauri::{AppHandle, Manager};
 
@@ -125,7 +125,7 @@ fn register_quick_open(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 注册语音识别快捷键并绑定唤起处理：服务运行时显示主窗口并发事件；空值跳过
+/// 注册语音识别快捷键并绑定唤起处理：按键即发事件交前端，前端按服务运行态决定开始还是丢弃；空值跳过
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn register_voice(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
     if shortcut.is_empty() {
@@ -141,15 +141,12 @@ fn register_voice(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 语音快捷键按下处理：服务未运行直接丢弃，不打扰用户；
-/// 服务运行时不显示本窗口（焦点必须留在用户当前应用），只发事件交前端处理
+/// 语音快捷键按下处理：无条件发射事件交前端；服务未运行时前端静默丢弃，
+/// 不打扰用户；服务运行时不显示本窗口（焦点必须留在用户当前应用）
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn on_voice_shortcut_pressed(app: &AppHandle) {
     use tauri::Emitter;
 
-    if crate::cores::asr::status().state != crate::cores::asr::ServiceState::Running {
-        return;
-    }
     if let Err(err) = app.emit(SHORTCUT_VOICE_TRIGGER_EVENT, ()) {
         log::warn!("failed to emit shortcut voice trigger: {err:#}");
     }

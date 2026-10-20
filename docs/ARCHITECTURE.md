@@ -64,8 +64,8 @@ asr-studio-desktop/
 │   │   ├── main.rs                 # 二进制入口，仅转发到 lib::run()
 │   │   ├── lib.rs                  # 串联插件注册 → 命令处理器 → 核心初始化
 │   │   ├── commands/               # 命令封装层：薄封装 + collect_commands! 注册
-│   │   ├── cores/                  # 通用能力与跨层共享类型（types / locale / config / deep_link / specta / system / tray / updater）
-│   │   ├── features/               # 业务逻辑（纯函数，不依赖 Tauri 运行时；当前为空，业务实现落在此层）
+│   │   ├── cores/                  # 通用能力与跨层共享类型（types / locale / config / deep_link / specta / system / tray / updater / shortcut；不得依赖 features）
+│   │   ├── features/               # 具体业务功能（asr / models / audio / output；可用 Tauri 运行时，只能依赖 cores）
 │   │   └── plugins/                # 各 Tauri 插件的初始化（log / store / opener / updater / autostart / window-state / system-fonts / single-instance / deep-link / clipboard）
 │   ├── locales/                    # rust-i18n 后端文案（按功能分文件，一文件一命名空间：当前 tray.yml 的 tray.*，单文件可内含多 locale 的 en/zh-CN 双写）
 │   ├── app-icon.svg                # 应用图标源（推荐正方形透明底 SVG，标称尺寸任意；PNG 备选 ≥1024；`pnpm tauri:icon` 的输入，换图标时替换本文件）
@@ -92,7 +92,7 @@ asr-studio-desktop/
 ## 分层与依赖方向
 
 ```text
-Svelte 组件 → libs/commands（链式 API）→ commands/（Rust 薄封装）→ features/ · cores/
+Svelte 组件 → libs/commands（链式 API）→ commands/（Rust 薄封装）→ features/（业务）· cores/（共享能力）
 ```
 
 - 禁止反向调用与跨层跳跃：组件裸 `invoke`、命令层写业务逻辑都属违规。
@@ -169,7 +169,7 @@ const config = await invoke<Config>("get_config");
 
 - `EnhancedCommand` 三种用法：取值 `.value()` / 分支 `.result()` / 事务 `.success()/.failed()`。关键取值用 `.result()` 按 `status` 分支——`.value()` 的回落会把失败与空数据压成同一个值。
 - 回调在 `await / value()` 之前链式注册；回调内只做幂等赋值 / toast 且保证不抛错（回调抛错只上报不扩散，`await` 仍得原结果；关键分支若放回调内会形成「状态未落但结果为 ok」的不一致）；多步分支 / 跨状态机流转必须用 `result()` 后置分支。
-- 错误体：后端 `CommandError::Internal(...)`（`anyhow::Error` 经已有 `From` 自动转换），前端 `.failed()` 收到 `{ kind, message }`；未注册 `.failed()` 的失败会自动经 plugin-log 上报，不会静默丢失。禁止在 `features/` 内直接耦合 Tauri 运行时。
+- 错误体：后端 `CommandError::Internal(...)`（`anyhow::Error` 经已有 `From` 自动转换），前端 `.failed()` 收到 `{ kind, message }`；未注册 `.failed()` 的失败会自动经 plugin-log 上报，不会静默丢失。禁止 `cores/` 反向依赖 `features/`；`features/` 只能依赖 `cores/` 的共享能力。
 - 时间：后端 `chrono`；业务时间全链路 UTC，展示层转本地时区；禁止无时区信息的本地时间与 UTC 解析混用。
 - Prettier 硬性约束：`plugins` 数组中 `prettier-plugin-tailwindcss` **必须在最后**；`importOrderTypeScriptVersion` 必须与 `package.json` 的 `typescript` 版本同步。
 

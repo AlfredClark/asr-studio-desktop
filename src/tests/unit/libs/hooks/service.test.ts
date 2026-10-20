@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_DEVICE_ID,
+  deviceLabel,
   handleShortcutTrigger,
   refreshServiceData,
   selectDevice,
@@ -11,6 +13,7 @@ import {
   stopTestRecording,
 } from "#libs/hooks/service.svelte";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+import { m } from "#libs/i18n/paraglide/messages";
 
 vi.mock("#libs/commands", () => ({
   default: {
@@ -135,6 +138,31 @@ describe("识别服务状态", () => {
     expect(serviceState.selectedModel).toBe(model.id);
     expect(serviceState.selectedDevice).toBe(device.id);
     expect(serviceState.status?.state).toBe("stopped");
+  });
+
+  it("系统默认合成项优先于物理默认标记", async () => {
+    const synthetic: AudioDevice = {
+      id: DEFAULT_DEVICE_ID,
+      name: "System default",
+      is_default: true,
+    };
+    mocked.listInputDevices.mockReturnValue(
+      fakeCommand({ status: "ok", data: [synthetic, device] }) as never,
+    );
+
+    await refreshServiceData();
+
+    expect(serviceState.selectedDevice).toBe(DEFAULT_DEVICE_ID);
+  });
+
+  it("合成项展示本地化文案，物理设备展示原名", () => {
+    const synthetic: AudioDevice = {
+      id: DEFAULT_DEVICE_ID,
+      name: "System default",
+      is_default: true,
+    };
+    expect(deviceLabel(synthetic)).toBe(m.service_device_system_default());
+    expect(deviceLabel(device)).toBe(device.name);
   });
 
   it("启动服务成功后同步快照并提示", async () => {

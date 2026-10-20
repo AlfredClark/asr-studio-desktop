@@ -1,6 +1,7 @@
 //! 语音识别服务：sherpa-onnx 离线识别器的加载、启停与文件转写。
 //!
-//! 需要 Tauri 运行时（模型目录定位）与 `sherpa-onnx` 本地推理，故放在 `cores`。
+//! 具体业务功能，故放在 `features`；可用 Tauri 运行时（模型目录定位），
+//! 只能依赖 `cores` 的共享能力（模型清单与目录），`cores` 不得反向依赖本模块。
 //! 识别器全局单例常驻内存（`SERVICE`），转写时取出独占使用后归还；
 //! 快捷键触发的识别复用同一入口（`transcribe_file`），不经过命令层。
 
@@ -95,14 +96,14 @@ pub fn status() -> ServiceStatus {
 pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    let spec = crate::cores::models::find_spec(model_id).context("unknown model id")?;
+    let spec = crate::features::models::find_spec(model_id).context("unknown model id")?;
     {
         if lock_service().is_some() {
             anyhow::bail!("service is already running or starting");
         }
     }
-    let report = crate::cores::models::verify_model(app, spec.id)?;
-    if report.status != crate::cores::models::ModelStatus::Ready {
+    let report = crate::features::models::verify_model(app, spec.id)?;
+    if report.status != crate::features::models::ModelStatus::Ready {
         anyhow::bail!("model is not ready, download and verify it first");
     }
     *lock_service() = Some(LoadedService {
@@ -112,7 +113,7 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
         recognizer: None,
     });
 
-    let dir = crate::cores::models::model_dir(app, spec)?;
+    let dir = crate::features::models::model_dir(app, spec)?;
     let config = build_recognizer_config(spec, &dir);
     let started = std::time::Instant::now();
     let recognizer =
@@ -147,7 +148,7 @@ pub fn stop() {
 /// V1 只收录 int8 三款，文件名按清单写死；加新版时同步此处的角色映射。
 /// qwen3 的生成长度按评测结论放大（默认 128 会截断长音频）。
 fn build_recognizer_config(
-    spec: &'static crate::cores::models::ModelSpec,
+    spec: &'static crate::features::models::ModelSpec,
     dir: &std::path::Path,
 ) -> sherpa_onnx::OfflineRecognizerConfig {
     use sherpa_onnx::{
@@ -161,7 +162,7 @@ fn build_recognizer_config(
     config.model_config.debug = false;
     config.decoding_method = Some("greedy_search".to_string());
     match spec.category {
-        crate::cores::models::ModelCategory::FunasrNano => {
+        crate::features::models::ModelCategory::FunasrNano => {
             config.model_config.funasr_nano = OfflineFunASRNanoModelConfig {
                 encoder_adaptor: file("encoder_adaptor.int8.onnx"),
                 embedding: file("embedding.int8.onnx"),
@@ -170,7 +171,7 @@ fn build_recognizer_config(
                 ..Default::default()
             };
         }
-        crate::cores::models::ModelCategory::Qwen3Asr => {
+        crate::features::models::ModelCategory::Qwen3Asr => {
             config.model_config.qwen3_asr = OfflineQwen3ASRModelConfig {
                 conv_frontend: file("conv_frontend.onnx"),
                 encoder: file("encoder.int8.onnx"),
@@ -181,7 +182,7 @@ fn build_recognizer_config(
                 ..Default::default()
             };
         }
-        crate::cores::models::ModelCategory::SenseVoice => {
+        crate::features::models::ModelCategory::SenseVoice => {
             config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
                 model: file("model.int8.onnx"),
                 use_itn: true,
@@ -221,6 +222,53 @@ fn put_back_recognizer(recognizer: sherpa_onnx::OfflineRecognizer) {
     }
 }
 
+/// 去掉 Windows 规范化路径的 `\\?\` 前缀（含 `\\?\UNC\` 网络路径）；
+/// 非 Windows 原样返回。纯函数，可单测。
+fn strip_verbatim_prefix(path: &std::path::Path) -> std::path::PathBuf {
+    let text = path.to_string_lossy();
+    text.strip_prefix(r"\\?\UNC\")
+        .map(|rest| std::path::PathBuf::from(format!(r"\\{rest}")))
+        .or_else(|| text.strip_prefix(r"\\?\").map(std::path::PathBuf::from))
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+/// Windows 归属判定：统一分隔符、去 `\\?\` 前缀后忽略大小写比较，
+/// 保证 `C:\AppData` 不匹配 `C:\AppDataEvil\a.wav`。
+/// 用字符串比较而非 `Component`，Linux 单测也能覆盖 Windows 分支。纯函数，可单测。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn within_dir_windows(file: &std::path::Path, root: &std::path::Path) -> bool {
+    fn normalize(text: &str) -> String {
+        let unified = text.replace('/', "\\");
+        let stripped = unified
+            .strip_prefix(r"\\?\UNC\")
+            .map(|rest| format!(r"\\{rest}"))
+            .or_else(|| unified.strip_prefix(r"\\?\").map(str::to_owned))
+            .unwrap_or(unified);
+        stripped.trim_end_matches('\\').to_lowercase()
+    }
+    let file = normalize(&file.to_string_lossy());
+    let root = normalize(&root.to_string_lossy());
+    if root.is_empty() {
+        return false;
+    }
+    file == root || file.starts_with(&format!("{root}\\"))
+}
+
+/// 路径归属判定：两侧须已规范化；Windows 去前缀并忽略大小写，
+/// 其他平台直接按组件比较。纯函数，可单测。
+fn is_within_dir(file: &std::path::Path, root: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        within_dir_windows(file, root)
+    }
+    #[cfg(not(windows))]
+    {
+        let file = strip_verbatim_prefix(file);
+        let root = strip_verbatim_prefix(root);
+        file.starts_with(root)
+    }
+}
+
 /// 转写音频文件：服务必须运行中；路径收敛到应用数据目录内，目录外拒绝；
 ///
 /// 识别器取出独占使用后归还；归还时服务已被停止则直接释放。
@@ -240,7 +288,15 @@ pub async fn transcribe_file(
     let canonical = std::path::Path::new(path)
         .canonicalize()
         .context("audio file not found")?;
-    if !canonical.starts_with(&root) {
+    // 两侧都规范化后再比较：Windows 的 `canonicalize` 给文件加 `\\?\` 前缀，
+    // 根目录不规范化会误判为目录外（录制后立刻转写也被拒绝即此因）
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+    if !is_within_dir(&canonical, &canonical_root) {
+        log::warn!(
+            "reject transcribe outside app data: file={} root={}",
+            canonical.display(),
+            canonical_root.display()
+        );
         anyhow::bail!("audio file is outside app data dir");
     }
     let recognizer = take_recognizer()?;
@@ -310,5 +366,57 @@ mod tests {
     #[test]
     fn num_cpus_is_positive() {
         assert!(num_cpus() >= 1);
+    }
+
+    #[test]
+    fn verbatim_prefix_strips_disk_and_unc() {
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(r"\\?\C:\AppData\records\a.wav")),
+            std::path::PathBuf::from(r"C:\AppData\records\a.wav")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(r"\\?\UNC\pc\share\a.wav")),
+            std::path::PathBuf::from(r"\\pc\share\a.wav")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new("/tmp/a.wav")),
+            std::path::PathBuf::from("/tmp/a.wav")
+        );
+    }
+
+    #[test]
+    fn windows_within_ignores_prefix_and_case() {
+        use std::path::Path;
+        // 录制路径带 `\\?\` 前缀、根目录大小写不一致，仍算目录内
+        assert!(within_dir_windows(
+            Path::new(r"\\?\C:\Users\A\AppData\records\a.wav"),
+            Path::new(r"c:\users\a\appdata"),
+        ));
+        // 前缀名相近但组件不同，不算目录内
+        assert!(!within_dir_windows(
+            Path::new(r"C:\AppDataEvil\a.wav"),
+            Path::new(r"C:\AppData"),
+        ));
+        assert!(!within_dir_windows(
+            Path::new(r"C:\Other\a.wav"),
+            Path::new(r"C:\AppData"),
+        ));
+    }
+
+    #[test]
+    fn within_dir_rejects_sibling_prefix() {
+        use std::path::Path;
+        assert!(is_within_dir(
+            Path::new("/tmp/app/records/a.wav"),
+            Path::new("/tmp/app"),
+        ));
+        assert!(!is_within_dir(
+            Path::new("/tmp/app-evil/a.wav"),
+            Path::new("/tmp/app"),
+        ));
+        assert!(!is_within_dir(
+            Path::new("/tmp/other/a.wav"),
+            Path::new("/tmp/app")
+        ));
     }
 }
