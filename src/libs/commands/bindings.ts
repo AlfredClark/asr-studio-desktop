@@ -141,6 +141,8 @@ export type ConfigPatch = {
 	shortcut_voice?: string | null,
 	/**  快捷键语音识别结果的输出方式 */
 	shortcut_output?: ShortcutOutput | null,
+	/**  粘贴后是否恢复原剪贴板 */
+	shortcut_paste_restore?: boolean | null,
 };
 
 /**
@@ -178,6 +180,8 @@ export type Config_Deserialize = {
 	shortcut_voice?: string,
 	/**  快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板 */
 	shortcut_output?: ShortcutOutput,
+	/**  粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效 */
+	shortcut_paste_restore?: boolean,
 };
 
 /**
@@ -215,6 +219,8 @@ export type Config_Serialize = {
 	shortcut_voice: string,
 	/**  快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板 */
 	shortcut_output: ShortcutOutput,
+	/**  粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效 */
+	shortcut_paste_restore: boolean,
 };
 
 /**  应用支持的语言 */
@@ -272,12 +278,25 @@ export type ModelStatus =
 /**  后端正在下载或解压 */
 "downloading";
 
-/**  输出结果：实际通道 + 是否发生过降级 */
+/**  输出原因：调用方据此区分提示文案 */
+export type OutputReason = 
+/**  按配置通道成功投递（含剪贴板模式本身） */
+"as_configured" | 
+/**  空文本：未做任何事 */
+"empty_text" | 
+/**  注入击键失败，已降级剪贴板 */
+"injection_fallback" | 
+/**  预检明确无可输入焦点，未尝试注入、直写剪贴板 */
+"no_editable_focus";
+
+/**  输出结果：实际通道 + 是否降级 + 降级原因 */
 export type OutputReport = {
 	/**  实际投递通道 */
 	via: OutputVia,
 	/**  是否发生过降级（前端据此提示用户） */
 	fallback: boolean,
+	/**  降级或直投原因（前端据此区分文案） */
+	reason: OutputReason,
 };
 
 /**  实际投递通道：成功走配置项，降级走剪贴板 */
@@ -286,7 +305,7 @@ export type OutputVia =
 "ime" | 
 /**  写入剪贴板 */
 "clipboard" | 
-/**  模拟复制粘贴：写剪贴板后发 Ctrl+V */
+/**  模拟复制粘贴：写剪贴板后发粘贴键 */
 "paste";
 
 /**  结束录制的回执：前端据此展示文件名与时长，再调转写命令 */

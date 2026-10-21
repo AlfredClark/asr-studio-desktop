@@ -32,9 +32,11 @@ const startTestRecordingMock = vi.hoisted(() => vi.fn());
 const stopTestRecordingMock = vi.hoisted(() => vi.fn());
 const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 const updateConfigMock = vi.hoisted(() => vi.fn());
-const configStateMock = vi.hoisted((): { value: { shortcut_output: string } | null } => ({
-  value: { shortcut_output: "clipboard" },
-}));
+const configStateMock = vi.hoisted(
+  (): { value: { shortcut_output: string; shortcut_paste_restore?: boolean } | null } => ({
+    value: { shortcut_output: "clipboard", shortcut_paste_restore: false },
+  }),
+);
 const serviceStateMock = vi.hoisted(
   (): {
     status: { state: string; modelId: string | null; loadMs: number | null } | null;
@@ -110,7 +112,7 @@ beforeEach(() => {
   serviceStateMock.switching = false;
   serviceStateMock.result = null;
   serviceStateMock.history = [];
-  configStateMock.value = { shortcut_output: "clipboard" };
+  configStateMock.value = { shortcut_output: "clipboard", shortcut_paste_restore: false };
   updateConfigMock.mockResolvedValue(true);
 });
 
@@ -268,5 +270,27 @@ describe("服务页", () => {
     await user.click(document.querySelector('[data-value="paste"]') as HTMLElement);
 
     expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_output: "paste" });
+  });
+
+  it("仅粘贴模式展示恢复开关，其它模式隐藏", async () => {
+    configStateMock.value = { shortcut_output: "paste", shortcut_paste_restore: false };
+    const { unmount } = render(Page);
+    expect(screen.getByRole("switch", { name: "Restore clipboard after paste" })).not.toBeNull();
+    unmount();
+    cleanup();
+
+    configStateMock.value = { shortcut_output: "clipboard", shortcut_paste_restore: false };
+    render(Page);
+    expect(screen.queryByRole("switch", { name: "Restore clipboard after paste" })).toBeNull();
+  });
+
+  it("恢复开关切换经命令落盘", async () => {
+    const user = userEvent.setup();
+    configStateMock.value = { shortcut_output: "paste", shortcut_paste_restore: false };
+    render(Page);
+
+    await user.click(screen.getByRole("switch", { name: "Restore clipboard after paste" }));
+
+    expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_paste_restore: true });
   });
 });

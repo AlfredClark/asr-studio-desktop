@@ -14,6 +14,7 @@
   } from "#components/shadcn-svelte/resizable";
   import CardRow from "#components/common/card-row.svelte";
   import ShortcutRecordRow from "#components/common/shortcut-record-row.svelte";
+  import { Switch } from "#components/shadcn-svelte/switch";
   import {
     Select,
     SelectContent,
@@ -105,6 +106,30 @@
       toast.success(m.service_output_updated());
     } else {
       toast.error(m.service_output_update_failed());
+    }
+  }
+
+  /** 粘贴模式才展示恢复开关：水合前按粘贴默认渲染，避免首帧闪烁 */
+  const isPasteMode = $derived((configState.value?.shortcut_output ?? "paste") === "paste");
+
+  /** 恢复开关以后端配置为真值；水合前按关闭渲染 */
+  const pasteRestore = $derived(configState.value?.shortcut_paste_restore ?? false);
+
+  /** 恢复开关切换中禁用，避免重复提交 */
+  let switchingRestore = $state(false);
+
+  /** 恢复开关经命令落盘后端；失败不乐观更新，开关自动回滚 */
+  async function handleRestoreChange(checked: boolean): Promise<void> {
+    if (checked === pasteRestore || switchingRestore) return;
+    switchingRestore = true;
+    try {
+      if (await updateConfig({ shortcut_paste_restore: checked })) {
+        toast.success(m.service_output_restore_updated());
+      } else {
+        toast.error(m.service_output_restore_update_failed());
+      }
+    } finally {
+      switchingRestore = false;
     }
   }
 
@@ -300,6 +325,21 @@
               </Select>
             {/snippet}
           </CardRow>
+          {#if isPasteMode}
+            <CardRow
+              label={m.service_output_restore_label()}
+              description={m.service_output_restore_description()}
+            >
+              {#snippet control()}
+                <Switch
+                  checked={pasteRestore}
+                  onCheckedChange={handleRestoreChange}
+                  disabled={switchingRestore}
+                  aria-label={m.service_output_restore_label()}
+                />
+              {/snippet}
+            </CardRow>
+          {/if}
           <!-- 下方留空：将来新增设置直接往下加行 -->
           <div class="min-h-4 flex-1"></div>
         </div>

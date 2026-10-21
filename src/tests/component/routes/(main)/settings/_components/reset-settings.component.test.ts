@@ -40,6 +40,7 @@ const defaults: Config_Serialize = {
   close_behavior: "prompt",
   shortcut_quick_open: "",
   shortcut_output: "clipboard",
+  shortcut_paste_restore: false,
   shortcut_voice: "",
   schema_version: 1,
 };

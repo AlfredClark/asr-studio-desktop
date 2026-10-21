@@ -32,6 +32,8 @@ const KEY_SHORTCUT_QUICK_OPEN: &str = "shortcut_quick_open";
 const KEY_SHORTCUT_VOICE: &str = "shortcut_voice";
 /// 快捷键语音识别结果的输出方式在配置文件中的键名
 const KEY_SHORTCUT_OUTPUT: &str = "shortcut_output";
+/// 粘贴后是否恢复原剪贴板在配置文件中的键名；仅 `paste` 模式生效
+const KEY_SHORTCUT_PASTE_RESTORE: &str = "shortcut_paste_restore";
 /// 当前配置结构版本：变更字段语义时递增，并在迁移链中补对应升级步骤
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -155,6 +157,10 @@ pub struct Config {
     #[serde(deserialize_with = "de_shortcut_output")]
     #[specta(type = ShortcutOutput)]
     pub shortcut_output: ShortcutOutput,
+    /// 粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效
+    #[serde(deserialize_with = "de_shortcut_paste_restore")]
+    #[specta(type = bool)]
+    pub shortcut_paste_restore: bool,
 }
 
 impl Default for Config {
@@ -170,6 +176,7 @@ impl Default for Config {
             shortcut_quick_open: String::new(),
             shortcut_voice: String::new(),
             shortcut_output: ShortcutOutput::default(),
+            shortcut_paste_restore: false,
         }
     }
 }
@@ -201,6 +208,8 @@ pub struct ConfigPatch {
     pub shortcut_voice: Option<String>,
     /// 快捷键语音识别结果的输出方式
     pub shortcut_output: Option<ShortcutOutput>,
+    /// 粘贴后是否恢复原剪贴板
+    pub shortcut_paste_restore: Option<bool>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -292,6 +301,15 @@ where
     Ok(value
         .as_str()
         .map_or(ShortcutOutput::Clipboard, ShortcutOutput::parse))
+}
+
+/// 容错解析粘贴恢复开关：经 `serde_json::Value` 中转，非布尔值一律回落 `false`（保持覆盖）
+fn de_shortcut_paste_restore<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value.as_bool().unwrap_or_default())
 }
 
 /// 容错解析结构版本：经 `parse_schema_version` 统一处理脏值
@@ -401,6 +419,7 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         shortcut_quick_open: load_shortcut_quick_open(app),
         shortcut_voice: load_shortcut_voice(app),
         shortcut_output: load_shortcut_output(app),
+        shortcut_paste_restore: load_shortcut_paste_restore(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -466,6 +485,13 @@ fn load_shortcut_output(app: &tauri::AppHandle) -> ShortcutOutput {
             .as_str()
             .map_or(ShortcutOutput::Clipboard, ShortcutOutput::parse)
     })
+}
+
+/// 读取持久化的粘贴恢复开关；未设置或类型不符时回落 `false`（保持覆盖）
+fn load_shortcut_paste_restore(app: &tauri::AppHandle) -> bool {
+    read_key(app, KEY_SHORTCUT_PASTE_RESTORE)
+        .and_then(|value| value.as_bool())
+        .unwrap_or_default()
 }
 
 /// 读取持久化的配置结构版本；未设置或类型不符时回落 `0`
@@ -579,6 +605,7 @@ fn reset_patch() -> ConfigPatch {
         shortcut_quick_open: Some(String::new()),
         shortcut_voice: Some(String::new()),
         shortcut_output: Some(ShortcutOutput::default()),
+        shortcut_paste_restore: Some(false),
     }
 }
 
@@ -667,6 +694,12 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
     }
     if let Some(shortcut_voice) = patch.shortcut_voice.as_deref() {
         entries.push((KEY_SHORTCUT_VOICE, Value::from(shortcut_voice.trim())));
+    }
+    if let Some(shortcut_paste_restore) = patch.shortcut_paste_restore {
+        entries.push((
+            KEY_SHORTCUT_PASTE_RESTORE,
+            Value::from(shortcut_paste_restore),
+        ));
     }
     entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
     entries
@@ -820,6 +853,7 @@ mod tests {
         assert_eq!(config.shortcut_quick_open, "");
         assert_eq!(config.shortcut_voice, "");
         assert_eq!(config.shortcut_output, ShortcutOutput::Paste);
+        assert!(!config.shortcut_paste_restore);
         assert_eq!(config.schema_version, 0);
     }
 
@@ -835,12 +869,13 @@ mod tests {
             shortcut_quick_open: String::from("Ctrl+Shift+O"),
             shortcut_voice: String::from("Ctrl+Alt+V"),
             shortcut_output: ShortcutOutput::Paste,
+            shortcut_paste_restore: true,
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_output": "paste", "schema_version": 1 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_output": "paste", "shortcut_paste_restore": true, "schema_version": 1 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -1009,6 +1044,22 @@ mod tests {
     }
 
     #[test]
+    fn shortcut_paste_restore_fallback_rules() {
+        // 缺键与脏值一律回落 `false`（保持覆盖），只有显式 `true` 才恢复
+        for (raw, expected) in [
+            (json!({}), false),
+            (json!({ "shortcut_paste_restore": true }), true),
+            (json!({ "shortcut_paste_restore": false }), false),
+            (json!({ "shortcut_paste_restore": "yes" }), false),
+            (json!({ "shortcut_paste_restore": 1 }), false),
+            (json!({ "shortcut_paste_restore": null }), false),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(config.shortcut_paste_restore, expected);
+        }
+    }
+
+    #[test]
     fn shortcut_output_round_trips_through_as_str() {
         for output in [
             ShortcutOutput::Ime,
@@ -1080,6 +1131,7 @@ mod tests {
         assert_eq!(absent.shortcut_quick_open, None);
         assert_eq!(absent.shortcut_voice, None);
         assert_eq!(absent.shortcut_output, None);
+        assert_eq!(absent.shortcut_paste_restore, None);
 
         let quick_open: ConfigPatch =
             serde_json::from_value(json!({ "shortcut_quick_open": "Ctrl+Shift+O" }))
@@ -1096,6 +1148,11 @@ mod tests {
         let voice: ConfigPatch = serde_json::from_value(json!({ "shortcut_voice": "Ctrl+Alt+V" }))
             .expect("voice parsed");
         assert_eq!(voice.shortcut_voice, Some(String::from("Ctrl+Alt+V")));
+
+        let restore: ConfigPatch =
+            serde_json::from_value(json!({ "shortcut_paste_restore": true }))
+                .expect("restore parsed");
+        assert_eq!(restore.shortcut_paste_restore, Some(true));
     }
 
     #[test]
@@ -1117,6 +1174,7 @@ mod tests {
             shortcut_quick_open: Some(String::from("Ctrl+Shift+O")),
             shortcut_voice: Some(String::from("Ctrl+Alt+V")),
             shortcut_output: Some(ShortcutOutput::Ime),
+            shortcut_paste_restore: Some(true),
         });
         assert_eq!(
             keys_of(&patched),
@@ -1130,6 +1188,7 @@ mod tests {
                 KEY_SHORTCUT_QUICK_OPEN,
                 KEY_SHORTCUT_OUTPUT,
                 KEY_SHORTCUT_VOICE,
+                KEY_SHORTCUT_PASTE_RESTORE,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -1142,6 +1201,7 @@ mod tests {
         assert_eq!(patched[6].1, json!("Ctrl+Shift+O"));
         assert_eq!(patched[7].1, json!("ime"));
         assert_eq!(patched[8].1, json!("Ctrl+Alt+V"));
+        assert_eq!(patched[9].1, json!(true));
     }
 
     #[test]
@@ -1157,6 +1217,7 @@ mod tests {
             shortcut_quick_open: Some(String::from("Ctrl+Shift+O")),
             shortcut_output: Some(ShortcutOutput::Paste),
             shortcut_voice: Some(String::from("Ctrl+Alt+V")),
+            shortcut_paste_restore: Some(true),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -1173,7 +1234,8 @@ mod tests {
         assert_eq!(entries[6].1, json!(""));
         assert_eq!(entries[7].1, json!(ShortcutOutput::default().as_str()));
         assert_eq!(entries[8].1, json!(""));
-        assert_eq!(entries[9].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[9].1, json!(false));
+        assert_eq!(entries[10].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -1188,6 +1250,7 @@ mod tests {
             shortcut_quick_open: String::new(),
             shortcut_voice: String::new(),
             shortcut_output: ShortcutOutput::default(),
+            shortcut_paste_restore: false,
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));

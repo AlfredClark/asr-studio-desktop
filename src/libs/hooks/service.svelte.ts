@@ -359,6 +359,10 @@ async function outputResult(text: string): Promise<void> {
     return;
   }
   if (delivered.data.fallback) {
-    toast.warning(m.service_output_fallback());
+    if (delivered.data.reason === "no_editable_focus") {
+      toast.warning(m.service_output_no_focus());
+    } else {
+      toast.warning(m.service_output_fallback());
+    }
   }
 }

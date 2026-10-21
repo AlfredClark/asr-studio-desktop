@@ -130,7 +130,10 @@ beforeEach(() => {
     fakeCommand({ status: "ok", data: { text: "你好", audio_sec: 2.5, infer_ms: 300 } }) as never,
   );
   mocked.outputText.mockReturnValue(
-    fakeCommand({ status: "ok", data: { via: "clipboard", fallback: false } }) as never,
+    fakeCommand({
+      status: "ok",
+      data: { via: "clipboard", fallback: false, reason: "as_configured" },
+    }) as never,
   );
   mocked.isShortcutRegistered.mockReturnValue(fakeCommand({ status: "ok", data: true }) as never);
   configState.value = null;
@@ -387,12 +390,32 @@ describe("识别服务状态", () => {
     serviceState.selectedDevice = device.id;
     serviceState.recording = true;
     mocked.outputText.mockReturnValue(
-      fakeCommand({ status: "ok", data: { via: "clipboard", fallback: true } }) as never,
+      fakeCommand({
+        status: "ok",
+        data: { via: "clipboard", fallback: true, reason: "injection_fallback" },
+      }) as never,
     );
 
     await handleShortcutTrigger();
 
-    expect(mockedToast.warning).toHaveBeenCalled();
+    expect(mockedToast.warning).toHaveBeenCalledWith(m.service_output_fallback());
+  });
+
+  it("无可输入焦点时提示已存入剪贴板", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+    serviceState.recording = true;
+    mocked.outputText.mockReturnValue(
+      fakeCommand({
+        status: "ok",
+        data: { via: "clipboard", fallback: true, reason: "no_editable_focus" },
+      }) as never,
+    );
+
+    await handleShortcutTrigger();
+
+    expect(mockedToast.warning).toHaveBeenCalledWith(m.service_output_no_focus());
   });
 
   it("快捷键识别中直接忽略", async () => {
