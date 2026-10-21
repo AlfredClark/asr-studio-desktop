@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::cores::lexicon::{LexiconEntry, LexiconGroup};
 
@@ -214,23 +215,14 @@ fn dedupe_patterns(entries: &[ResolvedEntry]) -> Option<DedupedPatterns> {
     })
 }
 
-/// 对识别文本应用词库：拼音流多模式匹配 + 权重仲裁，一次替换完成；
-/// 无候选词条直接原文返回
-pub fn apply(text: &str, entries: &[ResolvedEntry]) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let Some(stream) = build_syllable_stream(text, &chars) else {
-        return text.to_owned();
-    };
-    let Some(deduped) = dedupe_patterns(entries) else {
-        return text.to_owned();
-    };
-    let automaton = match aho_corasick::AhoCorasick::new(&deduped.patterns) {
-        Ok(automaton) => automaton,
-        Err(err) => {
-            log::warn!("lexicon automaton build failed, skipping post-processing: {err:#}");
-            return text.to_owned();
-        }
-    };
+/// 收集全部候选替换：自动机多模式命中 → 音节区间换算字符字节区间 → 原文一致跳过
+fn collect_candidates<'a>(
+    stream: &SyllableStream,
+    automaton: &aho_corasick::AhoCorasick,
+    deduped: &DedupedPatterns,
+    entries: &[ResolvedEntry<'a>],
+    text: &str,
+) -> Vec<Candidate<'a>> {
     let mut candidates: Vec<Candidate> = Vec::new();
     for mat in automaton.find_overlapping_iter(&stream.haystack) {
         let pattern = mat.pattern().as_usize();
@@ -260,7 +252,7 @@ pub fn apply(text: &str, entries: &[ResolvedEntry]) -> String {
             });
         }
     }
-    apply_replacements(text, candidates)
+    candidates
 }
 
 /// 仲裁并落子：权重降序 → 分组顺序降序（越靠后越优先，全局恒置顶故天然靠后）
@@ -305,18 +297,132 @@ fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> String {
     out
 }
 
+/// 匹配器缓存：自动机编译是转写热路径最贵一步，按词条指纹复用；
+/// 指纹覆盖分组/词面/拼音/权重/序号，命中即跳过重建，未命中重建并覆盖
+struct CachedMatcher {
+    fingerprint: u64,
+    automaton: aho_corasick::AhoCorasick,
+    deduped: DedupedPatterns,
+    /// owned 词条：缓存的匹配视图借用自此，跨转写调用保持稳定
+    entries: Vec<LexiconEntry>,
+    ranks: Vec<usize>,
+}
+
+/// 匹配器缓存锁：存 `Arc` 使命中后克隆即解锁，匹配主体无锁运行，构建才持锁
+fn matcher_cache_lock() -> &'static Mutex<Option<Arc<CachedMatcher>>> {
+    static CACHE: OnceLock<Mutex<Option<Arc<CachedMatcher>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// 取缓存锁；锁毒化时记日志后继续（读多写少，半写风险低）
+fn lock_matcher_cache() -> std::sync::MutexGuard<'static, Option<Arc<CachedMatcher>>> {
+    matcher_cache_lock().lock().unwrap_or_else(|poison| {
+        log::error!("lexicon matcher cache lock poisoned, continuing with recovered guard");
+        poison.into_inner()
+    })
+}
+
+/// 词条指纹：排序后哈希，与 `resolve_entries` 经 `HashMap` 汇出的 nondeterministic 顺序无关
+fn fingerprint_entries(entries: &[ResolvedEntry]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut keys: Vec<(&str, &str, &str, i32, usize)> = entries
+        .iter()
+        .map(|resolved| {
+            (
+                resolved.entry.group_id.as_str(),
+                resolved.entry.text.as_str(),
+                resolved.entry.pinyin.as_str(),
+                resolved.entry.weight,
+                resolved.rank,
+            )
+        })
+        .collect();
+    keys.sort_unstable();
+    let mut hasher = DefaultHasher::new();
+    hasher.write_usize(keys.len());
+    for key in &keys {
+        key.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// 带缓存的后处理：缓存命中跳过自动机重建；构建失败回落原文（与 `apply` 同口径）
+pub fn apply_cached(text: &str, entries: &[ResolvedEntry]) -> String {
+    if entries.is_empty() {
+        return text.to_owned();
+    }
+    let fingerprint = fingerprint_entries(entries);
+    // 未命中即构建并覆盖，命中克隆 `Arc` 后立即解锁：匹配主体无锁运行
+    let cached: Arc<CachedMatcher> = {
+        let mut guard = lock_matcher_cache();
+        if guard
+            .as_ref()
+            .is_none_or(|cached| cached.fingerprint != fingerprint)
+        {
+            let owned: Vec<(LexiconEntry, usize)> = entries
+                .iter()
+                .map(|resolved| (resolved.entry.clone(), resolved.rank))
+                .collect();
+            let rebuilt: Vec<ResolvedEntry> = owned
+                .iter()
+                .map(|(entry, rank)| ResolvedEntry { entry, rank: *rank })
+                .collect();
+            let Some(deduped) = dedupe_patterns(&rebuilt) else {
+                return text.to_owned();
+            };
+            let automaton = match aho_corasick::AhoCorasick::new(&deduped.patterns) {
+                Ok(automaton) => automaton,
+                Err(err) => {
+                    log::warn!("lexicon automaton build failed, skipping post-processing: {err:#}");
+                    return text.to_owned();
+                }
+            };
+            let mut cached_entries = Vec::with_capacity(owned.len());
+            let mut cached_ranks = Vec::with_capacity(owned.len());
+            for (entry, rank) in owned {
+                cached_entries.push(entry);
+                cached_ranks.push(rank);
+            }
+            *guard = Some(Arc::new(CachedMatcher {
+                fingerprint,
+                automaton,
+                deduped,
+                entries: cached_entries,
+                ranks: cached_ranks,
+            }));
+        }
+        guard.as_ref().expect("matcher cached above").clone()
+    };
+    let resolved: Vec<ResolvedEntry> = cached
+        .entries
+        .iter()
+        .zip(cached.ranks.iter())
+        .map(|(entry, rank)| ResolvedEntry { entry, rank: *rank })
+        .collect();
+    let chars: Vec<char> = text.chars().collect();
+    let Some(stream) = build_syllable_stream(text, &chars) else {
+        return text.to_owned();
+    };
+    let candidates =
+        collect_candidates(&stream, &cached.automaton, &cached.deduped, &resolved, text);
+    apply_replacements(text, candidates)
+}
+
 /// 对识别文本应用生效词库：空词库直接原文返回；调用方为转写命令
 pub fn apply_lexicon(app: &tauri::AppHandle, text: &str) -> String {
     if text.is_empty() {
         return text.to_owned();
     }
-    let active = crate::cores::config::load_config(app).active_lexicon_groups;
+    // 生效分组走单键读取，转写热路径不拉 13 键全量配置
+    let active = crate::cores::config::load_active_lexicon_groups(app);
     let data = crate::cores::lexicon::load_data(app);
     let resolved = resolve_entries(&active, &data.groups, &data.entries);
     if resolved.is_empty() {
         return text.to_owned();
     }
-    apply(text, &resolved)
+    apply_cached(text, &resolved)
 }
 
 /// 权重钳制：`-100..=100`，越界写入时收敛
@@ -331,7 +437,7 @@ pub fn list_snapshot(app: &tauri::AppHandle) -> LexiconSnapshot {
         version: data.version,
         groups: data.groups,
         entries: data.entries,
-        active_group_ids: crate::cores::config::load_config(app).active_lexicon_groups,
+        active_group_ids: crate::cores::config::load_active_lexicon_groups(app),
     }
 }
 
@@ -384,7 +490,7 @@ pub fn delete_group(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
         data.entries.retain(|entry| entry.group_id != id);
         Ok(())
     })?;
-    let mut active = crate::cores::config::load_config(app).active_lexicon_groups;
+    let mut active = crate::cores::config::load_active_lexicon_groups(app);
     let before = active.len();
     active.retain(|active_id| active_id != id);
     if active.len() != before {
@@ -883,11 +989,11 @@ mod tests {
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 同音错字被纠正
-        assert_eq!(apply("全力以赴", &resolved), "权力以赴");
+        assert_eq!(apply_cached("全力以赴", &resolved), "权力以赴");
         // 原文本已一致：不改写
-        assert_eq!(apply("权力游戏", &resolved), "权力游戏");
+        assert_eq!(apply_cached("权力游戏", &resolved), "权力游戏");
         // 无关文本不动
-        assert_eq!(apply("今天天气不错", &resolved), "今天天气不错");
+        assert_eq!(apply_cached("今天天气不错", &resolved), "今天天气不错");
     }
 
     #[test]
@@ -899,14 +1005,14 @@ mod tests {
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 权重优先：高权重的短词抢占重叠区
-        assert_eq!(apply("背景大学", &resolved), "背静大学");
+        assert_eq!(apply_cached("背景大学", &resolved), "背静大学");
         let entries = vec![
             entry("w-short", "work", "背静", "bei jing", 0),
             entry("w-long", "work", "北京大学", "bei jing da xue", 0),
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 权重持平：同组内长词优先
-        assert_eq!(apply("背景大学", &resolved), "北京大学");
+        assert_eq!(apply_cached("背景大学", &resolved), "北京大学");
     }
 
     #[test]
@@ -923,7 +1029,37 @@ mod tests {
             entry("n1", "newer", "拳力", "quan li", 5),
         ];
         let resolved = resolve_entries(&active(&["older", "newer"]), &groups, &entries);
-        assert_eq!(apply("权利", &resolved), "拳力");
+        assert_eq!(apply_cached("权利", &resolved), "拳力");
+    }
+
+    #[test]
+    fn apply_cached_is_deterministic_across_rebuilds() {
+        let groups = vec![group("global", true), group("work", false)];
+        let entries = vec![
+            entry("w1", "work", "权力", "quan li", 0),
+            entry("w2", "work", "成长", "cheng zhang", 0),
+        ];
+        let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
+        // 首调建缓存，次调命中：多次调用结果稳定一致
+        assert_eq!(apply_cached("全力以赴", &resolved), "权力以赴");
+        assert_eq!(apply_cached("全力以赴", &resolved), "权力以赴");
+    }
+
+    #[test]
+    fn fingerprint_ignores_resolve_order() {
+        let groups = vec![group("global", true), group("work", false)];
+        let entries = vec![
+            entry("w1", "work", "权力", "quan li", 0),
+            entry("w2", "work", "成长", "cheng zhang", 5),
+        ];
+        let forward = resolve_entries(&active(&["work"]), &groups, &entries);
+        let mut reversed = forward.clone();
+        reversed.reverse();
+        // `resolve_entries` 经 `HashMap` 汇出顺序不定，指纹必须与顺序无关
+        assert_eq!(
+            fingerprint_entries(&forward),
+            fingerprint_entries(&reversed)
+        );
     }
 
     #[test]
@@ -932,8 +1068,8 @@ mod tests {
         let entries = vec![entry("g1", "global", "你好", "ni hao", 0)];
         let resolved = resolve_entries(&[], &groups, &entries);
         // 数字与标点跳过但不断错对齐
-        assert_eq!(apply("你好2024！", &resolved), "你好2024！");
-        assert_eq!(apply("说你好ABC", &resolved), "说你好ABC");
+        assert_eq!(apply_cached("你好2024！", &resolved), "你好2024！");
+        assert_eq!(apply_cached("说你好ABC", &resolved), "说你好ABC");
     }
 
     fn export_entry(text: &str, pinyin: &str, weight: i32, enabled: bool) -> LexiconExportEntry {

@@ -568,12 +568,16 @@ fn load_shortcut_paste_restore(app: &tauri::AppHandle) -> bool {
 }
 
 /// 读取持久化的用户指定模型目录；未设置或类型不符时回落空映射
-fn load_custom_model_dirs(app: &tauri::AppHandle) -> HashMap<String, String> {
+///
+/// 转写/校验热路径走此单键读取，不拉 13 键全量 `load_config`
+pub fn load_custom_model_dirs(app: &tauri::AppHandle) -> HashMap<String, String> {
     parse_custom_model_dirs(read_key(app, KEY_CUSTOM_MODEL_DIRS).as_ref())
 }
 
 /// 读取持久化的词库生效分组；未设置或类型不符时回落空数组
-fn load_active_lexicon_groups(app: &tauri::AppHandle) -> Vec<String> {
+///
+/// 转写热路径（`apply_lexicon`）走此单键读取，不拉 13 键全量 `load_config`
+pub fn load_active_lexicon_groups(app: &tauri::AppHandle) -> Vec<String> {
     parse_active_lexicon_groups(read_key(app, KEY_ACTIVE_LEXICON_GROUPS).as_ref())
 }
 

@@ -66,7 +66,8 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
             reason: OutputReason::NoEditableFocus,
         });
     }
-    let mode = config::load_config(app).shortcut_output;
+    let config = config::load_config(app);
+    let mode = config.shortcut_output;
     match mode {
         ShortcutOutput::Ime => match ime_type_text(text) {
             Ok(()) => Ok(OutputReport {
@@ -93,7 +94,7 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
             })
         }
         ShortcutOutput::Paste => {
-            let want_restore = config::load_config(app).shortcut_paste_restore;
+            let want_restore = config.shortcut_paste_restore;
             // 恢复模式先快照原剪贴板（仅文本；图片等非文本快照失败即放弃恢复，不阻断输出）
             let previous = if want_restore {
                 read_clipboard(app)

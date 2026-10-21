@@ -120,6 +120,11 @@ async function syncStatus(): Promise<void> {
     });
 }
 
+/** 仅同步后端状态快照：快捷键触发等热路径用，不拉模型/设备清单 */
+export async function refreshServiceStatus(): Promise<void> {
+  await syncStatus();
+}
+
 /** 刷新模型与设备清单，并补齐默认选中（首个就绪模型、默认设备优先） */
 export async function refreshServiceData(): Promise<void> {
   await commands
@@ -357,7 +362,17 @@ export async function handleShortcutTrigger(): Promise<void> {
     await outputResult(result.text);
     return;
   }
-  await refreshServiceData();
+  // 热路径：已有选中与状态只同步快照（模型清单走全盘 stat，枚举设备碰硬件）；
+  // 冷启动（未水合）才全量刷新，补齐默认模型与设备
+  if (
+    serviceState.selectedDevice != null &&
+    serviceState.selectedModel != null &&
+    serviceState.status != null
+  ) {
+    await refreshServiceStatus();
+  } else {
+    await refreshServiceData();
+  }
   if (serviceState.status?.state !== "running") return;
   await startTestRecording();
 }

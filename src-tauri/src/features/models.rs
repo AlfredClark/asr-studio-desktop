@@ -715,8 +715,7 @@ pub fn resolve_model_dir(
     spec: &ModelSpec,
 ) -> anyhow::Result<std::path::PathBuf> {
     let custom = effective_custom_dir(
-        crate::cores::config::load_config(app)
-            .custom_model_dirs
+        crate::cores::config::load_custom_model_dirs(app)
             .get(spec.id)
             .map(String::as_str),
     );
@@ -729,8 +728,7 @@ pub fn resolve_model_dir(
 /// 是否命中用户指定目录；下载与删除据此拒绝（仅校验与使用）
 pub fn is_custom_dir(app: &tauri::AppHandle, spec: &ModelSpec) -> bool {
     effective_custom_dir(
-        crate::cores::config::load_config(app)
-            .custom_model_dirs
+        crate::cores::config::load_custom_model_dirs(app)
             .get(spec.id)
             .map(String::as_str),
     )
@@ -794,15 +792,12 @@ fn sat_u32(value: u64) -> u32 {
 /// 列出全部模型及其本机状态；下载中的模型强制标 `Downloading`
 pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
     let running: std::collections::HashSet<&str> = lock_downloads().keys().copied().collect();
+    // 用户目录映射一次读出：逐模型 `load_config` 是 13 键全量，清单页 9 模型即百余次读盘
+    let custom_dirs = crate::cores::config::load_custom_model_dirs(app);
     MODELS
         .iter()
         .map(|spec| {
-            let custom = effective_custom_dir(
-                crate::cores::config::load_config(app)
-                    .custom_model_dirs
-                    .get(spec.id)
-                    .map(String::as_str),
-            );
+            let custom = effective_custom_dir(custom_dirs.get(spec.id).map(String::as_str));
             let (status, local_path) = match resolve_model_dir(app, spec) {
                 Ok(dir) if dir.is_dir() => {
                     let (missing, mismatched) = check_files(&dir, spec.files, spec.verify);

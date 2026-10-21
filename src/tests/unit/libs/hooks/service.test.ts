@@ -400,6 +400,32 @@ describe("识别服务状态", () => {
     expect(serviceState.recording).toBe(true);
   });
 
+  it("快捷键热路径只同步状态不拉模型设备清单", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.models = [model];
+    serviceState.selectedModel = model.id;
+    serviceState.selectedDevice = device.id;
+
+    await handleShortcutTrigger();
+
+    expect(mocked.listModels).not.toHaveBeenCalled();
+    expect(mocked.listInputDevices).not.toHaveBeenCalled();
+    expect(mocked.serviceStatus).toHaveBeenCalled();
+    expect(mocked.startRecording).toHaveBeenCalledWith(device.id);
+  });
+
+  it("快捷键冷启动补齐默认选中后再录制", async () => {
+    runningStatus();
+
+    await handleShortcutTrigger();
+
+    expect(mocked.listModels).toHaveBeenCalled();
+    expect(serviceState.selectedModel).toBe(model.id);
+    expect(serviceState.selectedDevice).toBe(device.id);
+    expect(mocked.startRecording).toHaveBeenCalledWith(device.id);
+  });
+
   it("快捷键录制中按第二次停止转写并输出", async () => {
     runningStatus();
     serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };

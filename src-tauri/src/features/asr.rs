@@ -248,13 +248,13 @@ fn build_recognizer_config(
     config
 }
 
-/// 推理线程数：跟随本机核数（与评测一致）
+/// 推理线程数：全核减一，给录音回调与界面留一个核；单核机回落 1
 fn num_cpus() -> i32 {
     std::thread::available_parallelism()
         .ok()
         .and_then(|count| i32::try_from(count.get()).ok())
         .filter(|count| *count > 0)
-        .unwrap_or(1)
+        .map_or(1, |count| count.saturating_sub(1).max(1))
 }
 
 /// 取出识别器独占使用；服务未运行、启动中、已有转写占用三种情况错误各异，
