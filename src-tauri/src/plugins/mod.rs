@@ -8,6 +8,7 @@ pub mod autostart;
 pub mod clipboard;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod deep_link;
+pub mod dialog;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod global_shortcut;
 pub mod log;

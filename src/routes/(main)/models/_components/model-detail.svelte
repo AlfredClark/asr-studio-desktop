@@ -21,6 +21,7 @@
     fetchModelFiles,
     modelsState,
     openModelDir,
+    setCustomModelDir,
     verifyModel,
     type ModelFileNode,
   } from "#libs/hooks/models.svelte";
@@ -75,6 +76,12 @@
   const progress = $derived(modelsState.progress[entry.id]);
   // 下载中：后端事件驱动，前端不做本地推断
   const busy = $derived(entry.status === "downloading" || progress !== undefined);
+
+  /** 是否命中用户指定目录：隐藏删除与下载，按钮矩阵据此分支 */
+  const isCustom = $derived(entry.custom_dir != null);
+
+  /** 路径行展示值：指定目录优先（缺失态 `local_path` 为空时仍有处可看） */
+  const shownPath = $derived(entry.custom_dir ?? entry.local_path);
 
   /** 未就绪文件数：目录树组头一次说清，避免逐行徽标 */
   const pendingCount = $derived(files.filter((file) => file.status !== "ready").length);
@@ -148,7 +155,7 @@
 
   /** 复制安装路径：剪贴板不可用（如非安全上下文）即提示失败 */
   async function handleCopyPath(): Promise<void> {
-    const path = entry.local_path;
+    const path = shownPath;
     if (!path) return;
     try {
       await navigator.clipboard.writeText(path);
@@ -167,6 +174,25 @@
     } finally {
       deleting = false;
     }
+  }
+
+  /** 指定本地目录：弹系统目录选择器，取消则静默返回；落盘与提示由 hook 负责 */
+  async function handlePickCustomDir(): Promise<void> {
+    let selected: string | string[] | null;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      selected = await open({ directory: true, multiple: false });
+    } catch {
+      toast.error(m.models_pick_dir_failed());
+      return;
+    }
+    if (typeof selected !== "string") return;
+    await setCustomModelDir(entry.id, selected);
+  }
+
+  /** 取消指定：仅解绑映射、回归应用管理，不碰用户文件 */
+  async function handleClearCustomDir(): Promise<void> {
+    await setCustomModelDir(entry.id, null);
   }
 </script>
 
@@ -198,11 +224,11 @@
             <span class="tabular-nums">{formatBytes(entry.tarball_bytes)}</span>
           {/if}
         </div>
-        {#if entry.local_path}
+        {#if shownPath}
           <div class="flex items-center gap-2">
             <span class="shrink-0 text-muted-foreground">{m.models_detail_path_label()}</span>
-            <span class="min-w-0 flex-1 truncate text-right" title={entry.local_path}>
-              {entry.local_path}
+            <span class="min-w-0 flex-1 truncate text-right" title={shownPath}>
+              {shownPath}
             </span>
             <Button
               variant="ghost"
@@ -220,6 +246,9 @@
         {/if}
         {#if entry.manual && entry.status !== "ready"}
           <p class="text-muted-foreground">{m.models_manual_hint()}</p>
+        {/if}
+        {#if isCustom && entry.status !== "ready"}
+          <p class="text-muted-foreground">{m.models_custom_hint()}</p>
         {/if}
       </div>
       {#if files.length > 0}
@@ -327,16 +356,25 @@
         <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
           {m.models_open_dir()}
         </Button>
-        <Button
-          variant="destructive"
-          size="sm"
-          disabled={deleting}
-          onclick={() => (confirmOpen = true)}
-        >
-          {m.models_delete()}
+        <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>
+          {isCustom ? m.models_change_custom_dir() : m.models_set_custom_dir()}
         </Button>
+        {#if isCustom}
+          <Button variant="outline" size="sm" onclick={() => void handleClearCustomDir()}>
+            {m.models_clear_custom_dir()}
+          </Button>
+        {:else}
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={deleting}
+            onclick={() => (confirmOpen = true)}
+          >
+            {m.models_delete()}
+          </Button>
+        {/if}
       {:else if entry.status === "partial"}
-        {#if entry.manual}
+        {#if entry.manual || isCustom}
           <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
             {m.models_open_dir()}
           </Button>
@@ -353,20 +391,29 @@
         >
           {m.models_verify()}
         </Button>
-        {#if !entry.manual}
+        {#if !entry.manual && !isCustom}
           <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
             {m.models_open_dir()}
           </Button>
         {/if}
-        <Button
-          variant="destructive"
-          size="sm"
-          disabled={deleting}
-          onclick={() => (confirmOpen = true)}
-        >
-          {m.models_delete()}
+        <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>
+          {isCustom ? m.models_change_custom_dir() : m.models_set_custom_dir()}
         </Button>
-      {:else if entry.manual}
+        {#if isCustom}
+          <Button variant="outline" size="sm" onclick={() => void handleClearCustomDir()}>
+            {m.models_clear_custom_dir()}
+          </Button>
+        {:else}
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={deleting}
+            onclick={() => (confirmOpen = true)}
+          >
+            {m.models_delete()}
+          </Button>
+        {/if}
+      {:else if entry.manual || isCustom}
         <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
           {m.models_open_dir()}
         </Button>
@@ -378,9 +425,20 @@
         >
           {m.models_verify()}
         </Button>
+        {#if isCustom}
+          <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>
+            {m.models_change_custom_dir()}
+          </Button>
+          <Button variant="outline" size="sm" onclick={() => void handleClearCustomDir()}>
+            {m.models_clear_custom_dir()}
+          </Button>
+        {/if}
       {:else}
         <Button size="sm" onclick={() => void downloadModel(entry.id)}>
           {m.models_download()}
+        </Button>
+        <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>
+          {m.models_set_custom_dir()}
         </Button>
       {/if}
     </div>

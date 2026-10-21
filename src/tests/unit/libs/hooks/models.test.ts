@@ -44,6 +44,7 @@ const entry: ModelEntry = {
   status: "missing",
   local_path: null,
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+  custom_dir: null,
   manual: false,
 };
 

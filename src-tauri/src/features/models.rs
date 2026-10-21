@@ -461,14 +461,16 @@ pub struct ModelEntry {
     pub category: ModelCategory,
     /// 展示名
     pub display_name: String,
-    /// 压缩包字节数（展示用，均小于 4GB，见 `registry_sizes_fit_u32`）
+    /// 压缩包字节数（展示用，均小于 4GB，见 `registry_sizes_fit_u32`）；手工模型为 0
     pub tarball_bytes: u32,
-    /// 必需文件字节数之和（展示用）
+    /// 必需文件字节数之和（展示用；手工模型为清单参考值）
     pub required_bytes: u32,
     /// 本机状态
     pub status: ModelStatus,
-    /// 模型目录绝对路径（`Missing` 时为 `None`）
+    /// 模型目录绝对路径（`Missing` 时为 `None`，用户指定目录缺失同样为 `None`）
     pub local_path: Option<String>,
+    /// 用户指定的模型目录（`None` 表示走应用管理目录）
+    pub custom_dir: Option<String>,
     /// 是否手工放置：无下载直链，详情页隐藏下载入口
     pub manual: bool,
     /// 发布页地址（“前往下载页”按钮用）
@@ -507,7 +509,7 @@ pub struct ModelFileEntry {
 /// 包外多放的文件不展示（核对以清单为准，与 `verify_model` 同口径）
 pub fn list_model_files(app: &tauri::AppHandle, id: &str) -> anyhow::Result<Vec<ModelFileEntry>> {
     let spec = find_spec(id).context("unknown model id")?;
-    let dir = model_dir(app, spec)?;
+    let dir = resolve_model_dir(app, spec)?;
     let (missing, mismatched) = if dir.is_dir() {
         check_files(&dir, spec.files, spec.verify)
     } else {
@@ -698,6 +700,43 @@ pub fn model_dir(app: &tauri::AppHandle, spec: &ModelSpec) -> anyhow::Result<std
     Ok(dir)
 }
 
+/// 用户指定目录的有效值：trim 后非空即用，否则回落应用管理目录（纯函数，可单测）
+fn effective_custom_dir(custom: Option<&str>) -> Option<String> {
+    custom
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+        .map(str::to_owned)
+}
+
+/// 解析模型实际目录：命中用户指定目录即用，否则回落应用管理目录；
+/// 用户目录不强制匹配包目录名，存在性不校验（缺失按 `Missing` 处理）
+pub fn resolve_model_dir(
+    app: &tauri::AppHandle,
+    spec: &ModelSpec,
+) -> anyhow::Result<std::path::PathBuf> {
+    let custom = effective_custom_dir(
+        crate::cores::config::load_config(app)
+            .custom_model_dirs
+            .get(spec.id)
+            .map(String::as_str),
+    );
+    custom.map_or_else(
+        || model_dir(app, spec),
+        |dir| Ok(std::path::PathBuf::from(dir)),
+    )
+}
+
+/// 是否命中用户指定目录；下载与删除据此拒绝（仅校验与使用）
+pub fn is_custom_dir(app: &tauri::AppHandle, spec: &ModelSpec) -> bool {
+    effective_custom_dir(
+        crate::cores::config::load_config(app)
+            .custom_model_dirs
+            .get(spec.id)
+            .map(String::as_str),
+    )
+    .is_some()
+}
+
 /// 逐项核对必需文件：返回（缺失，大小不符）；`PresenceOnly` 口径下只验存在，不比对字节数
 fn check_files(
     dir: &std::path::Path,
@@ -758,7 +797,13 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
     MODELS
         .iter()
         .map(|spec| {
-            let (status, local_path) = match model_dir(app, spec) {
+            let custom = effective_custom_dir(
+                crate::cores::config::load_config(app)
+                    .custom_model_dirs
+                    .get(spec.id)
+                    .map(String::as_str),
+            );
+            let (status, local_path) = match resolve_model_dir(app, spec) {
                 Ok(dir) if dir.is_dir() => {
                     let (missing, mismatched) = check_files(&dir, spec.files, spec.verify);
                     let status = fold_status(spec.files.len(), missing.len(), mismatched.len());
@@ -787,6 +832,7 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
                 status,
                 local_path,
                 manual: spec.manual,
+                custom_dir: custom,
                 page_url: RELEASE_PAGE_URL.to_owned(),
             }
         })
@@ -796,7 +842,7 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
 /// 重新扫描校验：手动放置文件后点此确认；目录不存在即为缺失
 pub fn verify_model(app: &tauri::AppHandle, id: &str) -> anyhow::Result<VerifyReport> {
     let spec = find_spec(id).context("unknown model id")?;
-    let dir = model_dir(app, spec)?;
+    let dir = resolve_model_dir(app, spec)?;
     let (missing, mismatched) = if dir.is_dir() {
         check_files(&dir, spec.files, spec.verify)
     } else {
@@ -831,7 +877,7 @@ pub fn open_model_dir(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     use tauri_plugin_opener::OpenerExt;
 
     let spec = find_spec(id).context("unknown model id")?;
-    let dir = model_dir(app, spec)?;
+    let dir = resolve_model_dir(app, spec)?;
     std::fs::create_dir_all(&dir).context("failed to create model dir")?;
     app.opener()
         .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
@@ -839,9 +885,13 @@ pub fn open_model_dir(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 删除模型目录；下载中拒绝，避免与写任务交错
+/// 删除模型目录；下载中拒绝，避免与写任务交错；
+/// 用户指定目录的模型拒绝删除（仅校验与使用），先取消指定再删应用目录
 pub fn delete_model(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     let spec = find_spec(id).context("unknown model id")?;
+    if is_custom_dir(app, spec) {
+        anyhow::bail!("custom model dir cannot be deleted, clear the custom dir first");
+    }
     if lock_downloads().contains_key(spec.id) {
         anyhow::bail!("model is downloading");
     }
@@ -850,6 +900,17 @@ pub fn delete_model(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
         std::fs::remove_dir_all(&dir).context("failed to remove model dir")?;
     }
     Ok(())
+}
+
+/// 指定 / 取消指定某模型的用户目录：`path` 为 `None` 时清除映射、回归应用管理；
+/// 仅解绑不碰用户文件，返回写后的最新配置
+pub fn set_custom_model_dir(
+    app: &tauri::AppHandle,
+    id: &str,
+    path: Option<&str>,
+) -> anyhow::Result<crate::cores::config::Config> {
+    find_spec(id).context("unknown model id")?;
+    crate::cores::config::set_custom_model_dir(app, id, path)
 }
 
 /// 发射下载进度事件；失败只记日志（前端靠命令结算刷新兜底）
@@ -866,6 +927,9 @@ fn emit_progress(app: &tauri::AppHandle, payload: DownloadProgress) {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub async fn download_model(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     let spec = find_spec(id).context("unknown model id")?;
+    if is_custom_dir(app, spec) {
+        anyhow::bail!("custom model dir is set, clear it before downloading");
+    }
     if spec.manual {
         anyhow::bail!(
             "manual model has no download link, place files into the model dir and verify"
@@ -1197,6 +1261,17 @@ mod tests {
         assert_eq!(missing, Vec::<String>::new());
         assert_eq!(mismatched, vec!["sub/b.txt".to_owned()]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn effective_custom_dir_trims_and_drops_empties() {
+        assert_eq!(
+            effective_custom_dir(Some(" /models/a ")),
+            Some(String::from("/models/a"))
+        );
+        assert_eq!(effective_custom_dir(None), None);
+        assert_eq!(effective_custom_dir(Some("")), None);
+        assert_eq!(effective_custom_dir(Some("   ")), None);
     }
 
     #[test]

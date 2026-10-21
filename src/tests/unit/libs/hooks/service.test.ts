@@ -54,6 +54,7 @@ const model: ModelEntry = {
   status: "ready",
   local_path: "/models",
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+  custom_dir: null,
   manual: false,
 };
 

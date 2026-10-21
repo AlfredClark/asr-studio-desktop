@@ -32,6 +32,7 @@ pub fn run() {
         .plugin(plugins::store::init())
         .plugin(plugins::opener::init())
         .plugin(plugins::clipboard::init())
+        .plugin(plugins::dialog::init())
         .plugin(plugins::system_fonts::init())
         .with_autostart()
         .with_updater()

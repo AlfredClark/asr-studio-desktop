@@ -33,6 +33,11 @@ export const commands = {
 	openModelDir: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("open_model_dir", { id })),
 	/**  删除模型目录；下载中拒绝 */
 	deleteModel: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_model", { id })),
+	/**
+	 *  指定 / 取消指定某模型的用户目录：`path` 为 `None` 时清除映射、回归应用管理；
+	 *  仅解绑不碰文件，返回写后的最新配置
+	 */
+	setCustomModelDir: (id: string, path: string | null) => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("set_custom_model_dir", { id, path })),
 	/**  列出输入设备；无设备返回空（前端展示“无可用设备”而非报错） */
 	listInputDevices: () => typedError<AudioDevice[], CommandError>(__TAURI_INVOKE("list_input_devices")),
 	/**  启动识别服务：模型须已下载校验；同服重复启动直接拒绝 */
@@ -143,6 +148,8 @@ export type ConfigPatch = {
 	shortcut_output?: ShortcutOutput | null,
 	/**  粘贴后是否恢复原剪贴板 */
 	shortcut_paste_restore?: boolean | null,
+	/**  各模型的用户指定目录（整包替换写该键） */
+	custom_model_dirs?: { [key in string]: string } | null,
 };
 
 /**
@@ -182,6 +189,11 @@ export type Config_Deserialize = {
 	shortcut_output?: ShortcutOutput,
 	/**  粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效 */
 	shortcut_paste_restore?: boolean,
+	/**
+	 *  各模型的用户指定目录：`{模型 id: 绝对路径}`，目录名不强制匹配；
+	 *  缺失或类型不符时回落空映射（全部走应用管理目录）
+	 */
+	custom_model_dirs?: { [key in string]: string },
 };
 
 /**
@@ -221,6 +233,11 @@ export type Config_Serialize = {
 	shortcut_output: ShortcutOutput,
 	/**  粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效 */
 	shortcut_paste_restore: boolean,
+	/**
+	 *  各模型的用户指定目录：`{模型 id: 绝对路径}`，目录名不强制匹配；
+	 *  缺失或类型不符时回落空映射（全部走应用管理目录）
+	 */
+	custom_model_dirs: { [key in string]: string },
 };
 
 /**  应用支持的语言 */
@@ -243,14 +260,16 @@ export type ModelEntry = {
 	category: ModelCategory,
 	/**  展示名 */
 	display_name: string,
-	/**  压缩包字节数（展示用，均小于 4GB，见 `registry_sizes_fit_u32`） */
+	/**  压缩包字节数（展示用，均小于 4GB，见 `registry_sizes_fit_u32`）；手工模型为 0 */
 	tarball_bytes: number,
-	/**  必需文件字节数之和（展示用） */
+	/**  必需文件字节数之和（展示用；手工模型为清单参考值） */
 	required_bytes: number,
 	/**  本机状态 */
 	status: ModelStatus,
-	/**  模型目录绝对路径（`Missing` 时为 `None`） */
+	/**  模型目录绝对路径（`Missing` 时为 `None`，用户指定目录缺失同样为 `None`） */
 	local_path: string | null,
+	/**  用户指定的模型目录（`None` 表示走应用管理目录） */
+	custom_dir: string | null,
 	/**  是否手工放置：无下载直链，详情页隐藏下载入口 */
 	manual: boolean,
 	/**  发布页地址（“前往下载页”按钮用） */

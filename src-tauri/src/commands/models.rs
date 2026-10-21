@@ -66,3 +66,16 @@ pub fn open_model_dir(app: tauri::AppHandle, id: String) -> CommandResult<()> {
 pub fn delete_model(app: tauri::AppHandle, id: String) -> CommandResult<()> {
     Ok(models::delete_model(&app, &id)?)
 }
+
+/// 指定 / 取消指定某模型的用户目录：`path` 为 `None` 时清除映射、回归应用管理；
+/// 仅解绑不碰文件，返回写后的最新配置
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn set_custom_model_dir(
+    app: tauri::AppHandle,
+    id: String,
+    path: Option<String>,
+) -> CommandResult<crate::cores::config::Config> {
+    Ok(models::set_custom_model_dir(&app, &id, path.as_deref())?)
+}

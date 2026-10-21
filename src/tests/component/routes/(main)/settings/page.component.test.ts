@@ -54,6 +54,7 @@ const defaults: Config_Serialize = {
   shortcut_quick_open: "",
   shortcut_output: "clipboard",
   shortcut_paste_restore: false,
+  custom_model_dirs: {},
   shortcut_voice: "",
   schema_version: 1,
 };

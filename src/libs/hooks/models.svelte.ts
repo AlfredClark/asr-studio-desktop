@@ -3,6 +3,7 @@
 import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
 import type { ModelEntry } from "#libs/commands/types";
+import { configState } from "#libs/hooks/config.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
 
@@ -165,4 +166,25 @@ export async function openModelDir(id: string): Promise<void> {
     toast.error(m.models_open_failed());
     reportCommandFailure("[models] open dir failed", failure);
   });
+}
+
+/**
+ * 指定 / 取消指定某模型的用户目录：`path` 为 `null` 时清除映射、回归应用管理。 成功刷新清单并同步配置内存态；选择器取消（`open`
+ * 返回非字符串）由调用方静默返回，此处只处理落盘。
+ */
+export async function setCustomModelDir(id: string, path: string | null): Promise<boolean> {
+  let succeeded = false;
+  await commands
+    .setCustomModelDir(id, path)
+    .success((config) => {
+      configState.value = config;
+      succeeded = true;
+      toast.success(m.models_custom_dir_updated());
+    })
+    .failed((failure) => {
+      toast.error(m.models_custom_dir_update_failed());
+      reportCommandFailure("[models] set custom dir failed", failure);
+    });
+  if (succeeded) await refreshModels();
+  return succeeded;
 }

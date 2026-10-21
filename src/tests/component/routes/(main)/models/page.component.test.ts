@@ -50,6 +50,7 @@ const senseEntry: ModelEntry = {
   status: "missing",
   local_path: null,
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+  custom_dir: null,
   manual: false,
 };
 
@@ -62,6 +63,7 @@ const qwenEntry: ModelEntry = {
   status: "partial",
   local_path: "/models/qwen3-asr/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+  custom_dir: null,
   manual: false,
 };
 
@@ -74,6 +76,7 @@ const nanoEntry: ModelEntry = {
   status: "ready",
   local_path: "/models/funasr-nano/sherpa-onnx-funasr-nano-int8-2025-12-30",
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+  custom_dir: null,
   manual: false,
 };
 
@@ -224,6 +227,7 @@ describe("模型页", () => {
         status: "missing",
         local_path: null,
         page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+        custom_dir: null,
         manual: false,
       },
     ];
@@ -253,6 +257,7 @@ describe("模型页", () => {
         status: "missing",
         local_path: null,
         page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+        custom_dir: null,
         manual: false,
       },
     ];
@@ -283,6 +288,7 @@ describe("模型页", () => {
         local_path: null,
         manual: true,
         page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+        custom_dir: null,
       },
     ];
     render(Page);
@@ -297,6 +303,39 @@ describe("模型页", () => {
     expect(detail().getByText("Placed manually")).not.toBeNull();
     expect(detail().queryByRole("button", { name: "Download" })).toBeNull();
     expect(detail().getByRole("button", { name: "Open folder" })).not.toBeNull();
+  });
+
+  it("自定义目录模型隐藏删除并提供取消指定", async () => {
+    const user = userEvent.setup();
+    modelsStateMock.entries = [
+      nanoEntry,
+      qwenEntry,
+      {
+        id: "sense-voice-int8",
+        category: "sense_voice",
+        display_name: "SenseVoice int8",
+        tarball_bytes: 163_002_883,
+        required_bytes: 239_549_735,
+        status: "missing",
+        local_path: null,
+        manual: false,
+        page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+        custom_dir: "/models/sense-custom",
+      },
+    ];
+    render(Page);
+
+    await waitFor(() => {
+      expect(listRow("SenseVoice int8")).not.toBeNull();
+    });
+    await user.click(listRow("SenseVoice int8"));
+
+    expect(detail().getByText(/Custom folder set/)).not.toBeNull();
+    expect(detail().getByText("/models/sense-custom")).not.toBeNull();
+    expect(detail().queryByRole("button", { name: "Download" })).toBeNull();
+    expect(detail().queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(detail().getByRole("button", { name: "Remove custom folder" })).not.toBeNull();
+    expect(detail().getByRole("button", { name: "Change folder" })).not.toBeNull();
   });
 
   it("折叠分组隐藏行，展开恢复", async () => {

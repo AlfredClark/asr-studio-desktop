@@ -17,6 +17,7 @@ const saved: Config_Serialize = {
   shortcut_quick_open: "",
   shortcut_output: "clipboard",
   shortcut_paste_restore: false,
+  custom_model_dirs: {},
   shortcut_voice: "",
   schema_version: 1,
 };
@@ -122,6 +123,7 @@ describe("updateConfig", () => {
       shortcut_quick_open: "",
       shortcut_output: "clipboard",
       shortcut_paste_restore: false,
+      custom_model_dirs: {},
       shortcut_voice: "",
       schema_version: 1,
     };
@@ -153,6 +155,7 @@ describe("updateConfig", () => {
       shortcut_quick_open: "",
       shortcut_output: "clipboard",
       shortcut_paste_restore: false,
+      custom_model_dirs: {},
       shortcut_voice: "",
       schema_version: 1,
     };
@@ -179,6 +182,7 @@ describe("resetConfig", () => {
     shortcut_quick_open: "",
     shortcut_output: "clipboard",
     shortcut_paste_restore: false,
+    custom_model_dirs: {},
     shortcut_voice: "",
     schema_version: 1,
   };

@@ -4,6 +4,7 @@ use anyhow::Context;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use specta::Type;
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use tauri::Runtime;
 use tauri_plugin_store::{Store, StoreExt};
@@ -34,6 +35,8 @@ const KEY_SHORTCUT_VOICE: &str = "shortcut_voice";
 const KEY_SHORTCUT_OUTPUT: &str = "shortcut_output";
 /// 粘贴后是否恢复原剪贴板在配置文件中的键名；仅 `paste` 模式生效
 const KEY_SHORTCUT_PASTE_RESTORE: &str = "shortcut_paste_restore";
+/// 各模型的用户指定目录在配置文件中的键名；值为 `{模型 id: 绝对路径}`，缺键或脏值回落空映射
+const KEY_CUSTOM_MODEL_DIRS: &str = "custom_model_dirs";
 /// 当前配置结构版本：变更字段语义时递增，并在迁移链中补对应升级步骤
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -161,6 +164,11 @@ pub struct Config {
     #[serde(deserialize_with = "de_shortcut_paste_restore")]
     #[specta(type = bool)]
     pub shortcut_paste_restore: bool,
+    /// 各模型的用户指定目录：`{模型 id: 绝对路径}`，目录名不强制匹配；
+    /// 缺失或类型不符时回落空映射（全部走应用管理目录）
+    #[serde(deserialize_with = "de_custom_model_dirs")]
+    #[specta(type = HashMap<String, String>)]
+    pub custom_model_dirs: HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -177,6 +185,7 @@ impl Default for Config {
             shortcut_voice: String::new(),
             shortcut_output: ShortcutOutput::default(),
             shortcut_paste_restore: false,
+            custom_model_dirs: HashMap::new(),
         }
     }
 }
@@ -210,6 +219,8 @@ pub struct ConfigPatch {
     pub shortcut_output: Option<ShortcutOutput>,
     /// 粘贴后是否恢复原剪贴板
     pub shortcut_paste_restore: Option<bool>,
+    /// 各模型的用户指定目录（整包替换写该键）
+    pub custom_model_dirs: Option<HashMap<String, String>>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -310,6 +321,32 @@ where
 {
     let value = Value::deserialize(deserializer)?;
     Ok(value.as_bool().unwrap_or_default())
+}
+
+/// 容错解析用户指定模型目录：经 `serde_json::Value` 中转，非对象一律回落空映射；
+/// 键值非字符串（或空串）的条目逐项丢弃，只保留 `{模型 id: 非空绝对路径}`
+fn de_custom_model_dirs<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_custom_model_dirs(Some(&value)))
+}
+
+/// 用户指定目录映射的唯一转换口径：缺失、非对象一律回落空映射；
+/// 逐项只保留 trim 后非空的值，路径是否绝对由写入入口校验
+fn parse_custom_model_dirs(value: Option<&Value>) -> HashMap<String, String> {
+    let Some(map) = value.and_then(Value::as_object) else {
+        return HashMap::new();
+    };
+    map.iter()
+        .filter_map(|(key, raw)| {
+            raw.as_str()
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(|path| (key.clone(), path.to_owned()))
+        })
+        .collect()
 }
 
 /// 容错解析结构版本：经 `parse_schema_version` 统一处理脏值
@@ -420,6 +457,7 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         shortcut_voice: load_shortcut_voice(app),
         shortcut_output: load_shortcut_output(app),
         shortcut_paste_restore: load_shortcut_paste_restore(app),
+        custom_model_dirs: load_custom_model_dirs(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -492,6 +530,11 @@ fn load_shortcut_paste_restore(app: &tauri::AppHandle) -> bool {
     read_key(app, KEY_SHORTCUT_PASTE_RESTORE)
         .and_then(|value| value.as_bool())
         .unwrap_or_default()
+}
+
+/// 读取持久化的用户指定模型目录；未设置或类型不符时回落空映射
+fn load_custom_model_dirs(app: &tauri::AppHandle) -> HashMap<String, String> {
+    parse_custom_model_dirs(read_key(app, KEY_CUSTOM_MODEL_DIRS).as_ref())
 }
 
 /// 读取持久化的配置结构版本；未设置或类型不符时回落 `0`
@@ -592,6 +635,35 @@ pub fn reset(app: &tauri::AppHandle) -> anyhow::Result<Config> {
     update(app, &reset_patch())
 }
 
+/// 指定 / 取消指定某模型的用户目录：读-改整包写（经 `update` 持写锁串行化），仅解绑不碰文件；
+/// 路径 trim 后为空视为清除；非空时必须为绝对路径（存在性不校验，缺失按 `Missing` 处理）
+pub fn set_custom_model_dir(
+    app: &tauri::AppHandle,
+    id: &str,
+    path: Option<&str>,
+) -> anyhow::Result<Config> {
+    let trimmed = path.map(str::trim).filter(|dir| !dir.is_empty());
+    if trimmed.is_some_and(|dir| !std::path::Path::new(dir).is_absolute()) {
+        anyhow::bail!("custom model dir must be an absolute path");
+    }
+    let mut dirs = load_config(app).custom_model_dirs;
+    match trimmed {
+        Some(dir) => {
+            dirs.insert(id.to_owned(), dir.to_owned());
+        }
+        None => {
+            dirs.remove(id);
+        }
+    }
+    update(
+        app,
+        &ConfigPatch {
+            custom_model_dirs: Some(dirs),
+            ..ConfigPatch::default()
+        },
+    )
+}
+
 /// 重置所用的补丁：必须覆盖全部已知键，新增配置项时同步
 /// （`reset_covers_every_known_key` 测试会拦截遗漏）
 fn reset_patch() -> ConfigPatch {
@@ -606,6 +678,7 @@ fn reset_patch() -> ConfigPatch {
         shortcut_voice: Some(String::new()),
         shortcut_output: Some(ShortcutOutput::default()),
         shortcut_paste_restore: Some(false),
+        custom_model_dirs: Some(HashMap::new()),
     }
 }
 
@@ -699,6 +772,17 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
         entries.push((
             KEY_SHORTCUT_PASTE_RESTORE,
             Value::from(shortcut_paste_restore),
+        ));
+    }
+    if let Some(custom_model_dirs) = patch.custom_model_dirs.as_ref() {
+        entries.push((
+            KEY_CUSTOM_MODEL_DIRS,
+            Value::from(
+                custom_model_dirs
+                    .iter()
+                    .map(|(key, path)| (key.clone(), Value::from(path.as_str())))
+                    .collect::<Map<String, Value>>(),
+            ),
         ));
     }
     entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
@@ -854,6 +938,7 @@ mod tests {
         assert_eq!(config.shortcut_voice, "");
         assert_eq!(config.shortcut_output, ShortcutOutput::Paste);
         assert!(!config.shortcut_paste_restore);
+        assert!(config.custom_model_dirs.is_empty());
         assert_eq!(config.schema_version, 0);
     }
 
@@ -870,12 +955,16 @@ mod tests {
             shortcut_voice: String::from("Ctrl+Alt+V"),
             shortcut_output: ShortcutOutput::Paste,
             shortcut_paste_restore: true,
+            custom_model_dirs: HashMap::from([(
+                String::from("sense-voice-int8"),
+                String::from("/models/custom"),
+            )]),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_output": "paste", "shortcut_paste_restore": true, "schema_version": 1 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "schema_version": 1 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -1060,6 +1149,39 @@ mod tests {
     }
 
     #[test]
+    fn custom_model_dirs_fallback_rules() {
+        // 缺键、非对象一律回落空映射；空串与非字符串条目逐项丢弃
+        let empty: Config = serde_json::from_value(json!({})).expect("never fails");
+        assert!(empty.custom_model_dirs.is_empty());
+        for raw in [
+            json!({ "custom_model_dirs": 5 }),
+            json!({ "custom_model_dirs": null }),
+            json!({ "custom_model_dirs": "x" }),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert!(config.custom_model_dirs.is_empty());
+        }
+        let config: Config = serde_json::from_value(json!({
+            "custom_model_dirs": {
+                "sense-voice-int8": " /models/a ",
+                "qwen3-1.7b-int8": "",
+                "dirty": 5
+            }
+        }))
+        .expect("never fails");
+        // trim 后空串与非字符串条目逐项丢弃，其余原样保留
+        assert_eq!(
+            config
+                .custom_model_dirs
+                .get("sense-voice-int8")
+                .map(String::as_str),
+            Some("/models/a")
+        );
+        assert!(!config.custom_model_dirs.contains_key("qwen3-1.7b-int8"));
+        assert!(!config.custom_model_dirs.contains_key("dirty"));
+    }
+
+    #[test]
     fn shortcut_output_round_trips_through_as_str() {
         for output in [
             ShortcutOutput::Ime,
@@ -1132,6 +1254,7 @@ mod tests {
         assert_eq!(absent.shortcut_voice, None);
         assert_eq!(absent.shortcut_output, None);
         assert_eq!(absent.shortcut_paste_restore, None);
+        assert_eq!(absent.custom_model_dirs, None);
 
         let quick_open: ConfigPatch =
             serde_json::from_value(json!({ "shortcut_quick_open": "Ctrl+Shift+O" }))
@@ -1153,6 +1276,18 @@ mod tests {
             serde_json::from_value(json!({ "shortcut_paste_restore": true }))
                 .expect("restore parsed");
         assert_eq!(restore.shortcut_paste_restore, Some(true));
+
+        let dirs: ConfigPatch = serde_json::from_value(
+            json!({ "custom_model_dirs": { "sense-voice-int8": "/models/a" } }),
+        )
+        .expect("dirs parsed");
+        assert_eq!(
+            dirs.custom_model_dirs,
+            Some(HashMap::from([(
+                String::from("sense-voice-int8"),
+                String::from("/models/a")
+            )]))
+        );
     }
 
     #[test]
@@ -1175,6 +1310,10 @@ mod tests {
             shortcut_voice: Some(String::from("Ctrl+Alt+V")),
             shortcut_output: Some(ShortcutOutput::Ime),
             shortcut_paste_restore: Some(true),
+            custom_model_dirs: Some(HashMap::from([(
+                String::from("sense-voice-int8"),
+                String::from("/models/a"),
+            )])),
         });
         assert_eq!(
             keys_of(&patched),
@@ -1189,6 +1328,7 @@ mod tests {
                 KEY_SHORTCUT_OUTPUT,
                 KEY_SHORTCUT_VOICE,
                 KEY_SHORTCUT_PASTE_RESTORE,
+                KEY_CUSTOM_MODEL_DIRS,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -1202,6 +1342,7 @@ mod tests {
         assert_eq!(patched[7].1, json!("ime"));
         assert_eq!(patched[8].1, json!("Ctrl+Alt+V"));
         assert_eq!(patched[9].1, json!(true));
+        assert_eq!(patched[10].1, json!({ "sense-voice-int8": "/models/a" }));
     }
 
     #[test]
@@ -1218,6 +1359,7 @@ mod tests {
             shortcut_output: Some(ShortcutOutput::Paste),
             shortcut_voice: Some(String::from("Ctrl+Alt+V")),
             shortcut_paste_restore: Some(true),
+            custom_model_dirs: Some(HashMap::new()),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -1235,7 +1377,8 @@ mod tests {
         assert_eq!(entries[7].1, json!(ShortcutOutput::default().as_str()));
         assert_eq!(entries[8].1, json!(""));
         assert_eq!(entries[9].1, json!(false));
-        assert_eq!(entries[10].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[10].1, json!({}));
+        assert_eq!(entries[11].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -1251,6 +1394,7 @@ mod tests {
             shortcut_voice: String::new(),
             shortcut_output: ShortcutOutput::default(),
             shortcut_paste_restore: false,
+            custom_model_dirs: HashMap::new(),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));

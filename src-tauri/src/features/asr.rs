@@ -113,14 +113,22 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
         recognizer: None,
     });
 
-    let dir = crate::features::models::model_dir(app, spec)?;
+    let dir = crate::features::models::resolve_model_dir(app, spec)?;
     let config = build_recognizer_config(spec, &dir);
     let started = std::time::Instant::now();
     let recognizer =
-        tokio::task::spawn_blocking(move || sherpa_onnx::OfflineRecognizer::create(&config))
+        match tokio::task::spawn_blocking(move || sherpa_onnx::OfflineRecognizer::create(&config))
             .await
             .context("recognizer load task failed")?
-            .context("failed to create recognizer")?;
+            .context("failed to create recognizer")
+        {
+            Ok(recognizer) => recognizer,
+            // 加载失败清占位：否则快照永远停在 `Starting`，前端切模型与启动按钮持续被禁
+            Err(err) => {
+                *lock_service() = None;
+                return Err(err);
+            }
+        };
     let load_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     let mut guard = lock_service();

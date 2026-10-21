@@ -39,6 +39,7 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["javascript", "typescript
 anyhow = "1.0.104"
 tauri-plugin-system-fonts = "2.0.2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
 reqwest = { version = "0.13.5", features = ["stream"] }
 tar = "0.4.46"
 bzip2 = "0.6.1"

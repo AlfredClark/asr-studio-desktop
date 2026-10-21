@@ -30,6 +30,7 @@ macro_rules! collect_commands {
             $crate::commands::models::open_models_root,
             $crate::commands::models::open_model_dir,
             $crate::commands::models::delete_model,
+            $crate::commands::models::set_custom_model_dir,
             $crate::commands::asr::list_input_devices,
             $crate::commands::asr::start_service,
             $crate::commands::asr::stop_service,
