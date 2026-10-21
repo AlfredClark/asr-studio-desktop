@@ -89,6 +89,7 @@ vi.mock("#libs/utils/toast", () => ({ toast: toastMocks }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   lexiconStateMock.value = {
     version: 1,
     groups: [globalGroup, workGroup, dialectGroup],
@@ -449,5 +450,129 @@ describe("词库页", () => {
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     expect(batchDeleteMock).toHaveBeenCalledWith(["w-w2"]);
+  });
+
+  it("展示排序筛选与选择菜单入口", async () => {
+    await renderReady();
+
+    expect(screen.getByRole("button", { name: "Sort" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Filter" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Selection" })).not.toBeNull();
+  });
+
+  it("筛选禁用词条并在无匹配时提示", async () => {
+    const user = userEvent.setup();
+    lexiconStateMock.value = {
+      version: 1,
+      groups: [globalGroup, workGroup, dialectGroup],
+      entries: [
+        makeEntry({ id: "w-w1", group_id: "g-work", text: "在", pinyin: "zai", enabled: true }),
+        makeEntry({
+          id: "w-w2",
+          group_id: "g-work",
+          text: "成长",
+          pinyin: "cheng zhang",
+          enabled: false,
+        }),
+      ],
+      active_group_ids: ["g-work"],
+    };
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Filter" }));
+    await waitFor(() => {
+      expect(document.querySelector('[data-value="disabled"]')).not.toBeNull();
+    });
+    await user.click(document.querySelector('[data-value="disabled"]') as HTMLElement);
+
+    await waitFor(() => {
+      expect(screen.queryByText("在")).toBeNull();
+    });
+    expect(screen.getByText("成长")).not.toBeNull();
+    expect(localStorage.getItem("app.lexicon-filter")).toBe("disabled");
+  });
+
+  it("无匹配筛选显示空态提示", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    // 工作组两条均为启用，切到“未启用”即无匹配
+    await user.click(screen.getByRole("button", { name: "Filter" }));
+    await waitFor(() => {
+      expect(document.querySelector('[data-value="disabled"]')).not.toBeNull();
+    });
+    await user.click(document.querySelector('[data-value="disabled"]') as HTMLElement);
+
+    await waitFor(() => {
+      expect(screen.getByText("No entries match the filter")).not.toBeNull();
+    });
+  });
+
+  it("排序切换改顺序并持久化", async () => {
+    const user = userEvent.setup();
+    lexiconStateMock.value = {
+      version: 1,
+      groups: [globalGroup, workGroup, dialectGroup],
+      entries: [
+        makeEntry({ id: "w-w1", group_id: "g-work", text: "在", pinyin: "zai", weight: 0 }),
+        makeEntry({
+          id: "w-w2",
+          group_id: "g-work",
+          text: "成长",
+          pinyin: "cheng zhang",
+          weight: 0,
+        }),
+      ],
+      active_group_ids: ["g-work"],
+    };
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Sort" }));
+    await waitFor(() => {
+      expect(document.querySelector('[data-value="pinyin-asc"]')).not.toBeNull();
+    });
+    await user.click(document.querySelector('[data-value="pinyin-asc"]') as HTMLElement);
+
+    await waitFor(() => {
+      const rows = screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label"));
+      expect(rows).toEqual(["成长", "在"]);
+    });
+    expect(localStorage.getItem("app.lexicon-sort")).toBe("pinyin-asc");
+  });
+
+  it("选择菜单选中全部可见词条", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Selection" }));
+    await waitFor(() => {
+      expect(screen.getByText("Select all")).not.toBeNull();
+    });
+    await user.click(screen.getByText("Select all"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Batch actions \(2\)/ })).not.toBeNull();
+    });
+  });
+
+  it("选择菜单清空全部选中", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
+    await user.click(within(row).getByRole("checkbox", { name: "成长" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Batch actions/ })).not.toBeNull();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Selection" }));
+    await waitFor(() => {
+      expect(screen.getByText("Clear selection")).not.toBeNull();
+    });
+    await user.click(screen.getByText("Clear selection"));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Batch actions/ })).toBeNull();
+    });
   });
 });

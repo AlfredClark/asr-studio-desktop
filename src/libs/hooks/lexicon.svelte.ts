@@ -206,3 +206,116 @@ export function groupLabel(group: LexiconGroup): string {
 export function entriesOfGroup(entries: LexiconEntry[], groupId: string): LexiconEntry[] {
   return entries.filter((entry) => entry.group_id === groupId);
 }
+
+/** 词条排序取值：`added` 为后端落盘顺序，其余按拼音或权重升降 */
+export type LexiconSortMode = "added" | "pinyin-asc" | "pinyin-desc" | "weight-asc" | "weight-desc";
+
+/** 词条筛选取值：按启用状态过滤，`all` 不过滤 */
+export type LexiconFilterMode = "all" | "enabled" | "disabled";
+
+/** 默认排序：添加顺序（后端落盘顺序） */
+export const DEFAULT_LEXICON_SORT: LexiconSortMode = "added";
+
+/** 默认筛选：全部展示 */
+export const DEFAULT_LEXICON_FILTER: LexiconFilterMode = "all";
+
+/** 排序持久化键名，改名即视为放弃老用户存量 */
+export const LEXICON_SORT_STORAGE_KEY = "app.lexicon-sort";
+
+/** 筛选持久化键名，改名即视为放弃老用户存量 */
+export const LEXICON_FILTER_STORAGE_KEY = "app.lexicon-filter";
+
+/** 校验排序取值，脏数据回落时使用 */
+export function isLexiconSortMode(value: unknown): value is LexiconSortMode {
+  return (
+    typeof value === "string" &&
+    (
+      ["added", "pinyin-asc", "pinyin-desc", "weight-asc", "weight-desc"] as readonly string[]
+    ).includes(value)
+  );
+}
+
+/** 校验筛选取值，脏数据回落时使用 */
+export function isLexiconFilterMode(value: unknown): value is LexiconFilterMode {
+  return (
+    typeof value === "string" &&
+    (["all", "enabled", "disabled"] as readonly string[]).includes(value)
+  );
+}
+
+/** 读取持久化排序，缺失或非法一律回落添加顺序 */
+export function loadLexiconSortMode(): LexiconSortMode {
+  try {
+    if (typeof localStorage === "undefined") {
+      return DEFAULT_LEXICON_SORT;
+    }
+    const stored = localStorage.getItem(LEXICON_SORT_STORAGE_KEY);
+    return isLexiconSortMode(stored) ? stored : DEFAULT_LEXICON_SORT;
+  } catch {
+    // 隐私模式等存储不可用时按默认值渲染，不阻塞首帧
+    return DEFAULT_LEXICON_SORT;
+  }
+}
+
+/** 读取持久化筛选，缺失或非法一律回落全部展示 */
+export function loadLexiconFilterMode(): LexiconFilterMode {
+  try {
+    if (typeof localStorage === "undefined") {
+      return DEFAULT_LEXICON_FILTER;
+    }
+    const stored = localStorage.getItem(LEXICON_FILTER_STORAGE_KEY);
+    return isLexiconFilterMode(stored) ? stored : DEFAULT_LEXICON_FILTER;
+  } catch {
+    // 隐私模式等存储不可用时按默认值渲染，不阻塞首帧
+    return DEFAULT_LEXICON_FILTER;
+  }
+}
+
+/** 持久化排序：落盘失败仍返回，调用方照常切内存态保证本次会话可用 */
+export function saveLexiconSortMode(next: LexiconSortMode): void {
+  try {
+    localStorage.setItem(LEXICON_SORT_STORAGE_KEY, next);
+  } catch {
+    // 落盘失败不抛错，内存态切换照常生效
+  }
+}
+
+/** 持久化筛选：落盘失败仍返回，调用方照常切内存态保证本次会话可用 */
+export function saveLexiconFilterMode(next: LexiconFilterMode): void {
+  try {
+    localStorage.setItem(LEXICON_FILTER_STORAGE_KEY, next);
+  } catch {
+    // 落盘失败不抛错，内存态切换照常生效
+  }
+}
+
+/** 按启用状态过滤词条：`all` 原样返回，其余留对应分支 */
+export function filterLexiconEntries(
+  entries: LexiconEntry[],
+  mode: LexiconFilterMode,
+): LexiconEntry[] {
+  if (mode === "enabled") {
+    return entries.filter((entry) => entry.enabled);
+  }
+  if (mode === "disabled") {
+    return entries.filter((entry) => !entry.enabled);
+  }
+  return entries;
+}
+
+/** 按模式排序词条：`added` 原样返回（后端落盘顺序），其余拷贝后排序 */
+export function sortLexiconEntries(entries: LexiconEntry[], mode: LexiconSortMode): LexiconEntry[] {
+  if (mode === "pinyin-asc" || mode === "pinyin-desc") {
+    const direction = mode === "pinyin-asc" ? 1 : -1;
+    return [...entries].sort(
+      (first, second) =>
+        (first.pinyin.localeCompare(second.pinyin, ["zh-CN", "en"]) ||
+          first.text.localeCompare(second.text, ["zh-CN", "en"])) * direction,
+    );
+  }
+  if (mode === "weight-asc" || mode === "weight-desc") {
+    const direction = mode === "weight-asc" ? 1 : -1;
+    return [...entries].sort((first, second) => (first.weight - second.weight) * direction);
+  }
+  return entries;
+}

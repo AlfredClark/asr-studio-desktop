@@ -27,6 +27,7 @@
   import CheckIcon from "@lucide/svelte/icons/check";
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
+  import MenuIcon from "@lucide/svelte/icons/menu";
   import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
   import ConfirmDialog from "#components/common/confirm-dialog.svelte";
   import {
@@ -38,22 +39,33 @@
   import { cn } from "#libs/utils/shadcn-svelte";
   import type { LexiconEntry } from "#libs/commands/types";
   import {
-    createLexiconEntry,
-    createLexiconGroup,
+    DEFAULT_LEXICON_FILTER,
+    DEFAULT_LEXICON_SORT,
     batchDeleteLexiconEntries,
     batchSetLexiconEntriesEnabled,
+    createLexiconEntry,
+    createLexiconGroup,
     deleteLexiconEntry,
     deleteLexiconGroup,
     entriesOfGroup,
+    filterLexiconEntries,
     groupLabel,
+    isLexiconFilterMode,
+    isLexiconSortMode,
     lexiconState,
+    loadLexiconFilterMode,
+    loadLexiconSortMode,
     moveLexiconGroup,
     refreshLexicon,
     renameLexiconGroup,
+    saveLexiconFilterMode,
+    saveLexiconSortMode,
     setLexiconGroupEnabled,
+    sortLexiconEntries,
     suggestLexiconPinyin,
     updateLexiconEntry,
   } from "#libs/hooks/lexicon.svelte";
+  import type { LexiconFilterMode, LexiconSortMode } from "#libs/hooks/lexicon.svelte";
 
   /** 查看中的分组 id：空则跟随首个生效分组（无则全局）；分组被删后自动回落 */
   let selectedGroupId = $state<string | null>(null);
@@ -79,8 +91,21 @@
     );
   });
 
-  /** 所查分组的词条：保持后端顺序，前端不重排 */
-  const visibleEntries = $derived(entriesOfGroup(lexiconState.value.entries, effectiveGroupId));
+  /** 词条排序与筛选：页面私有视图偏好，落盘记忆保证会话间一致 */
+  let sortMode = $state<LexiconSortMode>(DEFAULT_LEXICON_SORT);
+  let filterMode = $state<LexiconFilterMode>(DEFAULT_LEXICON_FILTER);
+
+  /** 首挂载时从存量恢复排序与筛选，脏数据回落默认值 */
+  $effect.pre(() => {
+    sortMode = loadLexiconSortMode();
+    filterMode = loadLexiconFilterMode();
+  });
+
+  /** 所查分组的词条：先按启用状态过滤，再按排序模式重排，添加顺序即后端顺序 */
+  const baseEntries = $derived(entriesOfGroup(lexiconState.value.entries, effectiveGroupId));
+  const visibleEntries = $derived(
+    sortLexiconEntries(filterLexiconEntries(baseEntries, filterMode), sortMode),
+  );
 
   /** 首次水合中；完成前展示加载态而非空态，避免误导 */
   let loading = $state(true);
@@ -143,6 +168,56 @@
       batchKey += 1;
     }
   }
+
+  /** 排序下拉项：添加顺序即后端落盘顺序 */
+  const sortItems = $derived([
+    { value: "added", label: m.lexicon_sort_added() },
+    { value: "pinyin-asc", label: m.lexicon_sort_pinyin_asc() },
+    { value: "pinyin-desc", label: m.lexicon_sort_pinyin_desc() },
+    { value: "weight-asc", label: m.lexicon_sort_weight_asc() },
+    { value: "weight-desc", label: m.lexicon_sort_weight_desc() },
+  ]);
+
+  /** 筛选下拉项：按启用状态过滤 */
+  const filterItems = $derived([
+    { value: "all", label: m.lexicon_filter_all() },
+    { value: "enabled", label: m.lexicon_filter_enabled() },
+    { value: "disabled", label: m.lexicon_filter_disabled() },
+  ]);
+
+  /** 切换排序：非法取值直接忽略，合法即切内存态并落盘 */
+  function handleSortChange(value: string): void {
+    if (!isLexiconSortMode(value)) return;
+    sortMode = value;
+    saveLexiconSortMode(value);
+  }
+
+  /** 切换筛选：非法取值直接忽略，合法即切内存态并落盘 */
+  function handleFilterChange(value: string): void {
+    if (!isLexiconFilterMode(value)) return;
+    filterMode = value;
+    saveLexiconFilterMode(value);
+  }
+
+  /** 选中当前筛选下的全部可见词条 */
+  function selectAllVisible(): void {
+    for (const entry of visibleEntries) checked.add(entry.id);
+    batchKey += 1;
+  }
+
+  /** 清空全部选中 */
+  function clearAllChecked(): void {
+    checked.clear();
+    batchKey += 1;
+  }
+
+  // 切组或条目变化时裁剪选中：跨组选中会误删，删掉的条目残留也一并清理
+  $effect(() => {
+    const alive = new Set(baseEntries.map((entry) => entry.id));
+    for (const id of [...checked]) {
+      if (!alive.has(id)) checked.delete(id);
+    }
+  });
   /** 待确认删除的词条 id */
   let deletingEntryId = $state<string | null>(null);
   /** 删除确认弹窗开关（分组 / 词条各一，id 另存） */
@@ -481,15 +556,88 @@
                     </Select>
                   {/key}
                 {/if}
+                <Select
+                  type="single"
+                  value={sortMode}
+                  items={sortItems}
+                  onValueChange={(value) => handleSortChange(value)}
+                >
+                  <SelectTrigger
+                    class="w-(--control-column-width)"
+                    aria-label={m.lexicon_sort_label()}
+                  >
+                    <SelectValue placeholder={m.lexicon_sort_label()} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {#each sortItems as item (item.value)}
+                      <SelectItem value={item.value}>{item.label}</SelectItem>
+                    {/each}
+                  </SelectContent>
+                </Select>
+                <Select
+                  type="single"
+                  value={filterMode}
+                  items={filterItems}
+                  onValueChange={(value) => handleFilterChange(value)}
+                >
+                  <SelectTrigger
+                    class="w-(--control-column-width)"
+                    aria-label={m.lexicon_filter_label()}
+                  >
+                    <SelectValue placeholder={m.lexicon_filter_label()} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {#each filterItems as item (item.value)}
+                      <SelectItem value={item.value}>{item.label}</SelectItem>
+                    {/each}
+                  </SelectContent>
+                </Select>
                 <Button size="sm" onclick={openCreateEntry}>
                   {m.lexicon_new_entry()}
                 </Button>
+                <DropdownMenuPrimitive.Root>
+                  <DropdownMenuPrimitive.Trigger>
+                    {#snippet child({ props })}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        {...props}
+                        aria-label={m.lexicon_selection_menu()}
+                        title={m.lexicon_selection_menu()}
+                      >
+                        <MenuIcon />
+                      </Button>
+                    {/snippet}
+                  </DropdownMenuPrimitive.Trigger>
+                  <DropdownMenuPrimitive.Content
+                    align="end"
+                    sideOffset={4}
+                    class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+                  >
+                    <DropdownMenuPrimitive.Item
+                      class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:bg-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                      disabled={visibleEntries.length === 0}
+                      onSelect={() => selectAllVisible()}
+                    >
+                      {m.lexicon_select_all()}
+                    </DropdownMenuPrimitive.Item>
+                    <DropdownMenuPrimitive.Item
+                      class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:bg-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                      disabled={checked.size === 0}
+                      onSelect={() => clearAllChecked()}
+                    >
+                      {m.lexicon_clear_all()}
+                    </DropdownMenuPrimitive.Item>
+                  </DropdownMenuPrimitive.Content>
+                </DropdownMenuPrimitive.Root>
               </div>
             </div>
             <p class="shrink-0 text-xs text-muted-foreground">{m.lexicon_rule_hint()}</p>
             {#if visibleEntries.length === 0}
               <div class="flex min-h-0 flex-1 items-center justify-center">
-                <p class="text-sm text-muted-foreground">{m.lexicon_empty_entries()}</p>
+                <p class="text-sm text-muted-foreground">
+                  {baseEntries.length === 0 ? m.lexicon_empty_entries() : m.lexicon_empty_filter()}
+                </p>
               </div>
             {:else}
               <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
