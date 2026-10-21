@@ -33,10 +33,13 @@ const createEntryMock = vi.hoisted(() => vi.fn());
 const updateEntryMock = vi.hoisted(() => vi.fn());
 const deleteEntryMock = vi.hoisted(() => vi.fn());
 const batchDeleteMock = vi.hoisted(() => vi.fn());
+const batchCreateMock = vi.hoisted(() => vi.fn());
+const exportGroupMock = vi.hoisted(() => vi.fn());
+const importGroupMock = vi.hoisted(() => vi.fn());
 const batchSetEnabledMock = vi.hoisted(() => vi.fn());
 const moveGroupMock = vi.hoisted(() => vi.fn());
 const suggestPinyinMock = vi.hoisted(() => vi.fn());
-const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
 const lexiconStateMock = vi.hoisted(
   (): {
     value: {
@@ -79,6 +82,9 @@ vi.mock("#libs/hooks/lexicon.svelte", async (importOriginal) => {
     updateLexiconEntry: updateEntryMock,
     deleteLexiconEntry: deleteEntryMock,
     batchDeleteLexiconEntries: batchDeleteMock,
+    batchCreateLexiconEntries: batchCreateMock,
+    exportLexiconGroup: exportGroupMock,
+    importLexiconGroup: importGroupMock,
     batchSetLexiconEntriesEnabled: batchSetEnabledMock,
     moveLexiconGroup: moveGroupMock,
     suggestLexiconPinyin: suggestPinyinMock,
@@ -110,6 +116,9 @@ beforeEach(() => {
   updateEntryMock.mockResolvedValue(true);
   deleteEntryMock.mockResolvedValue(true);
   batchDeleteMock.mockResolvedValue(true);
+  batchCreateMock.mockResolvedValue({ created: 1, skipped: 1, ok: true });
+  exportGroupMock.mockResolvedValue(true);
+  importGroupMock.mockResolvedValue({ id: "g-new", name: "导入", created: 2, skipped: 0 });
   batchSetEnabledMock.mockResolvedValue(true);
   moveGroupMock.mockResolvedValue(true);
   suggestPinyinMock.mockResolvedValue("quan li");
@@ -555,24 +564,112 @@ describe("词库页", () => {
     });
   });
 
-  it("选择菜单清空全部选中", async () => {
+  it("选择菜单清空全组词条走二次确认", async () => {
     const user = userEvent.setup();
     await renderReady();
 
-    const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
-    await user.click(within(row).getByRole("checkbox", { name: "成长" }));
+    // 无需事先选中：直接打开选择菜单清空整组
+    await user.click(screen.getByRole("button", { name: "Selection" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Batch actions/ })).not.toBeNull();
+      expect(screen.getByText("Clear all entries")).not.toBeNull();
     });
+    await user.click(screen.getByText("Clear all entries"));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("Clear all entries?")).not.toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(batchDeleteMock).toHaveBeenCalledWith(["w-w1", "w-w2"]);
+  });
+
+  it("选择菜单打开批量添加弹窗", async () => {
+    const user = userEvent.setup();
+    await renderReady();
 
     await user.click(screen.getByRole("button", { name: "Selection" }));
     await waitFor(() => {
-      expect(screen.getByText("Clear selection")).not.toBeNull();
+      expect(screen.getByText("Add entries in bulk")).not.toBeNull();
     });
-    await user.click(screen.getByText("Clear selection"));
+    await user.click(screen.getByText("Add entries in bulk"));
 
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: /Batch actions/ })).toBeNull();
+      expect(screen.getByText(/Separate entries with spaces/)).not.toBeNull();
     });
+    expect(screen.getByLabelText("Entry list")).not.toBeNull();
+  });
+
+  it("批量添加解析去重并按词音对落盘", async () => {
+    const user = userEvent.setup();
+    suggestPinyinMock.mockImplementation(async (text: string) =>
+      text === "成长" ? "cheng zhang" : "ce shi",
+    );
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Selection" }));
+    await waitFor(() => {
+      expect(screen.getByText("Add entries in bulk")).not.toBeNull();
+    });
+    await user.click(screen.getByText("Add entries in bulk"));
+
+    // 成长已在工作组存在（同词同音跳过），测试为新词
+    await user.type(screen.getByLabelText("Entry list"), "成长 测试");
+    await waitFor(
+      () => {
+        expect(screen.getByText("1 to add, 1 duplicates skipped")).not.toBeNull();
+      },
+      { timeout: 3000 },
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(batchCreateMock).toHaveBeenCalledWith("g-work", [
+      { text: "成长", pinyin: "cheng zhang" },
+      { text: "测试", pinyin: "ce shi" },
+    ]);
+  });
+
+  it("单条新建重复词音对不落盘且弹窗保持打开", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New entry" }));
+    await user.type(screen.getByLabelText(/Word/), "在");
+    // 等自动拼音回填后手工改成存量读音，构造词音双命中
+    await waitFor(
+      () => {
+        expect((screen.getByLabelText(/Pinyin/) as HTMLInputElement).value).toBe("quan li");
+      },
+      { timeout: 3000 },
+    );
+    await user.clear(screen.getByLabelText(/Pinyin/));
+    await user.type(screen.getByLabelText(/Pinyin/), "zai");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(createEntryMock).not.toHaveBeenCalled();
+    expect(toastMocks.info).toHaveBeenCalled();
+    // 弹窗保持打开：保存按钮仍在
+    expect(screen.getByRole("button", { name: "Save" })).not.toBeNull();
+  });
+
+  it("分组更多操作含导出分组项", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    const row = screen.getByText("工作").closest("div.rounded-lg") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: "More actions" }));
+    await waitFor(() => {
+      expect(screen.getByText("Export group")).not.toBeNull();
+    });
+    await user.click(screen.getByText("Export group"));
+
+    expect(exportGroupMock).toHaveBeenCalledWith("g-work");
+  });
+
+  it("底部导入按钮调导入并切组", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Import group" }));
+
+    expect(importGroupMock).toHaveBeenCalledOnce();
   });
 });

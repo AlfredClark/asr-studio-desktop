@@ -1,8 +1,14 @@
 // 词库的前端内存态：分组 + 词条 + 生效组 id 一次拉全，页面内按组筛选；
 // 写操作经命令落盘后用返回快照回写——不为省一次 IPC 而复刻读取路径。
+import { SvelteSet } from "svelte/reactivity";
 import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
-import type { LexiconEntry, LexiconGroup, LexiconSnapshot } from "#libs/commands/types";
+import type {
+  LexiconEntry,
+  LexiconGroup,
+  LexiconImportSummary,
+  LexiconSnapshot,
+} from "#libs/commands/types";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
 
@@ -318,4 +324,163 @@ export function sortLexiconEntries(entries: LexiconEntry[], mode: LexiconSortMod
     return [...entries].sort((first, second) => (first.weight - second.weight) * direction);
   }
   return entries;
+}
+
+/** 批量添加单次上限：超出部分截断忽略 */
+export const LEXICON_BATCH_ADD_LIMIT = 100;
+
+/** 归一化拼音：空白切分后单空格连接，与后端落盘形态同口径 */
+export function normalizeLexiconPinyin(pinyin: string): string {
+  return pinyin
+    .split(/\s+/)
+    .filter((syllable) => syllable !== "")
+    .join(" ");
+}
+
+/** 解析批量输入：空白切分、去空、词面输入内去重保序（不限上限，截断由调用方决定） */
+export function parseBatchEntryTexts(input: string): string[] {
+  const seen = new SvelteSet<string>();
+  const result: string[] = [];
+  for (const token of input.split(/\s+/)) {
+    const text = token.trim();
+    if (text === "" || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
+}
+
+/** 批量添加的待创建词条：词面 + 已解析拼音 */
+export interface BatchEntryDraft {
+  /** 词面 */
+  text: string;
+  /** 拼音（空格分隔），空串表示建议失败、交由后端再定夺 */
+  pinyin: string;
+}
+
+/** 批量添加结果：创建数、组内重复跳过数、整体是否成功 */
+export interface BatchCreateLexiconResult {
+  /** 成功落盘数 */
+  created: number;
+  /** 组内（词面 + 归一化拼音）命中已存在而跳过数 */
+  skipped: number;
+  /** 无落盘失败即真 */
+  ok: boolean;
+}
+
+/** 组内判重键：词面与归一化拼音精确配对，不忽略大小写 */
+function lexiconEntryKey(text: string, pinyin: string): string {
+  return `${text}\n${normalizeLexiconPinyin(pinyin)}`;
+}
+
+/** 批量添加词条：组内配对判重后逐条落盘，统一刷新、一次汇总提示 */
+export async function batchCreateLexiconEntries(
+  groupId: string,
+  drafts: BatchEntryDraft[],
+): Promise<BatchCreateLexiconResult> {
+  const existing = new SvelteSet(
+    lexiconState.value.entries
+      .filter((entry) => entry.group_id === groupId)
+      .map((entry) => lexiconEntryKey(entry.text, entry.pinyin)),
+  );
+  let created = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const draft of drafts) {
+    const key = lexiconEntryKey(draft.text, draft.pinyin);
+    if (existing.has(key)) {
+      skipped += 1;
+      continue;
+    }
+    const pinyin = normalizeLexiconPinyin(draft.pinyin);
+    const result = await commands
+      .createLexiconEntry(groupId, draft.text, pinyin === "" ? null : pinyin, null, null)
+      .result();
+    if (result.status === "error") {
+      failed += 1;
+      reportCommandFailure("[lexicon] batch create failed", result.error);
+      continue;
+    }
+    existing.add(key);
+    created += 1;
+  }
+  await refreshLexicon();
+  if (failed > 0) {
+    toast.error(m.lexicon_update_failed());
+    return { created, skipped, ok: false };
+  }
+  if (created > 0) {
+    toast.success(m.lexicon_batch_added({ count: created, skipped }));
+  } else {
+    toast.info(m.lexicon_entry_exists());
+  }
+  return { created, skipped, ok: true };
+}
+
+/** 导出文件名建议：清洗分组名中的路径分隔符与控制字符，兜底通用名 */
+export function suggestLexiconFileName(groupName: string): string {
+  const stem = groupName
+    .replace(/[/\\:*?"<>|\p{Cc}]/gu, "_")
+    .trim()
+    .replace(/^[.]+/, "");
+  return `lexicon-${stem === "" ? "group" : stem}.json`;
+}
+
+/** 导出分组到 JSON 文件：弹保存对话框，取消静默返回真 */
+export async function exportLexiconGroup(groupId: string): Promise<boolean> {
+  const group = lexiconState.value.groups.find((item) => item.id === groupId);
+  let path: string | null;
+  try {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    path = await save({
+      defaultPath: suggestLexiconFileName(group?.name ?? ""),
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch {
+    toast.error(m.lexicon_file_dialog_failed());
+    return false;
+  }
+  if (path == null) {
+    return true;
+  }
+  const result = await commands.exportLexiconGroup(groupId, path).result();
+  if (result.status === "error") {
+    toast.error(m.lexicon_update_failed());
+    reportCommandFailure("[lexicon] export group failed", result.error);
+    return false;
+  }
+  toast.success(m.lexicon_export_saved({ count: result.data }));
+  return true;
+}
+
+/** 从 JSON 文件导入分组：弹打开对话框，成功返回摘要供切组查看，取消或失败返回空 */
+export async function importLexiconGroup(): Promise<LexiconImportSummary | null> {
+  let selected: string | string[] | null;
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    selected = await open({ multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
+  } catch {
+    toast.error(m.lexicon_file_dialog_failed());
+    return null;
+  }
+  if (typeof selected !== "string") {
+    return null;
+  }
+  const result = await commands.importLexiconGroup(selected).result();
+  if (result.status === "error") {
+    toast.error(m.lexicon_import_invalid());
+    reportCommandFailure("[lexicon] import group failed", result.error);
+    return null;
+  }
+  toast.success(
+    m.lexicon_import_done({
+      name: result.data.name,
+      count: result.data.created,
+      skipped: result.data.skipped,
+    }),
+  );
+  await refreshLexicon();
+  return result.data;
 }

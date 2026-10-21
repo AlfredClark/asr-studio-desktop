@@ -556,6 +556,217 @@ pub fn delete_entry(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 分组导出文件标识：导入时校验，不符直接拒绝
+pub const LEXICON_EXPORT_FORMAT: &str = "asr-studio-lexicon-group";
+/// 分组导出文件版本：仅当前版本可读
+pub const LEXICON_EXPORT_VERSION: u32 = 1;
+
+/// 分组导出文件体：无 id（导入时重生成），无全局标记（导入恒建普通分组）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LexiconGroupExport {
+    /// 文件标识
+    pub format: String,
+    /// 文件版本
+    pub version: u32,
+    /// 分组名
+    pub name: String,
+    /// 词条（拼音为落盘形态：单空格连接）
+    pub entries: Vec<LexiconExportEntry>,
+}
+
+/// 导出文件中的词条：权重与启用态原样保留
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LexiconExportEntry {
+    /// 词面
+    pub text: String,
+    /// 拼音（空格分隔）
+    pub pinyin: String,
+    /// 权重，缺省 0
+    #[serde(default)]
+    pub weight: i32,
+    /// 是否启用，缺省开
+    #[serde(default = "default_export_enabled")]
+    pub enabled: bool,
+}
+
+/// 导出词条启用缺省：与新建词条缺省一致
+const fn default_export_enabled() -> bool {
+    true
+}
+
+/// 导入分组摘要：新建分组信息 + 落盘统计，前端据此提示并切组查看
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct LexiconImportSummary {
+    /// 新建分组 id
+    pub id: String,
+    /// 新建分组名（重名已加后缀）
+    pub name: String,
+    /// 成功创建词条数
+    pub created: u32,
+    /// 跳过数（空词面 / 空拼音 / 文件内重复）
+    pub skipped: u32,
+}
+
+/// 归一化后的待落盘词条：纯数据，可单测
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedImportEntry {
+    text: String,
+    pinyin: String,
+    weight: i32,
+    enabled: bool,
+}
+
+/// 组装分组导出体：纯函数，可单测往返
+pub fn build_group_export(name: String, entries: Vec<LexiconExportEntry>) -> LexiconGroupExport {
+    LexiconGroupExport {
+        format: LEXICON_EXPORT_FORMAT.to_owned(),
+        version: LEXICON_EXPORT_VERSION,
+        name,
+        entries,
+    }
+}
+
+/// 导出分组到 JSON 文件：未知分组拒绝；返回词条数供提示
+pub fn export_group_to_file(app: &tauri::AppHandle, id: &str, path: &str) -> anyhow::Result<u32> {
+    use anyhow::Context;
+
+    let data = crate::cores::lexicon::load_data(app);
+    let Some(group) = data.groups.iter().find(|group| group.id == id) else {
+        anyhow::bail!("unknown lexicon group");
+    };
+    let group_entries: Vec<LexiconExportEntry> = data
+        .entries
+        .iter()
+        .filter(|entry| entry.group_id == id)
+        .map(|entry| LexiconExportEntry {
+            text: entry.text.clone(),
+            pinyin: entry.pinyin.clone(),
+            weight: entry.weight,
+            enabled: entry.enabled,
+        })
+        .collect();
+    let count = group_entries.len();
+    let payload = build_group_export(group.name.clone(), group_entries);
+    std::fs::write(
+        path,
+        serde_json::to_string_pretty(&payload).context("failed to serialize lexicon export")?,
+    )
+    .with_context(|| format!("failed to write lexicon export to {path}"))?;
+    Ok(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
+/// 解析导入文件体：标识 / 版本 / 组名校验
+fn parse_group_export(raw: &str) -> anyhow::Result<LexiconGroupExport> {
+    use anyhow::Context;
+
+    let parsed: LexiconGroupExport = serde_json::from_str(raw).context("invalid lexicon file")?;
+    if parsed.format != LEXICON_EXPORT_FORMAT {
+        anyhow::bail!("unsupported lexicon file");
+    }
+    if parsed.version != LEXICON_EXPORT_VERSION {
+        anyhow::bail!("unsupported lexicon file version");
+    }
+    if parsed.name.trim().is_empty() {
+        anyhow::bail!("lexicon group name must not be empty");
+    }
+    Ok(parsed)
+}
+
+/// 归一化导入条目：空词面 / 空拼音跳过，文件内（词面 + 归一拼音）配对去重；
+/// 空拼音先自动建议，仍为空则跳过
+fn normalize_import_entries(items: &[LexiconExportEntry]) -> (Vec<NormalizedImportEntry>, u32) {
+    let mut seen = std::collections::HashSet::new();
+    let mut valid = Vec::new();
+    let mut skipped = 0u32;
+    for item in items {
+        let text = item.text.trim().to_owned();
+        if text.is_empty() {
+            skipped += 1;
+            continue;
+        }
+        let mut syllables = parse_pinyin(&item.pinyin);
+        if syllables.is_empty() {
+            syllables = parse_pinyin(&suggest_pinyin(&text));
+        }
+        if syllables.is_empty() {
+            skipped += 1;
+            continue;
+        }
+        let pinyin = syllables.join(" ");
+        if !seen.insert((text.clone(), pinyin.clone())) {
+            skipped += 1;
+            continue;
+        }
+        valid.push(NormalizedImportEntry {
+            text,
+            pinyin,
+            weight: clamp_weight(item.weight),
+            enabled: item.enabled,
+        });
+    }
+    (valid, skipped)
+}
+
+/// 导入重名消解：已存在则追加 ` (2)`、` (3)`……直到唯一（仅比普通分组名）
+fn unique_group_name(existing: &[LexiconGroup], name: &str) -> String {
+    if !existing
+        .iter()
+        .any(|group| !group.is_global && group.name == name)
+    {
+        return name.to_owned();
+    }
+    let mut index = 2u32;
+    loop {
+        let candidate = format!("{name} ({index})");
+        if !existing
+            .iter()
+            .any(|group| !group.is_global && group.name == candidate)
+        {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+/// 从 JSON 文件导入分组：新建分组并落盘；返回摘要供前端提示与切组
+pub fn import_group_from_file(
+    app: &tauri::AppHandle,
+    path: &str,
+) -> anyhow::Result<LexiconImportSummary> {
+    use anyhow::Context;
+
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read lexicon file {path}"))?;
+    let parsed = parse_group_export(&raw)?;
+    let (valid, skipped) = normalize_import_entries(&parsed.entries);
+    crate::cores::lexicon::modify(app, |data| {
+        let name = unique_group_name(&data.groups, parsed.name.trim());
+        let group = LexiconGroup {
+            id: crate::cores::lexicon::new_group_id(&data.groups),
+            name: name.clone(),
+            is_global: false,
+        };
+        let summary = LexiconImportSummary {
+            id: group.id.clone(),
+            name,
+            created: u32::try_from(valid.len()).unwrap_or(u32::MAX),
+            skipped,
+        };
+        data.groups.push(group);
+        for item in &valid {
+            data.entries.push(LexiconEntry {
+                id: crate::cores::lexicon::new_entry_id(&data.entries),
+                group_id: summary.id.clone(),
+                text: item.text.clone(),
+                pinyin: item.pinyin.clone(),
+                weight: item.weight,
+                enabled: item.enabled,
+            });
+        }
+        Ok(summary)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,5 +934,96 @@ mod tests {
         // 数字与标点跳过但不断错对齐
         assert_eq!(apply("你好2024！", &resolved), "你好2024！");
         assert_eq!(apply("说你好ABC", &resolved), "说你好ABC");
+    }
+
+    fn export_entry(text: &str, pinyin: &str, weight: i32, enabled: bool) -> LexiconExportEntry {
+        LexiconExportEntry {
+            text: text.to_owned(),
+            pinyin: pinyin.to_owned(),
+            weight,
+            enabled,
+        }
+    }
+
+    #[test]
+    fn export_round_trips_through_json() {
+        // 导出体序列化后可解析回原结构
+        let payload = build_group_export(
+            "工作".to_owned(),
+            vec![
+                export_entry("权力", "quan li", 5, true),
+                export_entry("在", "zai", 0, false),
+            ],
+        );
+        let raw = serde_json::to_string_pretty(&payload).expect("export serializes");
+        let parsed = parse_group_export(&raw).expect("export parses back");
+        assert_eq!(parsed, payload);
+    }
+
+    #[test]
+    fn parse_export_rejects_bad_format_version_and_name() {
+        // 标识不符拒绝
+        let bad_format = r#"{"format":"other","version":1,"name":"工作","entries":[]}"#;
+        assert!(parse_group_export(bad_format).is_err());
+        // 版本不符拒绝
+        let bad_version =
+            r#"{"format":"asr-studio-lexicon-group","version":2,"name":"工作","entries":[]}"#;
+        assert!(parse_group_export(bad_version).is_err());
+        // 空组名拒绝
+        let empty_name =
+            r#"{"format":"asr-studio-lexicon-group","version":1,"name":"  ","entries":[]}"#;
+        assert!(parse_group_export(empty_name).is_err());
+        // 非 JSON 拒绝
+        assert!(parse_group_export("not json").is_err());
+    }
+
+    #[test]
+    fn parse_export_applies_entry_defaults() {
+        // 缺省字段回落：权重 0、启用开
+        let parsed = parse_group_export(
+            r#"{"format":"asr-studio-lexicon-group","version":1,"name":"工作","entries":[{"text":"在","pinyin":"zai"}]}"#,
+        )
+        .expect("defaults apply");
+        assert_eq!(parsed.entries, vec![export_entry("在", "zai", 0, true)]);
+    }
+
+    #[test]
+    fn normalize_import_entries_skips_and_dedups() {
+        let (valid, skipped) = normalize_import_entries(&[
+            export_entry("权力", "quan  li", 1000, true),
+            export_entry("权力", "quan li", 0, true),
+            export_entry("  ", "zai", 0, true),
+            export_entry("Hello", "", 0, true),
+            export_entry("在", "zai", -1000, false),
+        ]);
+        // 空词面、空拼音（非汉字无建议）、文件内重复各跳过 1
+        assert_eq!(skipped, 3);
+        // 拼音归一（多空格收缩）、权重钳制
+        assert_eq!(valid.len(), 2);
+        assert_eq!(valid[0].text, "权力");
+        assert_eq!(valid[0].pinyin, "quan li");
+        assert_eq!(valid[0].weight, 100);
+        assert_eq!(valid[1].text, "在");
+        assert_eq!(valid[1].weight, -100);
+        assert!(!valid[1].enabled);
+    }
+
+    #[test]
+    fn unique_group_name_suffixes_on_conflict() {
+        let existing = vec![
+            group("global", true),
+            LexiconGroup {
+                id: "g1".to_owned(),
+                name: "工作".to_owned(),
+                is_global: false,
+            },
+            LexiconGroup {
+                id: "g2".to_owned(),
+                name: "工作 (2)".to_owned(),
+                is_global: false,
+            },
+        ];
+        assert_eq!(unique_group_name(&existing, "生活"), "生活");
+        assert_eq!(unique_group_name(&existing, "工作"), "工作 (3)");
     }
 }

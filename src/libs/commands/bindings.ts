@@ -58,6 +58,10 @@ export const commands = {
 	deleteLexiconEntry: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_lexicon_entry", { id })),
 	/**  为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认 */
 	suggestLexiconPinyin: (text: string) => typedError<string, CommandError>(__TAURI_INVOKE("suggest_lexicon_pinyin", { text })),
+	/**  导出分组到 JSON 文件：返回词条数供前端提示 */
+	exportLexiconGroup: (id: string, path: string) => typedError<number, CommandError>(__TAURI_INVOKE("export_lexicon_group", { id, path })),
+	/**  从 JSON 文件导入分组：返回新建分组摘要（含 id 供前端切组查看） */
+	importLexiconGroup: (path: string) => typedError<LexiconImportSummary, CommandError>(__TAURI_INVOKE("import_lexicon_group", { path })),
 	/**  列出输入设备；无设备返回空（前端展示“无可用设备”而非报错） */
 	listInputDevices: () => typedError<AudioDevice[], CommandError>(__TAURI_INVOKE("list_input_devices")),
 	/**  启动识别服务：模型须已下载校验；同服重复启动直接拒绝 */
@@ -290,6 +294,18 @@ export type LexiconGroup = {
 	name: string,
 	/**  是否全局组 */
 	is_global: boolean,
+};
+
+/**  导入分组摘要：新建分组信息 + 落盘统计，前端据此提示并切组查看 */
+export type LexiconImportSummary = {
+	/**  新建分组 id */
+	id: string,
+	/**  新建分组名（重名已加后缀） */
+	name: string,
+	/**  成功创建词条数 */
+	created: number,
+	/**  跳过数（空词面 / 空拼音 / 文件内重复） */
+	skipped: number,
 };
 
 /**  词库快照：分组 + 词条 + 生效组 id 列表，前端一次拉全（命令返回体） */

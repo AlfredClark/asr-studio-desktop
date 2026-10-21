@@ -42,6 +42,8 @@ macro_rules! collect_commands {
             $crate::commands::lexicon::update_lexicon_entry,
             $crate::commands::lexicon::delete_lexicon_entry,
             $crate::commands::lexicon::suggest_lexicon_pinyin,
+            $crate::commands::lexicon::export_lexicon_group,
+            $crate::commands::lexicon::import_lexicon_group,
             $crate::commands::asr::list_input_devices,
             $crate::commands::asr::start_service,
             $crate::commands::asr::stop_service,

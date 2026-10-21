@@ -7,6 +7,7 @@
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
   import { Input } from "#components/shadcn-svelte/input";
+  import { Textarea } from "#components/shadcn-svelte/textarea";
   import { Switch } from "#components/shadcn-svelte/switch";
   import {
     Select,
@@ -37,10 +38,13 @@
   } from "#components/shadcn-svelte/resizable";
   import { m } from "#libs/i18n/paraglide/messages";
   import { cn } from "#libs/utils/shadcn-svelte";
+  import { toast } from "#libs/utils/toast";
   import type { LexiconEntry } from "#libs/commands/types";
   import {
     DEFAULT_LEXICON_FILTER,
     DEFAULT_LEXICON_SORT,
+    LEXICON_BATCH_ADD_LIMIT,
+    batchCreateLexiconEntries,
     batchDeleteLexiconEntries,
     batchSetLexiconEntriesEnabled,
     createLexiconEntry,
@@ -48,14 +52,18 @@
     deleteLexiconEntry,
     deleteLexiconGroup,
     entriesOfGroup,
+    exportLexiconGroup,
     filterLexiconEntries,
     groupLabel,
+    importLexiconGroup,
     isLexiconFilterMode,
     isLexiconSortMode,
     lexiconState,
     loadLexiconFilterMode,
     loadLexiconSortMode,
     moveLexiconGroup,
+    normalizeLexiconPinyin,
+    parseBatchEntryTexts,
     refreshLexicon,
     renameLexiconGroup,
     saveLexiconFilterMode,
@@ -129,6 +137,9 @@
 
   /** 批量删除确认弹窗开关 */
   let confirmDeleteBatch = $state(false);
+
+  /** 清空全组词条确认弹窗开关 */
+  let confirmClearAll = $state(false);
 
   /** 待确认删除的分组 id */
   let deletingGroupId = $state<string | null>(null);
@@ -205,10 +216,104 @@
     batchKey += 1;
   }
 
-  /** 清空全部选中 */
-  function clearAllChecked(): void {
-    checked.clear();
-    batchKey += 1;
+  /** 确认清空全组词条：成功后清理选中（条目已不存在） */
+  async function handleConfirmClearAll(): Promise<void> {
+    const ids = baseEntries.map((entry) => entry.id);
+    if (await batchDeleteLexiconEntries(ids)) {
+      for (const id of ids) checked.delete(id);
+      batchKey += 1;
+    }
+  }
+
+  /** 批量添加弹窗开关与输入草稿 */
+  let batchOpen = $state(false);
+  let batchInput = $state("");
+  /** 批量确认在途中禁用，避免重复提交 */
+  let batchBusy = $state(false);
+  /** 打开弹窗时快照的目标分组：落盘与判重都以它为准，切组不影响已开弹窗 */
+  let batchTargetGroupId = $state("");
+  let batchTargetGroupName = $state("");
+
+  /** 打开批量添加弹窗：输入清空，目标锁定当前查看分组 */
+  function openBatchAdd(): void {
+    batchInput = "";
+    batchResolved = [];
+    batchTargetGroupId = effectiveGroupId;
+    const target = lexiconState.value.groups.find((group) => group.id === effectiveGroupId);
+    batchTargetGroupName = target == null ? "" : groupLabel(target);
+    batchOpen = true;
+  }
+
+  /** 批量输入解析出的候选词：输入内已去重保序，未截断 */
+  const batchParsed = $derived(parseBatchEntryTexts(batchInput));
+  /** 截断到上限后的待添加候选 */
+  const batchCapped = $derived(batchParsed.slice(0, LEXICON_BATCH_ADD_LIMIT));
+  /** 是否因上限被截断 */
+  const batchTruncated = $derived(batchParsed.length > batchCapped.length);
+
+  /** 批量候选的拼音解析结果：防抖后逐词建议，供预览精确判重 */
+  let batchResolved = $state<Array<{ text: string; pinyin: string }>>([]);
+
+  // 批量输入防抖解析拼音：快照比对通过才回填，避免后一次输入被先一次覆盖
+  $effect(() => {
+    const candidates = batchCapped;
+    if (!batchOpen || batchBusy || candidates.length === 0) {
+      batchResolved = [];
+      return;
+    }
+    const snapshot = [...candidates];
+    const timer = setTimeout(() => {
+      void (async () => {
+        const pairs = await Promise.all(
+          snapshot.map(async (text) => ({ text, pinyin: await suggestLexiconPinyin(text) })),
+        );
+        if (batchOpen && batchCapped.join("\n") === snapshot.join("\n")) {
+          batchResolved = pairs;
+        }
+      })();
+    }, 350);
+    return () => clearTimeout(timer);
+  });
+
+  /** 目标分组内存词条的（词面 + 归一化拼音）集合 */
+  const batchExistingKeys = $derived.by(() => {
+    const keys = new SvelteSet<string>();
+    for (const entry of lexiconState.value.entries) {
+      if (entry.group_id === batchTargetGroupId) {
+        keys.add(`${entry.text}\n${normalizeLexiconPinyin(entry.pinyin)}`);
+      }
+    }
+    return keys;
+  });
+
+  /** 批量解析是否就绪：解析条数追上候选条数 */
+  const batchReady = $derived(
+    batchCapped.length > 0 && batchResolved.length === batchCapped.length,
+  );
+
+  /** 预览：解析完成且未命中已存在的候选数 */
+  const batchNewCount = $derived(
+    batchResolved.filter(
+      (pair) => !batchExistingKeys.has(`${pair.text}\n${normalizeLexiconPinyin(pair.pinyin)}`),
+    ).length,
+  );
+
+  /** 预览：解析完成且命中已存在的候选数 */
+  const batchSkipCount = $derived(batchResolved.length - batchNewCount);
+
+  /** 确认批量添加：用已解析的词音对落盘，成功关弹窗 */
+  async function handleConfirmBatchAdd(): Promise<void> {
+    if (batchBusy || !batchReady) return;
+    batchBusy = true;
+    try {
+      const result = await batchCreateLexiconEntries(batchTargetGroupId, batchResolved);
+      if (result.ok) {
+        batchOpen = false;
+        batchInput = "";
+      }
+    } finally {
+      batchBusy = false;
+    }
   }
 
   // 切组或条目变化时裁剪选中：跨组选中会误删，删掉的条目残留也一并清理
@@ -301,6 +406,17 @@
       if (pinyin.trim() === "" && draftText.trim() !== "") {
         pinyin = await suggestLexiconPinyin(draftText);
       }
+      if (editingId == null) {
+        const duplicate = entriesOfGroup(lexiconState.value.entries, draftGroupId).some(
+          (entry) =>
+            entry.text === draftText.trim() &&
+            normalizeLexiconPinyin(entry.pinyin) === normalizeLexiconPinyin(pinyin),
+        );
+        if (duplicate) {
+          toast.info(m.lexicon_entry_exists());
+          return;
+        }
+      }
       const ok =
         editingId == null
           ? await createLexiconEntry({
@@ -321,6 +437,12 @@
     } finally {
       editorBusy = false;
     }
+  }
+
+  /** 导入分组：成功后切到新分组查看 */
+  async function handleImportGroup(): Promise<void> {
+    const summary = await importLexiconGroup();
+    if (summary != null) selectedGroupId = summary.id;
   }
 
   /** 新建分组：空名直接忽略 */
@@ -486,6 +608,12 @@
                               {m.lexicon_move_down()}
                             </DropdownMenuPrimitive.Item>
                             <DropdownMenuPrimitive.Item
+                              class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:bg-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                              onSelect={() => void exportLexiconGroup(group.id)}
+                            >
+                              {m.lexicon_export_group()}
+                            </DropdownMenuPrimitive.Item>
+                            <DropdownMenuPrimitive.Item
                               class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
                               onSelect={() => {
                                 deletingGroupId = group.id;
@@ -509,6 +637,14 @@
                 void handleCreateGroup();
               }}
             >
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onclick={() => void handleImportGroup()}
+              >
+                {m.lexicon_import_group()}
+              </Button>
               <Input
                 value={newGroupName}
                 oninput={(event) => (newGroupName = event.currentTarget.value)}
@@ -623,8 +759,16 @@
                     </DropdownMenuPrimitive.Item>
                     <DropdownMenuPrimitive.Item
                       class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:bg-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-                      disabled={checked.size === 0}
-                      onSelect={() => clearAllChecked()}
+                      onSelect={() => openBatchAdd()}
+                    >
+                      {m.lexicon_batch_add()}
+                    </DropdownMenuPrimitive.Item>
+                    <DropdownMenuPrimitive.Item
+                      class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:bg-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                      disabled={baseEntries.length === 0}
+                      onSelect={() => {
+                        confirmClearAll = true;
+                      }}
                     >
                       {m.lexicon_clear_all()}
                     </DropdownMenuPrimitive.Item>
@@ -773,6 +917,52 @@
   </DialogContent>
 </Dialog>
 
+<Dialog bind:open={batchOpen}>
+  <DialogContent aria-label={m.lexicon_batch_add()} class="sm:max-w-xl">
+    <DialogHeader>
+      <DialogTitle>{m.lexicon_batch_add()}</DialogTitle>
+      <DialogDescription>{m.lexicon_batch_add_hint()}</DialogDescription>
+    </DialogHeader>
+    <div class="flex flex-col gap-3">
+      <p class="text-sm text-muted-foreground">
+        {m.lexicon_move_group()}：{batchTargetGroupName}
+      </p>
+      <label class="flex flex-col gap-1 text-sm">
+        <span class="font-medium">{m.lexicon_batch_add_label()}</span>
+        <Textarea
+          bind:value={batchInput}
+          rows={10}
+          disabled={batchBusy}
+          placeholder={m.lexicon_batch_add_placeholder()}
+          aria-label={m.lexicon_batch_add_label()}
+        />
+      </label>
+      {#if batchCapped.length > 0 && !batchReady}
+        <p class="text-sm text-muted-foreground">{m.lexicon_batch_add_resolving()}</p>
+      {/if}
+      {#if batchReady}
+        <p class="text-sm text-muted-foreground">
+          {m.lexicon_batch_add_preview({ count: batchNewCount, skipped: batchSkipCount })}
+        </p>
+      {/if}
+      {#if batchTruncated}
+        <p class="text-sm text-muted-foreground">{m.lexicon_batch_add_truncated()}</p>
+      {/if}
+    </div>
+    <DialogFooter>
+      <Button variant="outline" onclick={() => (batchOpen = false)} disabled={batchBusy}>
+        {m.lexicon_cancel()}
+      </Button>
+      <Button
+        onclick={() => void handleConfirmBatchAdd()}
+        disabled={batchBusy || !batchReady || batchNewCount === 0}
+      >
+        {m.lexicon_save()}
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
+
 <ConfirmDialog
   bind:open={confirmDeleteBatch}
   title={m.lexicon_delete_entries_confirm_title()}
@@ -783,6 +973,19 @@
   onConfirm={() => {
     confirmDeleteBatch = false;
     void handleConfirmBatchDelete();
+  }}
+/>
+
+<ConfirmDialog
+  bind:open={confirmClearAll}
+  title={m.lexicon_clear_entries_confirm_title()}
+  description={m.lexicon_clear_entries_confirm_description({ count: baseEntries.length })}
+  cancelLabel={m.lexicon_cancel()}
+  confirmLabel={m.lexicon_delete()}
+  variant="destructive"
+  onConfirm={() => {
+    confirmClearAll = false;
+    void handleConfirmClearAll();
   }}
 />
 

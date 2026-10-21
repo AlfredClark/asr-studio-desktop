@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_LEXICON_FILTER,
   DEFAULT_LEXICON_SORT,
+  LEXICON_BATCH_ADD_LIMIT,
+  batchCreateLexiconEntries,
   batchDeleteLexiconEntries,
   batchSetLexiconEntriesEnabled,
   filterLexiconEntries,
@@ -11,9 +13,12 @@ import {
   loadLexiconFilterMode,
   loadLexiconSortMode,
   moveLexiconGroup,
+  normalizeLexiconPinyin,
+  parseBatchEntryTexts,
   refreshLexicon,
   setLexiconGroupEnabled,
   sortLexiconEntries,
+  suggestLexiconFileName,
 } from "#libs/hooks/lexicon.svelte";
 import type { LexiconEntry, LexiconSnapshot } from "#libs/commands/types";
 
@@ -33,7 +38,7 @@ vi.mock("#libs/commands", () => ({
 }));
 
 vi.mock("#libs/utils/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
 import commands from "#libs/commands";
@@ -231,5 +236,103 @@ describe("词条排序与筛选", () => {
       "w-c",
       "w-b",
     ]);
+  });
+});
+
+describe("批量添加解析与判重", () => {
+  it("归一化拼音收缩多余空白", () => {
+    expect(normalizeLexiconPinyin("quan  li ")).toBe("quan li");
+    expect(normalizeLexiconPinyin("zai")).toBe("zai");
+    expect(normalizeLexiconPinyin("")).toBe("");
+  });
+
+  it("解析批量输入去空并保序去重", () => {
+    expect(parseBatchEntryTexts("权力 在 权力\n成长\t在")).toEqual(["权力", "在", "成长"]);
+    expect(parseBatchEntryTexts("")).toEqual([]);
+    expect(parseBatchEntryTexts("   \n ")).toEqual([]);
+  });
+
+  it("上限为 100", () => {
+    expect(LEXICON_BATCH_ADD_LIMIT).toBe(100);
+  });
+
+  it("组内词音配对命中跳过，同词不同音照常创建", async () => {
+    lexiconState.value = {
+      version: 1,
+      groups: [],
+      entries: [makeViewEntry({ id: "w-1", group_id: "g-work", text: "在", pinyin: "zai" })],
+      active_group_ids: [],
+    };
+    mocked.createLexiconEntry.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
+
+    const result = await batchCreateLexiconEntries("g-work", [
+      { text: "在", pinyin: "zai" },
+      { text: "在", pinyin: "zai  tong" },
+      { text: "成长", pinyin: "cheng zhang" },
+    ]);
+
+    expect(result).toEqual({ created: 2, skipped: 1, ok: true });
+    expect(mocked.createLexiconEntry).toHaveBeenCalledTimes(2);
+    expect(mocked.createLexiconEntry).toHaveBeenCalledWith("g-work", "在", "zai tong", null, null);
+    expect(mocked.listLexicon).toHaveBeenCalled();
+  });
+
+  it("跨组同词音不判重", async () => {
+    lexiconState.value = {
+      version: 1,
+      groups: [],
+      entries: [makeViewEntry({ id: "w-1", group_id: "g-other", text: "在", pinyin: "zai" })],
+      active_group_ids: [],
+    };
+    mocked.createLexiconEntry.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
+
+    const result = await batchCreateLexiconEntries("g-work", [{ text: "在", pinyin: "zai" }]);
+
+    expect(result).toEqual({ created: 1, skipped: 0, ok: true });
+  });
+
+  it("全部重复时一次信息提示且不落盘", async () => {
+    const { toast } = await import("#libs/utils/toast");
+    lexiconState.value = {
+      version: 1,
+      groups: [],
+      entries: [makeViewEntry({ id: "w-1", group_id: "g-work", text: "在", pinyin: "zai" })],
+      active_group_ids: [],
+    };
+
+    const result = await batchCreateLexiconEntries("g-work", [{ text: "在", pinyin: "zai" }]);
+
+    expect(result).toEqual({ created: 0, skipped: 1, ok: true });
+    expect(mocked.createLexiconEntry).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.info)).toHaveBeenCalled();
+  });
+
+  it("落盘失败时返回假并错误提示", async () => {
+    lexiconState.value = { version: 1, groups: [], entries: [], active_group_ids: [] };
+    mocked.createLexiconEntry.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    const result = await batchCreateLexiconEntries("g-work", [{ text: "在", pinyin: "zai" }]);
+
+    expect(result.ok).toBe(false);
+    expect(result.created).toBe(0);
+  });
+});
+
+describe("导出文件名建议", () => {
+  it("清洗路径分隔符与控制字符", () => {
+    expect(suggestLexiconFileName("工作/分组:二")).toBe("lexicon-工作_分组_二.json");
+    expect(suggestLexiconFileName("a*b?c")).toBe("lexicon-a_b_c.json");
+  });
+
+  it("空名回落通用名", () => {
+    expect(suggestLexiconFileName("")).toBe("lexicon-group.json");
+    expect(suggestLexiconFileName("   ")).toBe("lexicon-group.json");
+    expect(suggestLexiconFileName("...")).toBe("lexicon-group.json");
+  });
+
+  it("正常名直接拼接", () => {
+    expect(suggestLexiconFileName("工作")).toBe("lexicon-工作.json");
   });
 });

@@ -117,3 +117,22 @@ pub fn delete_lexicon_entry(app: tauri::AppHandle, id: String) -> CommandResult<
 pub fn suggest_lexicon_pinyin(text: String) -> CommandResult<String> {
     Ok(lexicon::suggest_pinyin(&text))
 }
+
+/// 导出分组到 JSON 文件：返回词条数供前端提示
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn export_lexicon_group(app: tauri::AppHandle, id: String, path: String) -> CommandResult<u32> {
+    Ok(lexicon::export_group_to_file(&app, &id, &path)?)
+}
+
+/// 从 JSON 文件导入分组：返回新建分组摘要（含 id 供前端切组查看）
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn import_lexicon_group(
+    app: tauri::AppHandle,
+    path: String,
+) -> CommandResult<lexicon::LexiconImportSummary> {
+    Ok(lexicon::import_group_from_file(&app, &path)?)
+}
