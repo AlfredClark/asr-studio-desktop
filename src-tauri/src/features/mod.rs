@@ -6,5 +6,6 @@
 pub mod asr;
 pub mod audio;
 pub mod focus;
+pub mod lexicon;
 pub mod models;
 pub mod output;

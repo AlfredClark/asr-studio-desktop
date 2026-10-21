@@ -326,7 +326,11 @@ pub async fn transcribe_file(
     .context("transcribe task failed")?;
     // 归还识别器：期间被停止或换新则直接释放旧句柄，不覆盖新状态
     put_back_recognizer(recognizer);
-    outcome
+    // 词库后处理：空词库直接原文返回，推理耗时不受影响
+    outcome.map(|mut result| {
+        result.text = crate::features::lexicon::apply_lexicon(app, &result.text);
+        result
+    })
 }
 
 /// 转写音频文件；移动端无此能力，直接返回错误

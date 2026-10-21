@@ -38,6 +38,26 @@ export const commands = {
 	 *  仅解绑不碰文件，返回写后的最新配置
 	 */
 	setCustomModelDir: (id: string, path: string | null) => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("set_custom_model_dir", { id, path })),
+	/**  拉取词库快照：分组 + 词条 + 生效组 id，前端一次拿全 */
+	listLexicon: () => typedError<LexiconSnapshot, CommandError>(__TAURI_INVOKE("list_lexicon")),
+	/**  新建分组；名为空直接拒绝 */
+	createLexiconGroup: (name: string) => typedError<LexiconGroup, CommandError>(__TAURI_INVOKE("create_lexicon_group", { name })),
+	/**  重命名分组；全局组与未知 id 拒绝 */
+	renameLexiconGroup: (id: string, name: string) => typedError<null, CommandError>(__TAURI_INVOKE("rename_lexicon_group", { id, name })),
+	/**  删除分组；全局组拒绝，其词条级联删除，删的是生效分组则将其移出生效集 */
+	deleteLexiconGroup: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_lexicon_group", { id })),
+	/**  移动分组：仅在用户分组之间换位，全局组恒置顶；触顶 / 触底原地不动 */
+	moveLexiconGroup: (id: string, direction: MoveDirection) => typedError<null, CommandError>(__TAURI_INVOKE("move_lexicon_group", { id, direction })),
+	/**  设置生效分组集合：空即仅全局组生效；未知分组 id 直接拒绝（`"global"` 无需落盘，恒生效） */
+	setActiveLexiconGroups: (ids: string[]) => typedError<null, CommandError>(__TAURI_INVOKE("set_active_lexicon_groups", { ids })),
+	/**  新建词条：拼音缺省时自动建议；词面/拼音为空、分组未知直接拒绝 */
+	createLexiconEntry: (groupId: string, text: string, pinyin: string | null, weight: number | null, enabled: boolean | null) => typedError<LexiconEntry, CommandError>(__TAURI_INVOKE("create_lexicon_entry", { groupId, text, pinyin, weight, enabled })),
+	/**  更新词条：各字段缺省即不改；含分组移动（`group_id`） */
+	updateLexiconEntry: (id: string, groupId: string | null, text: string | null, pinyin: string | null, weight: number | null, enabled: boolean | null) => typedError<LexiconEntry, CommandError>(__TAURI_INVOKE("update_lexicon_entry", { id, groupId, text, pinyin, weight, enabled })),
+	/**  删除词条 */
+	deleteLexiconEntry: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_lexicon_entry", { id })),
+	/**  为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认 */
+	suggestLexiconPinyin: (text: string) => typedError<string, CommandError>(__TAURI_INVOKE("suggest_lexicon_pinyin", { text })),
 	/**  列出输入设备；无设备返回空（前端展示“无可用设备”而非报错） */
 	listInputDevices: () => typedError<AudioDevice[], CommandError>(__TAURI_INVOKE("list_input_devices")),
 	/**  启动识别服务：模型须已下载校验；同服重复启动直接拒绝 */
@@ -150,6 +170,8 @@ export type ConfigPatch = {
 	shortcut_paste_restore?: boolean | null,
 	/**  各模型的用户指定目录（整包替换写该键） */
 	custom_model_dirs?: { [key in string]: string } | null,
+	/**  词库生效分组 id 列表 */
+	active_lexicon_groups?: string[] | null,
 };
 
 /**
@@ -194,6 +216,8 @@ export type Config_Deserialize = {
 	 *  缺失或类型不符时回落空映射（全部走应用管理目录）
 	 */
 	custom_model_dirs?: { [key in string]: string },
+	/**  词库生效分组 id 列表；缺失或脏值回落空数组（仅全局组生效） */
+	active_lexicon_groups?: string[],
 };
 
 /**
@@ -238,6 +262,46 @@ export type Config_Serialize = {
 	 *  缺失或类型不符时回落空映射（全部走应用管理目录）
 	 */
 	custom_model_dirs: { [key in string]: string },
+	/**  词库生效分组 id 列表；缺失或脏值回落空数组（仅全局组生效） */
+	active_lexicon_groups: string[],
+};
+
+/**  词库词条：拼音为空格分隔音节（新建时自动建议、可手动改） */
+export type LexiconEntry = {
+	/**  词条 id */
+	id: string,
+	/**  所属分组 id */
+	group_id: string,
+	/**  词面 */
+	text: string,
+	/**  拼音（空格分隔，如 `"quan li"`） */
+	pinyin: string,
+	/**  权重（`-100..=100`，越大越优先） */
+	weight: number,
+	/**  是否启用 */
+	enabled: boolean,
+};
+
+/**  词库分组：`is_global` 为真的有且仅有一组（种子组，不可改名删除） */
+export type LexiconGroup = {
+	/**  分组 id（`global` 为全局组保留值） */
+	id: string,
+	/**  展示名（全局组存空串，前端按语言渲染） */
+	name: string,
+	/**  是否全局组 */
+	is_global: boolean,
+};
+
+/**  词库快照：分组 + 词条 + 生效组 id 列表，前端一次拉全（命令返回体） */
+export type LexiconSnapshot = {
+	/**  结构版本 */
+	version: number,
+	/**  分组（含全局组） */
+	groups: LexiconGroup[],
+	/**  词条 */
+	entries: LexiconEntry[],
+	/**  生效分组 id 列表（空即仅全局组生效） */
+	active_group_ids: string[],
 };
 
 /**  应用支持的语言 */
@@ -298,6 +362,17 @@ export type ModelStatus =
 "ready" | 
 /**  后端正在下载或解压 */
 "downloading";
+
+/**
+ *  分组移动方向：上移（更靠前）/ 下移（更靠后，仲裁时更优先）
+ * 
+ *  全局组恒置顶，不可移动；与其相邻的上移视为原地不动
+ */
+export type MoveDirection = 
+/**  上移：序号减小 */
+"up" | 
+/**  下移：序号增大，仲裁时更优先 */
+"down";
 
 /**  输出原因：调用方据此区分提示文案 */
 export type OutputReason = 

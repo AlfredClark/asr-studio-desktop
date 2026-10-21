@@ -10,6 +10,7 @@ use tauri_specta::Builder;
 
 pub mod config;
 pub mod deep_link;
+pub mod lexicon;
 pub mod locale;
 pub mod shortcut;
 pub mod specta;

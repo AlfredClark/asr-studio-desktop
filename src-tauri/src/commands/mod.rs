@@ -8,6 +8,7 @@
 
 pub mod asr;
 pub mod config;
+pub mod lexicon;
 pub mod models;
 pub mod shortcut;
 pub mod system;
@@ -31,6 +32,16 @@ macro_rules! collect_commands {
             $crate::commands::models::open_model_dir,
             $crate::commands::models::delete_model,
             $crate::commands::models::set_custom_model_dir,
+            $crate::commands::lexicon::list_lexicon,
+            $crate::commands::lexicon::create_lexicon_group,
+            $crate::commands::lexicon::rename_lexicon_group,
+            $crate::commands::lexicon::delete_lexicon_group,
+            $crate::commands::lexicon::move_lexicon_group,
+            $crate::commands::lexicon::set_active_lexicon_groups,
+            $crate::commands::lexicon::create_lexicon_entry,
+            $crate::commands::lexicon::update_lexicon_entry,
+            $crate::commands::lexicon::delete_lexicon_entry,
+            $crate::commands::lexicon::suggest_lexicon_pinyin,
             $crate::commands::asr::list_input_devices,
             $crate::commands::asr::start_service,
             $crate::commands::asr::stop_service,

@@ -5,6 +5,7 @@ import InfoIcon from "@lucide/svelte/icons/info";
 import HouseIcon from "@lucide/svelte/icons/house";
 import SettingsIcon from "@lucide/svelte/icons/settings";
 import DatabaseIcon from "@lucide/svelte/icons/database";
+import BookOpenTextIcon from "@lucide/svelte/icons/book-open-text";
 import MicIcon from "@lucide/svelte/icons/mic";
 import { m } from "#libs/i18n/paraglide/messages";
 
@@ -13,6 +14,7 @@ export const NAV_TABS = [
   { path: "/", label: m.nav_home, icon: HouseIcon },
   { path: "/service", label: m.nav_service, icon: MicIcon },
   { path: "/models", label: m.nav_models, icon: DatabaseIcon },
+  { path: "/lexicon", label: m.nav_lexicon, icon: BookOpenTextIcon },
   { path: "/settings", label: m.nav_settings, icon: SettingsIcon },
   { path: "/about", label: m.nav_about, icon: InfoIcon },
 ] as const;

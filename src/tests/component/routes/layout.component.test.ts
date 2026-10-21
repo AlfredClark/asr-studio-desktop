@@ -148,6 +148,7 @@ describe("根布局启动水合", () => {
     shortcut_output: "clipboard",
     shortcut_paste_restore: false,
     custom_model_dirs: {},
+    active_lexicon_groups: [],
     shortcut_voice: "",
     schema_version: 1,
   };

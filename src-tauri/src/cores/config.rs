@@ -37,8 +37,10 @@ const KEY_SHORTCUT_OUTPUT: &str = "shortcut_output";
 const KEY_SHORTCUT_PASTE_RESTORE: &str = "shortcut_paste_restore";
 /// 各模型的用户指定目录在配置文件中的键名；值为 `{模型 id: 绝对路径}`，缺键或脏值回落空映射
 const KEY_CUSTOM_MODEL_DIRS: &str = "custom_model_dirs";
+/// 词库生效分组在配置文件中的键名；值为分组 id 数组，缺失或脏值回落空数组（仅全局组生效）
+const KEY_ACTIVE_LEXICON_GROUPS: &str = "active_lexicon_groups";
 /// 当前配置结构版本：变更字段语义时递增，并在迁移链中补对应升级步骤
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// 关闭窗口行为：落盘值为 `snake_case` 字符串，未知一律回落弹窗提示
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
@@ -169,6 +171,10 @@ pub struct Config {
     #[serde(deserialize_with = "de_custom_model_dirs")]
     #[specta(type = HashMap<String, String>)]
     pub custom_model_dirs: HashMap<String, String>,
+    /// 词库生效分组 id 列表；缺失或脏值回落空数组（仅全局组生效）
+    #[serde(deserialize_with = "de_active_lexicon_groups")]
+    #[specta(type = Vec<String>)]
+    pub active_lexicon_groups: Vec<String>,
 }
 
 impl Default for Config {
@@ -186,6 +192,7 @@ impl Default for Config {
             shortcut_output: ShortcutOutput::default(),
             shortcut_paste_restore: false,
             custom_model_dirs: HashMap::new(),
+            active_lexicon_groups: Vec::new(),
         }
     }
 }
@@ -221,6 +228,8 @@ pub struct ConfigPatch {
     pub shortcut_paste_restore: Option<bool>,
     /// 各模型的用户指定目录（整包替换写该键）
     pub custom_model_dirs: Option<HashMap<String, String>>,
+    /// 词库生效分组 id 列表
+    pub active_lexicon_groups: Option<Vec<String>>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -349,6 +358,31 @@ fn parse_custom_model_dirs(value: Option<&Value>) -> HashMap<String, String> {
         .collect()
 }
 
+/// 容错解析词库生效分组：经 `serde_json::Value` 中转，非数组一律回落空数组；
+/// 逐项只保留 trim 后非空的字符串
+fn de_active_lexicon_groups<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_active_lexicon_groups(Some(&value)))
+}
+
+/// 生效分组 id 列表的唯一转换口径：缺失、非数组一律回落空数组（仅全局组生效）
+fn parse_active_lexicon_groups(value: Option<&Value>) -> Vec<String> {
+    let Some(list) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|raw| {
+            raw.as_str()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
 /// 容错解析结构版本：经 `parse_schema_version` 统一处理脏值
 fn de_schema_version<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
@@ -458,6 +492,7 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         shortcut_output: load_shortcut_output(app),
         shortcut_paste_restore: load_shortcut_paste_restore(app),
         custom_model_dirs: load_custom_model_dirs(app),
+        active_lexicon_groups: load_active_lexicon_groups(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -535,6 +570,11 @@ fn load_shortcut_paste_restore(app: &tauri::AppHandle) -> bool {
 /// 读取持久化的用户指定模型目录；未设置或类型不符时回落空映射
 fn load_custom_model_dirs(app: &tauri::AppHandle) -> HashMap<String, String> {
     parse_custom_model_dirs(read_key(app, KEY_CUSTOM_MODEL_DIRS).as_ref())
+}
+
+/// 读取持久化的词库生效分组；未设置或类型不符时回落空数组
+fn load_active_lexicon_groups(app: &tauri::AppHandle) -> Vec<String> {
+    parse_active_lexicon_groups(read_key(app, KEY_ACTIVE_LEXICON_GROUPS).as_ref())
 }
 
 /// 读取持久化的配置结构版本；未设置或类型不符时回落 `0`
@@ -679,6 +719,7 @@ fn reset_patch() -> ConfigPatch {
         shortcut_output: Some(ShortcutOutput::default()),
         shortcut_paste_restore: Some(false),
         custom_model_dirs: Some(HashMap::new()),
+        active_lexicon_groups: Some(Vec::new()),
     }
 }
 
@@ -785,6 +826,17 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
             ),
         ));
     }
+    if let Some(active_lexicon_groups) = patch.active_lexicon_groups.as_ref() {
+        entries.push((
+            KEY_ACTIVE_LEXICON_GROUPS,
+            Value::from(
+                active_lexicon_groups
+                    .iter()
+                    .map(|id| Value::from(id.trim()))
+                    .collect::<Vec<Value>>(),
+            ),
+        ));
+    }
     entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
     entries
 }
@@ -809,7 +861,7 @@ fn read_key(app: &tauri::AppHandle, key: &str) -> Option<Value> {
 type Migration = fn(&mut Map<String, Value>);
 
 /// 迁移链：索引即源版本号，长度必须等于 `CURRENT_SCHEMA_VERSION`
-const MIGRATIONS: &[Migration] = &[migrate_v0_to_v1];
+const MIGRATIONS: &[Migration] = &[migrate_v0_to_v1, migrate_v1_to_v2];
 
 /// v0 → v1：引入结构版本键，并把早期写坏的 `locale` 就地规整为合法标签，
 /// 使磁盘值与运行时读取语义一致（读取侧本就经 `Locale::parse` 容错）
@@ -820,6 +872,23 @@ fn migrate_v0_to_v1(map: &mut Map<String, Value>) {
             Value::from(Locale::parse(raw).as_str()),
         );
     }
+}
+
+/// v1 → v2：生效分组由单选改多选；旧 `active_lexicon_group` 字符串转为单元素
+/// 数组后删旧键（`"global"` 与空值即空数组，全局组本就恒生效）
+fn migrate_v1_to_v2(map: &mut Map<String, Value>) {
+    const LEGACY_KEY: &str = "active_lexicon_group";
+    let Some(raw) = map.remove(LEGACY_KEY) else {
+        return;
+    };
+    let id = raw.as_str().map(str::trim).unwrap_or_default();
+    if id.is_empty() || id == crate::cores::lexicon::GLOBAL_GROUP_ID {
+        return;
+    }
+    map.insert(
+        KEY_ACTIVE_LEXICON_GROUPS.to_owned(),
+        Value::from(vec![Value::from(id)]),
+    );
 }
 
 /// 读取快照里的结构版本；缺失或脏值一律视为 `0`
@@ -939,6 +1008,7 @@ mod tests {
         assert_eq!(config.shortcut_output, ShortcutOutput::Paste);
         assert!(!config.shortcut_paste_restore);
         assert!(config.custom_model_dirs.is_empty());
+        assert_eq!(config.active_lexicon_groups.len(), 0);
         assert_eq!(config.schema_version, 0);
     }
 
@@ -959,12 +1029,13 @@ mod tests {
                 String::from("sense-voice-int8"),
                 String::from("/models/custom"),
             )]),
+            active_lexicon_groups: vec![String::from("work"), String::from("dialect")],
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "schema_version": 1 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "schema_version": 2 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -1182,6 +1253,51 @@ mod tests {
     }
 
     #[test]
+    fn active_lexicon_groups_fallback_rules() {
+        for (raw, expected) in [
+            (json!({}), Vec::new()),
+            (
+                json!({ "active_lexicon_groups": ["work", "dialect"] }),
+                vec!["work", "dialect"],
+            ),
+            (
+                json!({ "active_lexicon_groups": ["  work  ", "", 5, null] }),
+                vec!["work"],
+            ),
+            (json!({ "active_lexicon_groups": "work" }), Vec::new()),
+            (json!({ "active_lexicon_groups": 5 }), Vec::new()),
+            (json!({ "active_lexicon_groups": null }), Vec::new()),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(
+                config.active_lexicon_groups,
+                expected.into_iter().map(String::from).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn migrate_v1_to_v2_converts_single_active_group() {
+        let mut single = Map::from_iter([("active_lexicon_group".to_owned(), Value::from("work"))]);
+        migrate_v1_to_v2(&mut single);
+        assert_eq!(
+            single.get("active_lexicon_groups"),
+            Some(&Value::from(vec![Value::from("work")]))
+        );
+        assert!(!single.contains_key("active_lexicon_group"));
+
+        // 全局与空值即空数组（全局恒生效，无需落盘）
+        let mut global =
+            Map::from_iter([("active_lexicon_group".to_owned(), Value::from("global"))]);
+        migrate_v1_to_v2(&mut global);
+        assert!(!global.contains_key("active_lexicon_groups"));
+
+        let mut missing = Map::new();
+        migrate_v1_to_v2(&mut missing);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
     fn shortcut_output_round_trips_through_as_str() {
         for output in [
             ShortcutOutput::Ime,
@@ -1255,6 +1371,7 @@ mod tests {
         assert_eq!(absent.shortcut_output, None);
         assert_eq!(absent.shortcut_paste_restore, None);
         assert_eq!(absent.custom_model_dirs, None);
+        assert_eq!(absent.active_lexicon_groups, None);
 
         let quick_open: ConfigPatch =
             serde_json::from_value(json!({ "shortcut_quick_open": "Ctrl+Shift+O" }))
@@ -1288,6 +1405,14 @@ mod tests {
                 String::from("/models/a")
             )]))
         );
+
+        let active: ConfigPatch =
+            serde_json::from_value(json!({ "active_lexicon_groups": ["work", "dialect"] }))
+                .expect("groups parsed");
+        assert_eq!(
+            active.active_lexicon_groups,
+            Some(vec![String::from("work"), String::from("dialect")])
+        );
     }
 
     #[test]
@@ -1314,6 +1439,7 @@ mod tests {
                 String::from("sense-voice-int8"),
                 String::from("/models/a"),
             )])),
+            active_lexicon_groups: Some(vec![String::from("work")]),
         });
         assert_eq!(
             keys_of(&patched),
@@ -1329,6 +1455,7 @@ mod tests {
                 KEY_SHORTCUT_VOICE,
                 KEY_SHORTCUT_PASTE_RESTORE,
                 KEY_CUSTOM_MODEL_DIRS,
+                KEY_ACTIVE_LEXICON_GROUPS,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -1343,6 +1470,7 @@ mod tests {
         assert_eq!(patched[8].1, json!("Ctrl+Alt+V"));
         assert_eq!(patched[9].1, json!(true));
         assert_eq!(patched[10].1, json!({ "sense-voice-int8": "/models/a" }));
+        assert_eq!(patched[11].1, json!(["work"]));
     }
 
     #[test]
@@ -1360,6 +1488,7 @@ mod tests {
             shortcut_voice: Some(String::from("Ctrl+Alt+V")),
             shortcut_paste_restore: Some(true),
             custom_model_dirs: Some(HashMap::new()),
+            active_lexicon_groups: Some(vec![String::from("work")]),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -1378,7 +1507,8 @@ mod tests {
         assert_eq!(entries[8].1, json!(""));
         assert_eq!(entries[9].1, json!(false));
         assert_eq!(entries[10].1, json!({}));
-        assert_eq!(entries[11].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[11].1, json!([]));
+        assert_eq!(entries[12].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -1395,6 +1525,7 @@ mod tests {
             shortcut_output: ShortcutOutput::default(),
             shortcut_paste_restore: false,
             custom_model_dirs: HashMap::new(),
+            active_lexicon_groups: Vec::new(),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));
