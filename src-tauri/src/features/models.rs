@@ -84,6 +84,16 @@ pub struct RequiredFile {
     pub size: u64,
 }
 
+/// 模型文件校验口径：精确字节仅适用于官方原包，手工放置走存在性校验
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VerifyMode {
+    /// 逐文件比对字节数（官方 tarball 解压布局）
+    #[default]
+    ExactSize,
+    /// 只验文件存在且为普通文件，不比对字节数（用户手工放置）
+    PresenceOnly,
+}
+
 /// 模型静态规格：V1 只收录 int8 三款，加新版只加条目不动结构
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelSpec {
@@ -93,12 +103,26 @@ pub struct ModelSpec {
     pub category: ModelCategory,
     /// 展示名
     pub display_name: &'static str,
-    /// 发布包文件名
+    /// 发布包文件名；手工模型无发布包，留空
     pub tarball: &'static str,
     /// 包内顶层目录名（解压后原名保留，手动放置零改名）
     pub dir_name: &'static str,
-    /// 压缩包字节数（发布页实测，供前端展示总量）
+    /// 压缩包字节数（发布页实测，供前端展示总量）；手工模型为 0，前端不展示体积
     pub tarball_bytes: u64,
+    /// 校验口径：手工模型只验存在
+    pub verify: VerifyMode,
+    /// 是否手工放置：无下载直链，用户自行放文件到目录后点校验
+    pub manual: bool,
+    /// 识别器模型文件名（仅 `SenseVoice` 生效：int8 包为 `model.int8.onnx`，全精度包为 `model.onnx`）
+    pub model_file: &'static str,
+    /// 是否启用逆文本正则化（仅 `SenseVoice` 生效：2025 粤语微调版不支持）
+    pub use_itn: bool,
+    /// `FunASR Nano` 编码器适配器文件名（仅 `FunasrNano` 生效）
+    pub funasr_encoder_adaptor: &'static str,
+    /// `FunASR Nano` 嵌入文件名（仅 `FunasrNano` 生效）
+    pub funasr_embedding: &'static str,
+    /// `FunASR Nano` 大模型文件名（仅 `FunasrNano` 生效：int8/fp16/全精度各不同）
+    pub funasr_llm: &'static str,
     /// 运行时必需文件清单（校验与就绪判定的唯一依据）
     pub files: &'static [RequiredFile],
 }
@@ -119,6 +143,13 @@ pub const MODELS: &[ModelSpec] = &[
         tarball: "sherpa-onnx-funasr-nano-int8-2025-12-30.tar.bz2",
         dir_name: "sherpa-onnx-funasr-nano-int8-2025-12-30",
         tarball_bytes: 841_730_611,
+        verify: VerifyMode::ExactSize,
+        manual: false,
+        model_file: "",
+        use_itn: false,
+        funasr_encoder_adaptor: "encoder_adaptor.int8.onnx",
+        funasr_embedding: "embedding.int8.onnx",
+        funasr_llm: "llm.int8.onnx",
         files: &[
             RequiredFile {
                 path: "encoder_adaptor.int8.onnx",
@@ -147,12 +178,105 @@ pub const MODELS: &[ModelSpec] = &[
         ],
     },
     ModelSpec {
+        id: "funasr-nano-fp16",
+        category: ModelCategory::FunasrNano,
+        display_name: "FunASR Nano fp16",
+        tarball: "sherpa-onnx-funasr-nano-fp16-2025-12-30.tar.bz2",
+        dir_name: "sherpa-onnx-funasr-nano-fp16-2025-12-30",
+        tarball_bytes: 1_030_076_153,
+        verify: VerifyMode::ExactSize,
+        manual: false,
+        model_file: "",
+        use_itn: false,
+        funasr_encoder_adaptor: "encoder_adaptor.int8.onnx",
+        funasr_embedding: "embedding.int8.onnx",
+        funasr_llm: "llm.fp16.onnx",
+        files: &[
+            RequiredFile {
+                path: "encoder_adaptor.int8.onnx",
+                size: 237_792_748,
+            },
+            RequiredFile {
+                path: "embedding.int8.onnx",
+                size: 155_584_380,
+            },
+            RequiredFile {
+                path: "llm.fp16.onnx",
+                size: 1_192_981_814,
+            },
+            RequiredFile {
+                path: "Qwen3-0.6B/merges.txt",
+                size: 1_671_853,
+            },
+            RequiredFile {
+                path: "Qwen3-0.6B/tokenizer.json",
+                size: 11_422_654,
+            },
+            RequiredFile {
+                path: "Qwen3-0.6B/vocab.json",
+                size: 2_776_833,
+            },
+        ],
+    },
+    ModelSpec {
+        id: "funasr-nano-fp32",
+        category: ModelCategory::FunasrNano,
+        display_name: "FunASR Nano fp32",
+        tarball: "sherpa-onnx-funasr-nano-2025-12-30.tar.bz2",
+        dir_name: "sherpa-onnx-funasr-nano-2025-12-30",
+        tarball_bytes: 1_317_656_544,
+        verify: VerifyMode::ExactSize,
+        manual: false,
+        model_file: "",
+        use_itn: false,
+        funasr_encoder_adaptor: "encoder_adaptor.onnx",
+        funasr_embedding: "embedding.onnx",
+        funasr_llm: "llm.fp32.onnx",
+        files: &[
+            RequiredFile {
+                path: "encoder_adaptor.onnx",
+                size: 930_411_625,
+            },
+            RequiredFile {
+                path: "embedding.onnx",
+                size: 622_331_615,
+            },
+            RequiredFile {
+                path: "llm.fp32.onnx",
+                size: 1_034_258,
+            },
+            RequiredFile {
+                path: "llm.fp32.data",
+                size: 2_384_171_008,
+            },
+            RequiredFile {
+                path: "Qwen3-0.6B/merges.txt",
+                size: 1_671_853,
+            },
+            RequiredFile {
+                path: "Qwen3-0.6B/tokenizer.json",
+                size: 11_422_654,
+            },
+            RequiredFile {
+                path: "Qwen3-0.6B/vocab.json",
+                size: 2_776_833,
+            },
+        ],
+    },
+    ModelSpec {
         id: "qwen3-0.6b-int8",
         category: ModelCategory::Qwen3Asr,
         display_name: "Qwen3-ASR 0.6B int8",
         tarball: "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2",
         dir_name: "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
         tarball_bytes: 878_702_423,
+        verify: VerifyMode::ExactSize,
+        manual: false,
+        model_file: "",
+        use_itn: false,
+        funasr_encoder_adaptor: "",
+        funasr_embedding: "",
+        funasr_llm: "",
         files: &[
             RequiredFile {
                 path: "conv_frontend.onnx",
@@ -181,16 +305,139 @@ pub const MODELS: &[ModelSpec] = &[
         ],
     },
     ModelSpec {
+        id: "qwen3-1.7b-int8",
+        category: ModelCategory::Qwen3Asr,
+        display_name: "Qwen3-ASR 1.7B int8",
+        tarball: "",
+        dir_name: "sherpa-onnx-qwen3-asr-1.7B-int8",
+        tarball_bytes: 0,
+        verify: VerifyMode::PresenceOnly,
+        manual: true,
+        model_file: "",
+        use_itn: false,
+        funasr_encoder_adaptor: "",
+        funasr_embedding: "",
+        funasr_llm: "",
+        files: &[
+            RequiredFile {
+                path: "conv_frontend.onnx",
+                size: 48_080_441,
+            },
+            RequiredFile {
+                path: "encoder.int8.onnx",
+                size: 314_222_162,
+            },
+            RequiredFile {
+                path: "decoder.int8.onnx",
+                size: 2_037_458_645,
+            },
+            RequiredFile {
+                path: "tokenizer/merges.txt",
+                size: 1_671_853,
+            },
+            RequiredFile {
+                path: "tokenizer/tokenizer_config.json",
+                size: 12_487,
+            },
+            RequiredFile {
+                path: "tokenizer/vocab.json",
+                size: 2_776_833,
+            },
+        ],
+    },
+    ModelSpec {
         id: "sense-voice-int8",
         category: ModelCategory::SenseVoice,
         display_name: "SenseVoice int8",
         tarball: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
         dir_name: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
         tarball_bytes: 163_002_883,
+        verify: VerifyMode::ExactSize,
+        manual: false,
+        model_file: "model.int8.onnx",
+        use_itn: true,
+        funasr_encoder_adaptor: "",
+        funasr_embedding: "",
+        funasr_llm: "",
         files: &[
             RequiredFile {
                 path: "model.int8.onnx",
                 size: 239_233_841,
+            },
+            RequiredFile {
+                path: "tokens.txt",
+                size: 315_894,
+            },
+        ],
+    },
+    ModelSpec {
+        id: "sense-voice-yue-int8",
+        category: ModelCategory::SenseVoice,
+        display_name: "SenseVoice int8 · 粤语增强",
+        tarball: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2",
+        dir_name: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
+        tarball_bytes: 165_783_878,
+        verify: VerifyMode::ExactSize,
+        manual: false,
+        model_file: "model.int8.onnx",
+        use_itn: false,
+        funasr_encoder_adaptor: "",
+        funasr_embedding: "",
+        funasr_llm: "",
+        files: &[
+            RequiredFile {
+                path: "model.int8.onnx",
+                size: 237_115_547,
+            },
+            RequiredFile {
+                path: "tokens.txt",
+                size: 315_894,
+            },
+        ],
+    },
+    ModelSpec {
+        id: "sense-voice-fp32",
+        category: ModelCategory::SenseVoice,
+        display_name: "SenseVoice fp32",
+        tarball: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
+        dir_name: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        tarball_bytes: 1_047_870_769,
+        verify: VerifyMode::ExactSize,
+        manual: false,
+        model_file: "model.onnx",
+        use_itn: true,
+        funasr_encoder_adaptor: "",
+        funasr_embedding: "",
+        funasr_llm: "",
+        files: &[
+            RequiredFile {
+                path: "model.onnx",
+                size: 937_617_178,
+            },
+            RequiredFile {
+                path: "tokens.txt",
+                size: 315_894,
+            },
+        ],
+    },
+    ModelSpec {
+        id: "sense-voice-yue-fp32",
+        category: ModelCategory::SenseVoice,
+        display_name: "SenseVoice fp32 · 粤语增强",
+        tarball: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2025-09-09.tar.bz2",
+        dir_name: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2025-09-09",
+        tarball_bytes: 886_547_748,
+        verify: VerifyMode::ExactSize,
+        manual: false,
+        model_file: "model.onnx",
+        use_itn: false,
+        funasr_encoder_adaptor: "",
+        funasr_embedding: "",
+        funasr_llm: "",
+        files: &[
+            RequiredFile {
+                path: "model.onnx",
+                size: 929_211_046,
             },
             RequiredFile {
                 path: "tokens.txt",
@@ -222,6 +469,8 @@ pub struct ModelEntry {
     pub status: ModelStatus,
     /// 模型目录绝对路径（`Missing` 时为 `None`）
     pub local_path: Option<String>,
+    /// 是否手工放置：无下载直链，详情页隐藏下载入口
+    pub manual: bool,
     /// 发布页地址（“前往下载页”按钮用）
     pub page_url: String,
 }
@@ -246,7 +495,7 @@ pub struct DownloadProgress {
 pub struct ModelFileEntry {
     /// 相对包顶层目录的路径，分隔符统一 `/`，目录不带尾部分隔符
     pub path: String,
-    /// 期望字节数（清单值；目录为所含文件的期望之和）
+    /// 展示字节数（磁盘实测优先，缺失回落清单值；目录为所含展示之和）
     pub size: u32,
     /// 是否为目录
     pub is_dir: bool,
@@ -260,14 +509,15 @@ pub fn list_model_files(app: &tauri::AppHandle, id: &str) -> anyhow::Result<Vec<
     let spec = find_spec(id).context("unknown model id")?;
     let dir = model_dir(app, spec)?;
     let (missing, mismatched) = if dir.is_dir() {
-        check_files(&dir, spec.files)
+        check_files(&dir, spec.files, spec.verify)
     } else {
         (
             spec.files.iter().map(|file| file.path.to_owned()).collect(),
             Vec::new(),
         )
     };
-    Ok(file_states(spec.files, &missing, &mismatched))
+    let actual = stat_sizes(&dir, spec.files);
+    Ok(file_states(spec.files, &missing, &mismatched, &actual))
 }
 
 /// 单个清单文件的核对结论，供目录聚合复用
@@ -287,11 +537,13 @@ struct FolderFold {
     bad: usize,
 }
 
-/// 组装目录树：纯函数，可单测；`missing`/`mismatched` 来自 `check_files`
+/// 组装目录树：纯函数，可单测；`missing`/`mismatched` 来自 `check_files`；
+/// `actual` 为磁盘实测体积（缺失记 0），展示优先用实测、缺失回落清单值
 fn file_states(
     files: &[RequiredFile],
     missing: &[String],
     mismatched: &[String],
+    actual: &HashMap<String, u64>,
 ) -> Vec<ModelFileEntry> {
     let verdict = |path: &str| {
         if missing.iter().any(|name| name == path) {
@@ -302,6 +554,7 @@ fn file_states(
             FileVerdict::Ready
         }
     };
+    let shown_size = |path: &str, expected: u64| actual.get(path).copied().unwrap_or(expected);
     let mut out: Vec<ModelFileEntry> = files
         .iter()
         .map(|file| {
@@ -312,13 +565,13 @@ fn file_states(
             };
             ModelFileEntry {
                 path: file.path.to_owned(),
-                size: sat_u32(file.size),
+                size: sat_u32(shown_size(file.path, file.size)),
                 is_dir: false,
                 status,
             }
         })
         .collect();
-    // 父目录聚合：大小取所含期望之和；全缺失即未下载，部分即不完整
+    // 父目录聚合：大小取所含展示之和；全缺失即未下载，部分即不完整
     let mut folders: std::collections::BTreeMap<&str, FolderFold> =
         std::collections::BTreeMap::new();
     for file in files {
@@ -326,7 +579,7 @@ fn file_states(
         let mut start = 0;
         while let Some(end) = file.path[start..].find('/').map(|pos| start + pos) {
             let fold = folders.entry(&file.path[..end]).or_default();
-            fold.size = fold.size.saturating_add(file.size);
+            fold.size = fold.size.saturating_add(shown_size(file.path, file.size));
             fold.total += 1;
             match file_verdict {
                 FileVerdict::Missing => {
@@ -445,19 +698,40 @@ pub fn model_dir(app: &tauri::AppHandle, spec: &ModelSpec) -> anyhow::Result<std
     Ok(dir)
 }
 
-/// 逐项核对必需文件：返回（缺失，大小不符），调用方据此折叠状态
-fn check_files(dir: &std::path::Path, files: &[RequiredFile]) -> (Vec<String>, Vec<String>) {
+/// 逐项核对必需文件：返回（缺失，大小不符）；`PresenceOnly` 口径下只验存在，不比对字节数
+fn check_files(
+    dir: &std::path::Path,
+    files: &[RequiredFile],
+    verify: VerifyMode,
+) -> (Vec<String>, Vec<String>) {
     let mut missing = Vec::new();
     let mut mismatched = Vec::new();
     for file in files {
         let path = dir.join(file.path);
         match std::fs::metadata(&path) {
-            Ok(meta) if meta.is_file() && meta.len() == file.size => {}
-            Ok(_) => mismatched.push(file.path.to_owned()),
-            Err(_) => missing.push(file.path.to_owned()),
+            Ok(meta)
+                if meta.is_file()
+                    && (verify == VerifyMode::PresenceOnly || meta.len() == file.size) => {}
+            Ok(meta) if meta.is_file() => mismatched.push(file.path.to_owned()),
+            _ => missing.push(file.path.to_owned()),
         }
     }
     (missing, mismatched)
+}
+
+/// 实测各清单文件的磁盘体积：存在即实测，不存在记 0；`PresenceOnly` 口径的展示用
+fn stat_sizes(dir: &std::path::Path, files: &[RequiredFile]) -> HashMap<String, u64> {
+    files
+        .iter()
+        .map(|file| {
+            let size = std::fs::metadata(dir.join(file.path))
+                .ok()
+                .filter(std::fs::Metadata::is_file)
+                .map(|meta| meta.len())
+                .unwrap_or_default();
+            (file.path.to_owned(), size)
+        })
+        .collect()
 }
 
 /// 核对结果折叠成状态：全对就绪，全缺失为缺失，其余为部分
@@ -486,7 +760,7 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
         .map(|spec| {
             let (status, local_path) = match model_dir(app, spec) {
                 Ok(dir) if dir.is_dir() => {
-                    let (missing, mismatched) = check_files(&dir, spec.files);
+                    let (missing, mismatched) = check_files(&dir, spec.files, spec.verify);
                     let status = fold_status(spec.files.len(), missing.len(), mismatched.len());
                     let status = if running.contains(spec.id) && status != ModelStatus::Ready {
                         ModelStatus::Downloading
@@ -512,6 +786,7 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
                 required_bytes: sat_u32(spec.files.iter().map(|file| file.size).sum()),
                 status,
                 local_path,
+                manual: spec.manual,
                 page_url: RELEASE_PAGE_URL.to_owned(),
             }
         })
@@ -523,7 +798,7 @@ pub fn verify_model(app: &tauri::AppHandle, id: &str) -> anyhow::Result<VerifyRe
     let spec = find_spec(id).context("unknown model id")?;
     let dir = model_dir(app, spec)?;
     let (missing, mismatched) = if dir.is_dir() {
-        check_files(&dir, spec.files)
+        check_files(&dir, spec.files, spec.verify)
     } else {
         (
             spec.files.iter().map(|file| file.path.to_owned()).collect(),
@@ -591,6 +866,11 @@ fn emit_progress(app: &tauri::AppHandle, payload: DownloadProgress) {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub async fn download_model(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     let spec = find_spec(id).context("unknown model id")?;
+    if spec.manual {
+        anyhow::bail!(
+            "manual model has no download link, place files into the model dir and verify"
+        );
+    }
     let app_owned = app.clone();
     let rx = {
         let mut running = lock_downloads();
@@ -841,6 +1121,12 @@ mod tests {
         assert_ne!(MODELS.len(), 0);
         for spec in MODELS {
             assert_ne!(spec.files.len(), 0);
+            if spec.manual {
+                // 手工模型无发布包：目录名自洽、文件清单非空即合格
+                assert_ne!(spec.dir_name, "");
+                assert_eq!(spec.tarball, "");
+                continue;
+            }
             assert!(spec.tarball.ends_with(".tar.bz2"));
             assert_eq!(
                 spec.dir_name,
@@ -849,6 +1135,19 @@ mod tests {
             assert!(spec.download_url().ends_with(spec.tarball));
             assert!(spec.files.iter().map(|file| file.size).sum::<u64>() > 0);
         }
+    }
+
+    #[test]
+    fn manual_models_use_presence_only_verification() {
+        let manual: Vec<&ModelSpec> = MODELS.iter().filter(|spec| spec.manual).collect();
+        assert_ne!(manual.len(), 0);
+        for spec in manual {
+            assert_eq!(spec.verify, VerifyMode::PresenceOnly);
+        }
+        // 精确口径仍是默认：历史条目不受新口径影响
+        let int8 = find_spec("sense-voice-int8").expect("base sense voice exists");
+        assert_eq!(int8.verify, VerifyMode::ExactSize);
+        assert!(!int8.manual);
     }
 
     #[test]
@@ -894,9 +1193,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         snapshot(&dir, &[("a.onnx", 4), ("sub/b.txt", 9)]);
-        let (missing, mismatched) = check_files(&dir, &spec_files());
+        let (missing, mismatched) = check_files(&dir, &spec_files(), VerifyMode::ExactSize);
         assert_eq!(missing, Vec::<String>::new());
         assert_eq!(mismatched, vec!["sub/b.txt".to_owned()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn presence_only_ignores_size_mismatch() {
+        let dir = std::env::temp_dir().join("asr-studio-models-presence-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 体积与清单不符但文件存在：精确口径判不完整，存在口径判通过
+        snapshot(&dir, &[("a.onnx", 4), ("sub/b.txt", 9)]);
+        let (missing, mismatched) = check_files(&dir, &spec_files(), VerifyMode::PresenceOnly);
+        assert_eq!(missing, Vec::<String>::new());
+        assert_eq!(mismatched, Vec::<String>::new());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -987,14 +1299,19 @@ mod tests {
     #[test]
     fn file_states_marks_ready_missing_and_mismatch() {
         let files = spec_files();
-        let states = file_states(&files, &[], &[]);
+        let states = file_states(&files, &[], &[], &HashMap::new());
         assert!(
             states
                 .iter()
                 .all(|entry| entry.status == ModelStatus::Ready)
         );
 
-        let states = file_states(&files, &["a.onnx".to_owned()], &["sub/b.txt".to_owned()]);
+        let states = file_states(
+            &files,
+            &["a.onnx".to_owned()],
+            &["sub/b.txt".to_owned()],
+            &HashMap::new(),
+        );
         let by_path: std::collections::HashMap<&str, &ModelFileEntry> = states
             .iter()
             .map(|entry| (entry.path.as_str(), entry))
@@ -1009,12 +1326,31 @@ mod tests {
     #[test]
     fn file_states_folds_fully_missing_dir() {
         let files = spec_files();
-        let states = file_states(&files, &["a.onnx".to_owned(), "sub/b.txt".to_owned()], &[]);
+        let states = file_states(
+            &files,
+            &["a.onnx".to_owned(), "sub/b.txt".to_owned()],
+            &[],
+            &HashMap::new(),
+        );
         let sub = states.iter().find(|entry| entry.path == "sub").unwrap();
         assert_eq!(sub.status, ModelStatus::Missing);
         // 目录大小为所含期望之和，结果按路径排序
         let paths: Vec<&str> = states.iter().map(|entry| entry.path.as_str()).collect();
         assert_eq!(paths, vec!["a.onnx", "sub", "sub/b.txt"]);
         assert_eq!(sub.size, 2);
+    }
+
+    #[test]
+    fn file_states_prefers_actual_sizes() {
+        let files = spec_files();
+        let actual: HashMap<String, u64> = std::iter::once(("a.onnx".to_owned(), 10_u64)).collect();
+        let states = file_states(&files, &[], &[], &actual);
+        let by_path: std::collections::HashMap<&str, &ModelFileEntry> = states
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry))
+            .collect();
+        // 实测优先：a.onnx 展示 10；无实测的回落清单值
+        assert_eq!(by_path["a.onnx"].size, 10);
+        assert_eq!(by_path["sub/b.txt"].size, 2);
     }
 }

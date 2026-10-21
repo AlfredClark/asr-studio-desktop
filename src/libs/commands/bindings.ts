@@ -251,6 +251,8 @@ export type ModelEntry = {
 	status: ModelStatus,
 	/**  模型目录绝对路径（`Missing` 时为 `None`） */
 	local_path: string | null,
+	/**  是否手工放置：无下载直链，详情页隐藏下载入口 */
+	manual: boolean,
 	/**  发布页地址（“前往下载页”按钮用） */
 	page_url: string,
 };
@@ -259,7 +261,7 @@ export type ModelEntry = {
 export type ModelFileEntry = {
 	/**  相对包顶层目录的路径，分隔符统一 `/`，目录不带尾部分隔符 */
 	path: string,
-	/**  期望字节数（清单值；目录为所含文件的期望之和） */
+	/**  展示字节数（磁盘实测优先，缺失回落清单值；目录为所含展示之和） */
 	size: number,
 	/**  是否为目录 */
 	is_dir: boolean,

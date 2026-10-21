@@ -50,6 +50,7 @@ const senseEntry: ModelEntry = {
   status: "missing",
   local_path: null,
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+  manual: false,
 };
 
 const qwenEntry: ModelEntry = {
@@ -61,6 +62,7 @@ const qwenEntry: ModelEntry = {
   status: "partial",
   local_path: "/models/qwen3-asr/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+  manual: false,
 };
 
 const nanoEntry: ModelEntry = {
@@ -72,6 +74,7 @@ const nanoEntry: ModelEntry = {
   status: "ready",
   local_path: "/models/funasr-nano/sherpa-onnx-funasr-nano-int8-2025-12-30",
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+  manual: false,
 };
 
 vi.mock("#libs/hooks/models.svelte", () => ({
@@ -203,7 +206,97 @@ describe("模型页", () => {
     await user.click(listRow("SenseVoice int8"));
 
     expect(detail().getByText("SenseVoice int8")).not.toBeNull();
-    expect(detail().getByText(/inverse text normalization/)).not.toBeNull();
+    expect(detail().getByText(/punctuation support/)).not.toBeNull();
+  });
+
+  it("粤语增强版详情标注无标点", async () => {
+    const user = userEvent.setup();
+    modelsStateMock.entries = [
+      nanoEntry,
+      qwenEntry,
+      senseEntry,
+      {
+        id: "sense-voice-yue-int8",
+        category: "sense_voice",
+        display_name: "SenseVoice int8 · 粤语增强",
+        tarball_bytes: 165_783_878,
+        required_bytes: 237_431_441,
+        status: "missing",
+        local_path: null,
+        page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+        manual: false,
+      },
+    ];
+    render(Page);
+
+    await waitFor(() => {
+      expect(listRow("粤语增强")).not.toBeNull();
+    });
+    await user.click(listRow("SenseVoice int8 · 粤语增强"));
+
+    expect(detail().getByText("SenseVoice int8 · 粤语增强")).not.toBeNull();
+    expect(detail().getByText(/no punctuation support/)).not.toBeNull();
+  });
+
+  it("FunASR fp16 版详情展示对应简介", async () => {
+    const user = userEvent.setup();
+    modelsStateMock.entries = [
+      nanoEntry,
+      qwenEntry,
+      senseEntry,
+      {
+        id: "funasr-nano-fp16",
+        category: "funasr_nano",
+        display_name: "FunASR Nano fp16",
+        tarball_bytes: 1_030_076_153,
+        required_bytes: 1_602_230_282,
+        status: "missing",
+        local_path: null,
+        page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+        manual: false,
+      },
+    ];
+    render(Page);
+
+    await waitFor(() => {
+      expect(listRow("FunASR Nano fp16")).not.toBeNull();
+    });
+    await user.click(listRow("FunASR Nano fp16"));
+
+    expect(detail().getByText("FunASR Nano fp16")).not.toBeNull();
+    expect(detail().getByText(/higher accuracy than int8/)).not.toBeNull();
+  });
+
+  it("手动模型缺失态隐藏下载并提示放置文件", async () => {
+    const user = userEvent.setup();
+    modelsStateMock.entries = [
+      nanoEntry,
+      qwenEntry,
+      senseEntry,
+      {
+        id: "qwen3-1.7b-int8",
+        category: "qwen3_asr",
+        display_name: "Qwen3-ASR 1.7B int8",
+        tarball_bytes: 0,
+        required_bytes: 2_402_059_781,
+        status: "missing",
+        local_path: null,
+        manual: true,
+        page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+      },
+    ];
+    render(Page);
+
+    await waitFor(() => {
+      expect(listRow("Qwen3-ASR 1.7B int8")).not.toBeNull();
+    });
+    await user.click(listRow("Qwen3-ASR 1.7B int8"));
+
+    expect(detail().getByText("Qwen3-ASR 1.7B int8")).not.toBeNull();
+    expect(detail().getByText(/place the files listed below/)).not.toBeNull();
+    expect(detail().getByText("Placed manually")).not.toBeNull();
+    expect(detail().queryByRole("button", { name: "Download" })).toBeNull();
+    expect(detail().getByRole("button", { name: "Open folder" })).not.toBeNull();
   });
 
   it("折叠分组隐藏行，展开恢复", async () => {

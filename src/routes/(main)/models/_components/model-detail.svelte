@@ -33,11 +33,31 @@
   let { entry }: { entry: ModelEntry } = $props();
 
   /** 分类到简介文案的映射：新增模型同步加条目与两份文案 */
-  const intros: Record<ModelCategory, () => string> = {
+  const categoryIntros: Record<ModelCategory, () => string> = {
     funasr_nano: () => m.models_intro_funasr_nano(),
     qwen3_asr: () => m.models_intro_qwen3_asr(),
     sense_voice: () => m.models_intro_sense_voice(),
   };
+
+  /** 按模型 id 的简介：同分类多版本在此区分并标注标点支持，未命中回落分类简介 */
+  function modelIntro(): string {
+    switch (entry.id) {
+      case "funasr-nano-fp16":
+        return m.models_intro_funasr_nano_fp16();
+      case "funasr-nano-fp32":
+        return m.models_intro_funasr_nano_fp32();
+      case "qwen3-1.7b-int8":
+        return m.models_intro_qwen3_1p7b();
+      case "sense-voice-yue-int8":
+        return m.models_intro_sense_voice_yue_int8();
+      case "sense-voice-fp32":
+        return m.models_intro_sense_voice_fp32();
+      case "sense-voice-yue-fp32":
+        return m.models_intro_sense_voice_yue_fp32();
+      default:
+        return categoryIntros[entry.category]();
+    }
+  }
 
   /** 删除确认弹窗开关 */
   let confirmOpen = $state(false);
@@ -168,11 +188,15 @@
           <ExternalLinkIcon />
         </Button>
       </div>
-      <p class="text-sm text-muted-foreground">{intros[entry.category]()}</p>
+      <p class="text-sm text-muted-foreground">{modelIntro()}</p>
       <div class="flex flex-col gap-1.5 rounded-lg bg-muted/50 p-2.5 text-xs">
         <div class="flex items-center justify-between gap-2">
           <span class="shrink-0 text-muted-foreground">{m.models_detail_size_label()}</span>
-          <span class="tabular-nums">{formatBytes(entry.tarball_bytes)}</span>
+          {#if entry.manual}
+            <span>{m.models_manual_size()}</span>
+          {:else}
+            <span class="tabular-nums">{formatBytes(entry.tarball_bytes)}</span>
+          {/if}
         </div>
         {#if entry.local_path}
           <div class="flex items-center gap-2">
@@ -193,6 +217,9 @@
         {/if}
         {#if entry.status === "partial"}
           <p class="text-muted-foreground">{m.models_partial_hint()}</p>
+        {/if}
+        {#if entry.manual && entry.status !== "ready"}
+          <p class="text-muted-foreground">{m.models_manual_hint()}</p>
         {/if}
       </div>
       {#if files.length > 0}
@@ -309,9 +336,15 @@
           {m.models_delete()}
         </Button>
       {:else if entry.status === "partial"}
-        <Button size="sm" onclick={() => void downloadModel(entry.id)}>
-          {m.models_download()}
-        </Button>
+        {#if entry.manual}
+          <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
+            {m.models_open_dir()}
+          </Button>
+        {:else}
+          <Button size="sm" onclick={() => void downloadModel(entry.id)}>
+            {m.models_download()}
+          </Button>
+        {/if}
         <Button
           variant="outline"
           size="sm"
@@ -320,9 +353,11 @@
         >
           {m.models_verify()}
         </Button>
-        <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
-          {m.models_open_dir()}
-        </Button>
+        {#if !entry.manual}
+          <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
+            {m.models_open_dir()}
+          </Button>
+        {/if}
         <Button
           variant="destructive"
           size="sm"
@@ -330,6 +365,18 @@
           onclick={() => (confirmOpen = true)}
         >
           {m.models_delete()}
+        </Button>
+      {:else if entry.manual}
+        <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
+          {m.models_open_dir()}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          title={m.models_verify_hint()}
+          onclick={() => void verifyModel(entry.id)}
+        >
+          {m.models_verify()}
         </Button>
       {:else}
         <Button size="sm" onclick={() => void downloadModel(entry.id)}>

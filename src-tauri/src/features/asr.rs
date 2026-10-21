@@ -155,7 +155,7 @@ pub fn sync_voice_shortcut(app: &tauri::AppHandle) {
 
 /// 按分类组装识别器配置：文件路径全部派生自模型目录，不手写绝对路径；
 ///
-/// V1 只收录 int8 三款，文件名按清单写死；加新版时同步此处的角色映射。
+/// `SenseVoice` 的模型文件与逆文本正则化按 `ModelSpec` 取值（int8/全精度与标点支持因包而异）。
 /// qwen3 的生成长度按评测结论放大（默认 128 会截断长音频）。
 fn build_recognizer_config(
     spec: &'static crate::features::models::ModelSpec,
@@ -174,9 +174,9 @@ fn build_recognizer_config(
     match spec.category {
         crate::features::models::ModelCategory::FunasrNano => {
             config.model_config.funasr_nano = OfflineFunASRNanoModelConfig {
-                encoder_adaptor: file("encoder_adaptor.int8.onnx"),
-                embedding: file("embedding.int8.onnx"),
-                llm: file("llm.int8.onnx"),
+                encoder_adaptor: file(spec.funasr_encoder_adaptor),
+                embedding: file(spec.funasr_embedding),
+                llm: file(spec.funasr_llm),
                 tokenizer: file("Qwen3-0.6B"),
                 ..Default::default()
             };
@@ -194,8 +194,8 @@ fn build_recognizer_config(
         }
         crate::features::models::ModelCategory::SenseVoice => {
             config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
-                model: file("model.int8.onnx"),
-                use_itn: true,
+                model: file(spec.model_file),
+                use_itn: spec.use_itn,
                 ..Default::default()
             };
             config.model_config.tokens = file("tokens.txt");
