@@ -943,7 +943,7 @@ pub async fn download_model(app: &tauri::AppHandle, id: &str) -> anyhow::Result<
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
-            let result = download_inner(&app_owned, spec).await;
+            let result = download_with_retry(&app_owned, spec).await;
             lock_downloads().remove(spec.id);
             let _ = tx.send(result);
         });
@@ -960,7 +960,7 @@ pub async fn download_model(_app: &tauri::AppHandle, _id: &str) -> anyhow::Resul
     Err(anyhow::anyhow!("model download is not supported on mobile"))
 }
 
-/// 取消下载：存在任务则中断并清理 `.part` 包；无任务返回错误
+/// 取消下载：存在任务则中断并清理 `.part` 包与解压暂存目录；无任务返回错误
 pub fn cancel_download(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     let spec = find_spec(id).context("unknown model id")?;
     let handle = lock_downloads()
@@ -971,6 +971,11 @@ pub fn cancel_download(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     if part.is_file() {
         std::fs::remove_file(&part).context("failed to remove partial package")?;
     }
+    // 解压中取消同样清暂存目录，下次下载从干净状态开始
+    let staging = staging_dir(&models_root(app)?, spec.id);
+    if staging.is_dir() {
+        std::fs::remove_dir_all(&staging).context("failed to remove staging dir")?;
+    }
     Ok(())
 }
 
@@ -980,10 +985,163 @@ fn part_path(app: &tauri::AppHandle, spec: &ModelSpec) -> anyhow::Result<std::pa
     Ok(models_root(app)?.join(format!("{}.part", spec.tarball)))
 }
 
+/// 解压暂存目录：形如 `<models_root>/.demo.extracting`；取消与重试清理走同一路径
+fn staging_dir(models_root: &std::path::Path, id: &str) -> std::path::PathBuf {
+    models_root.join(format!(".{id}.extracting"))
+}
+
+/// 下载重试：断网/抖动常见，大包从头重下；每次尝试前清残留 `.part`，最终失败清暂存目录
+const MAX_DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// 带重试的下载：单次失败（停滞/断流/校验不过）退避后重来，3 次仍失败才交命令层报错
+async fn download_with_retry(
+    app: &tauri::AppHandle,
+    spec: &'static ModelSpec,
+) -> anyhow::Result<()> {
+    let mut attempt = 0_u32;
+    loop {
+        attempt += 1;
+        match download_inner(app, spec).await {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                // 残留包不清会影响下次判断：失败即删，下次尝试从干净状态开始
+                if let Ok(part) = part_path(app, spec) {
+                    std::fs::remove_file(&part).ok();
+                }
+                if attempt >= MAX_DOWNLOAD_ATTEMPTS {
+                    if let Ok(root) = models_root(app) {
+                        std::fs::remove_dir_all(staging_dir(&root, spec.id)).ok();
+                    }
+                    return Err(err)
+                        .context(format!("model download failed after {attempt} attempts"));
+                }
+                log::warn!("model download attempt {attempt} failed, retrying: {err:#}");
+                tokio::time::sleep(std::time::Duration::from_secs(u64::from(attempt))).await;
+            }
+        }
+    }
+}
+
+/// 下载前空间预检：压缩包 + 解压后文件总和 + 余量；空间不足直接拒绝，不浪费下载时间
+fn ensure_free_space(
+    app: &tauri::AppHandle,
+    spec: &ModelSpec,
+    total: Option<u64>,
+) -> anyhow::Result<()> {
+    /// 解压与落盘余量：文件系统块对齐与日志开销
+    const MARGIN_BYTES: u64 = 64 * 1024 * 1024;
+
+    let package = total
+        .filter(|total| *total > 0)
+        .unwrap_or(spec.tarball_bytes);
+    let extracted: u64 = spec.files.iter().map(|file| file.size).sum();
+    let required = package
+        .saturating_add(extracted)
+        .saturating_add(MARGIN_BYTES);
+    match free_bytes(&models_root(app)?) {
+        Some(free) if free < required => {
+            anyhow::bail!("not enough disk space: need {required} bytes, only {free} available")
+        }
+        // 取不到剩余空间则放行，靠写入失败兜底（见 `download_with_retry` 清理）
+        Some(_) | None => Ok(()),
+    }
+}
+
+/// 所在卷剩余字节数；取不到返回 `None`（调用方放行，靠写入失败兜底）
+fn free_bytes(dir: &std::path::Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        free_bytes_unix(dir)
+    }
+    #[cfg(windows)]
+    {
+        free_bytes_windows(dir)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = dir;
+        None
+    }
+}
+
+/// Unix 剩余空间：`statvfs` 的非特权可用块数；失败返回 `None`
+#[cfg(unix)]
+fn free_bytes_unix(dir: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY：`statvfs` 只读 path 指向的 NUL 结尾串并写入 `stat`，两者生命周期覆盖调用
+    if unsafe { libc::statvfs(path.as_ptr(), &raw mut stat) } != 0 {
+        return None;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    {
+        // `statvfs` 块计数字段位宽随平台而异（Linux u64 / macOS u32），`as` 在两边都成立
+        (stat.f_bsize as u64).checked_mul(stat.f_bavail as u64)
+    }
+}
+
+/// Windows 剩余空间：`GetDiskFreeSpaceExW` 的调用方可用字节数；失败返回 `None`
+#[cfg(windows)]
+fn free_bytes_windows(dir: &std::path::Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    // 与 `features::focus` 同口径：仅声明用到的单个 Win32 函数，不引入 `windows` 重依赖
+    unsafe extern "system" {
+        fn GetDiskFreeSpaceExW(
+            directory: *const u16,
+            free_to_caller: *mut u64,
+            total: *mut u64,
+            free_total: *mut u64,
+        ) -> i32;
+    }
+
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+    let mut free_to_caller: u64 = 0;
+    // SAFETY：宽串 NUL 结尾且调用期间存活；后两个出参传空指针表示不关心
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free_to_caller,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    Some(free_to_caller)
+}
+
+/// 下载前检查：上游包体积变化告警 + 磁盘空间预检；失败直接拒绝，不浪费下载时间
+fn preflight_download(
+    app: &tauri::AppHandle,
+    spec: &ModelSpec,
+    total: Option<u64>,
+) -> anyhow::Result<()> {
+    // 上游重发同名包时字节数会变：只告警不断言，最终以解压后 `verify_model` 为准
+    if let Some(total) = total.filter(|total| *total > 0)
+        && spec.tarball_bytes > 0
+        && total != spec.tarball_bytes
+    {
+        log::warn!(
+            "model package size changed upstream for {}: expected {} bytes, got {total}",
+            spec.id,
+            spec.tarball_bytes
+        );
+    }
+    // 大包（0.8～2.4GB）下载前先看空间，不够直接拒绝
+    ensure_free_space(app, spec, total)
+}
+
 /// 下载主体：拉包 → 改名 → 解压 → 校验；任一步失败直接返回错误并清理现场
 async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> anyhow::Result<()> {
     use futures_util::StreamExt as _;
     use std::io::Write as _;
+
+    /// 相邻数据包最大间隔：超时即判停滞，避免弱网下无限挂起
+    const IDLE_TIMEOUT_SECS: u64 = 60;
 
     let part = part_path(app, spec)?;
     if part.is_file() {
@@ -992,6 +1150,7 @@ async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> any
 
     let client = reqwest::Client::builder()
         .user_agent("asr-studio-desktop")
+        .connect_timeout(std::time::Duration::from_secs(30))
         .build()
         .context("failed to build http client")?;
     let response = client
@@ -1002,6 +1161,9 @@ async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> any
         .error_for_status()
         .context("model download request failed")?;
     let total = response.content_length();
+
+    // 上游重发同名包时字节数会变：只告警不断言，最终以解压后 `verify_model` 为准
+    preflight_download(app, spec, total)?;
 
     let mut file = std::fs::File::create(&part).context("failed to create partial package")?;
     let mut downloaded = 0_u64;
@@ -1017,8 +1179,22 @@ async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> any
         },
     );
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("failed to read model download stream")?;
+    loop {
+        let next = tokio::time::timeout(
+            std::time::Duration::from_secs(IDLE_TIMEOUT_SECS),
+            stream.next(),
+        )
+        .await;
+        let chunk = match next {
+            Ok(Some(Ok(chunk))) => chunk,
+            Ok(Some(Err(err))) => {
+                return Err(err).context("failed to read model download stream");
+            }
+            Ok(None) => break,
+            Err(_) => {
+                anyhow::bail!("model download stalled: no data for {IDLE_TIMEOUT_SECS}s");
+            }
+        };
         file.write_all(&chunk)
             .context("failed to write partial package")?;
         downloaded = downloaded.saturating_add(chunk.len() as u64);
@@ -1098,7 +1274,7 @@ fn extract_inner(
     dir_name: &str,
     part: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let staging = models_root.join(format!(".{id}.extracting"));
+    let staging = staging_dir(models_root, id);
     if staging.is_dir() {
         std::fs::remove_dir_all(&staging).context("failed to clear staging dir")?;
     }
@@ -1166,6 +1342,12 @@ fn file_name_of(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn staging_dir_uses_dot_prefixed_name() {
+        let root = std::path::Path::new("/data/models");
+        assert_eq!(staging_dir(root, "demo"), root.join(".demo.extracting"));
+    }
 
     #[test]
     fn progress_event_name_is_stable() {

@@ -246,6 +246,7 @@
   "service_result_time": "Took",
   "service_record_failed": "Recording failed",
   "service_recognize_failed": "Recognition failed",
+  "service_recognize_busy": "Another recognition is still running, please wait",
   "service_load_devices_failed": "Failed to load microphones",
   "service_output_description": "Where shortcut recognition results go",
   "service_output_label": "Output method",

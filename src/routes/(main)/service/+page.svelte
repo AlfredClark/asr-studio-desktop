@@ -144,15 +144,15 @@
     <ResizablePane defaultSize={60} minSize={35}>
       <div class="flex h-full flex-col gap-2 p-4">
         <div class="grid shrink-0 grid-cols-3 gap-2" data-testid="service-stats">
-          <div>
+          <div class="text-center">
             <p class="text-2xl font-medium tabular-nums">{stats.count}</p>
             <p class="text-xs text-muted-foreground">{m.service_stats_count()}</p>
           </div>
-          <div>
+          <div class="text-center">
             <p class="text-2xl font-medium tabular-nums">{stats.totalChars}</p>
             <p class="text-xs text-muted-foreground">{m.service_stats_chars()}</p>
           </div>
-          <div>
+          <div class="text-center">
             <p class="text-2xl font-medium tabular-nums">{avgText} s</p>
             <p class="text-xs text-muted-foreground">{m.service_stats_avg_time()}</p>
           </div>

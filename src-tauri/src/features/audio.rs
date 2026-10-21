@@ -3,6 +3,7 @@
 //! 需要本机音频栈（`cpal`）；具体业务功能，故放在 `features`。
 //! 识别启停在 `features::asr`，两者经命令层组装，互不依赖。存档统一单声道 16 位 WAV，采样率沿用设备原生（sherpa 解码侧自动重采样）。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Context as _;
@@ -33,6 +34,11 @@ pub struct RecordResult {
 /// 存档目录名：`<app_data>/records/`
 pub const RECORDS_DIR_NAME: &str = "records";
 
+/// 单次录制上限秒：10 分钟；超时后丢弃后续采样并截断存档，防止忘记关录制撑爆内存
+const MAX_RECORD_SECONDS: u64 = 600;
+/// 录制采样上限（交错多声道）：48kHz 立体声约 10 分钟；与秒上限双保险，高采样率设备同样兜住
+const MAX_RECORD_SAMPLES: usize = 60_000_000;
+
 /// “系统默认”输入选项 id：前后端以此字符串会合，前端下拉硬编码同字面量，
 /// 改名需两端同步（`default_device_id_is_stable` 测试锁定取值）。
 pub const DEFAULT_DEVICE_ID: &str = "default";
@@ -53,6 +59,8 @@ struct RecordingSession {
     sample_rate: u32,
     /// 开始时刻（算录制时长）
     started_at: std::time::Instant,
+    /// 是否因触顶截断过：停止时记日志（存档短于展示时长即此因）
+    truncated: Arc<AtomicBool>,
 }
 
 /// 录制互斥：同一时刻只允许一路录制，重复开始直接拒绝
@@ -199,54 +207,16 @@ pub fn start_recording(device_id: &str) -> anyhow::Result<()> {
     let format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
     let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-    let writer = samples.clone();
-    let on_data = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-        if let Ok(mut guard) = writer.lock() {
-            guard.extend_from_slice(data);
-        }
-    };
-    let on_error = |err: cpal::Error| {
-        log::warn!("audio input stream error: {err}");
-    };
-    let stream = match format {
-        cpal::SampleFormat::F32 => {
-            device.build_input_stream(stream_config, on_data, on_error, None)
-        }
-        cpal::SampleFormat::I16 => {
-            let writer = samples.clone();
-            device.build_input_stream(
-                stream_config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    if let Ok(mut guard) = writer.lock() {
-                        guard.extend(
-                            data.iter()
-                                .map(|sample| f32::from(*sample) / f32::from(i16::MAX)),
-                        );
-                    }
-                },
-                |err: cpal::Error| log::warn!("audio input stream error: {err}"),
-                None,
-            )
-        }
-        cpal::SampleFormat::U16 => {
-            let writer = samples.clone();
-            device.build_input_stream(
-                stream_config,
-                move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    if let Ok(mut guard) = writer.lock() {
-                        guard.extend(
-                            data.iter()
-                                .map(|sample| (f32::from(*sample) - 32768.0) / 32768.0),
-                        );
-                    }
-                },
-                |err: cpal::Error| log::warn!("audio input stream error: {err}"),
-                None,
-            )
-        }
-        other => anyhow::bail!("unsupported sample format: {other:?}"),
-    }
-    .context("failed to build audio input stream")?;
+    let started = std::time::Instant::now();
+    let truncated = Arc::new(AtomicBool::new(false));
+    let stream = build_input_stream(
+        &device,
+        stream_config,
+        format,
+        &samples,
+        started,
+        &truncated,
+    )?;
     stream
         .play()
         .context("failed to start audio input stream")?;
@@ -255,9 +225,97 @@ pub fn start_recording(device_id: &str) -> anyhow::Result<()> {
         samples,
         channels,
         sample_rate,
-        started_at: std::time::Instant::now(),
+        started_at: started,
+        truncated,
     });
     Ok(())
+}
+
+/// 音频流错误回调：只记日志不断流，断流由停止时采样缺失体现
+/// 签名由 cpal 回调固定（按值接收），勿改引用
+#[allow(clippy::needless_pass_by_value)]
+fn on_stream_error(err: cpal::Error) {
+    log::warn!("audio input stream error: {err}");
+}
+
+/// 触顶则标记并丢弃本批采样：三格式回调共用；超 10 分钟或 6000 万采样即截断，
+/// 防止忘记关录制撑爆内存（停止时记 `warn`，存档短于展示时长即此因）
+fn push_samples(
+    writer: &Mutex<Vec<f32>>,
+    flag: &AtomicBool,
+    started: std::time::Instant,
+    batch: &[f32],
+) {
+    if started.elapsed().as_secs() >= MAX_RECORD_SECONDS {
+        flag.store(true, Ordering::Relaxed);
+        return;
+    }
+    if let Ok(mut guard) = writer.lock() {
+        if guard.len() >= MAX_RECORD_SAMPLES {
+            flag.store(true, Ordering::Relaxed);
+            return;
+        }
+        guard.extend_from_slice(batch);
+    }
+}
+
+/// 按采样格式建输入流；调用方负责 `play` 与会话装配
+fn build_input_stream(
+    device: &cpal::Device,
+    stream_config: cpal::StreamConfig,
+    format: cpal::SampleFormat,
+    samples: &Arc<Mutex<Vec<f32>>>,
+    started: std::time::Instant,
+    truncated: &Arc<AtomicBool>,
+) -> anyhow::Result<cpal::Stream> {
+    match format {
+        cpal::SampleFormat::F32 => {
+            let writer = samples.clone();
+            let flag = truncated.clone();
+            device.build_input_stream(
+                stream_config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    push_samples(&writer, &flag, started, data);
+                },
+                on_stream_error,
+                None,
+            )
+        }
+        cpal::SampleFormat::I16 => {
+            let writer = samples.clone();
+            let flag = truncated.clone();
+            device.build_input_stream(
+                stream_config,
+                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                    let batch: Vec<f32> = data
+                        .iter()
+                        .map(|sample| f32::from(*sample) / f32::from(i16::MAX))
+                        .collect();
+                    push_samples(&writer, &flag, started, &batch);
+                },
+                on_stream_error,
+                None,
+            )
+        }
+        cpal::SampleFormat::U16 => {
+            let writer = samples.clone();
+            let flag = truncated.clone();
+            device.build_input_stream(
+                stream_config,
+                move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                    let batch: Vec<f32> = data
+                        .iter()
+                        .map(|sample| (f32::from(*sample) - 32768.0) / 32768.0)
+                        .collect();
+                    push_samples(&writer, &flag, started, &batch);
+                },
+                on_stream_error,
+                None,
+            )
+        }
+        other => anyhow::bail!("unsupported sample format: {other:?}"),
+    }
+    .context("failed to build audio input stream")
 }
 
 /// 开始录制；移动端无此能力，直接返回错误
@@ -270,11 +328,17 @@ pub fn start_recording(_device_id: &str) -> anyhow::Result<()> {
 pub fn stop_recording(app: &tauri::AppHandle) -> anyhow::Result<RecordResult> {
     let session = lock_recording().take().context("not recording")?;
     let seconds = session.started_at.elapsed().as_secs_f64();
+    // 原地取走缓冲：长录制下 `clone` 会瞬间双倍内存
     let samples = session
         .samples
         .lock()
-        .map(|guard| guard.clone())
+        .map(|mut guard| std::mem::take(&mut *guard))
         .unwrap_or_default();
+    if session.truncated.load(Ordering::Relaxed) {
+        log::warn!(
+            "recording truncated at cap ({MAX_RECORD_SECONDS}s/{MAX_RECORD_SAMPLES} samples), archive is shorter than elapsed time"
+        );
+    }
     let mono = mix_to_mono(&samples, session.channels);
     let dir = records_dir(app)?;
     let path = unique_wav_path(&dir);
@@ -302,6 +366,12 @@ fn mix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
         .map(|frame| frame.iter().sum::<f32>() / divisor)
         .collect()
 }
+
+/// 录制上限编译期断言：0 会让回调首包即截断，录制永远空存档
+const _: () = {
+    assert!(MAX_RECORD_SECONDS > 0);
+    assert!(MAX_RECORD_SAMPLES > 0);
+};
 
 /// 存档目录：`<app_data>/records/`，不存在即建
 fn records_dir(app: &tauri::AppHandle) -> anyhow::Result<std::path::PathBuf> {

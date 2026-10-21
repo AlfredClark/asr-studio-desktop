@@ -177,6 +177,7 @@ dependencies = [
  "enigo",
  "futures-util",
  "hound",
+ "libc",
  "log",
  "pinyin",
  "reqwest",

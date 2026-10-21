@@ -290,7 +290,11 @@ async function stopAndTranscribe(): Promise<TestResult | null> {
     const fileName = record.data.path.split(/[/\\]/).pop() ?? record.data.path;
     const transcribed = await commands.transcribeFile(record.data.path).result();
     if (transcribed.status === "error") {
-      toast.error(m.service_recognize_failed());
+      if (isTranscribeBusyFailure(transcribed.error.message)) {
+        toast.warning(m.service_recognize_busy());
+      } else {
+        toast.error(m.service_recognize_failed());
+      }
       reportCommandFailure("[service] transcribe failed", transcribed.error);
       return null;
     }
@@ -315,6 +319,14 @@ async function stopAndTranscribe(): Promise<TestResult | null> {
 
 /** 快捷键语音触发事件名（与 Rust 侧同名字面量会合，改名需两端同步） */
 const SHORTCUT_VOICE_TRIGGER_EVENT = "shortcut-voice-trigger";
+
+/** 后端转写忙错误字面量（与 Rust 侧 `TRANSCRIBE_BUSY_MESSAGE` 会合，改名需两端同步） */
+export const TRANSCRIBE_BUSY_MESSAGE = "transcription already in progress";
+
+/** 是否为“已有转写占用”失败：命中则提示稍候而非报失败；纯函数，可单测 */
+export function isTranscribeBusyFailure(message: unknown): boolean {
+  return typeof message === "string" && message.includes(TRANSCRIBE_BUSY_MESSAGE);
+}
 
 let shortcutVoiceListening = false;
 

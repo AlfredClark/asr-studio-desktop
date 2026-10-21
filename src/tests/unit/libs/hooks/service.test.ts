@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_DEVICE_ID,
+  TRANSCRIBE_BUSY_MESSAGE,
   deviceLabel,
   handleShortcutTrigger,
+  isTranscribeBusyFailure,
   refreshServiceData,
   selectDevice,
   selectModel,
@@ -326,6 +328,32 @@ describe("识别服务状态", () => {
     await stopTestRecording();
 
     expect(serviceState.history).toHaveLength(0);
+  });
+
+  it("转写忙时提示稍候而非报失败", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+    mocked.transcribeFile.mockReturnValue(
+      fakeCommand({
+        status: "error",
+        error: { kind: "Internal", message: TRANSCRIBE_BUSY_MESSAGE },
+      }) as never,
+    );
+
+    await startTestRecording();
+    await stopTestRecording();
+
+    expect(mockedToast.warning).toHaveBeenCalledWith(m.service_recognize_busy());
+    expect(mockedToast.error).not.toHaveBeenCalled();
+    expect(serviceState.history).toHaveLength(0);
+  });
+
+  it("忙判定只认忙字面量", () => {
+    expect(isTranscribeBusyFailure(TRANSCRIBE_BUSY_MESSAGE)).toBe(true);
+    expect(isTranscribeBusyFailure(`wrap: ${TRANSCRIBE_BUSY_MESSAGE}`)).toBe(true);
+    expect(isTranscribeBusyFailure("service is not running")).toBe(false);
+    expect(isTranscribeBusyFailure(null)).toBe(false);
   });
 
   it("会话历史超限截尾，最新在前", async () => {

@@ -54,6 +54,10 @@ pinyin = "0.11"
 # 词库多模式匹配：音节流上的重叠匹配，仲裁逻辑手写
 aho-corasick = "1"
 
+[target.'cfg(unix)'.dependencies]
+# 磁盘空间预检（statvfs）：模型下载前拒绝空间不足，已在依赖树内，无新增传递依赖
+libc = "0.2"
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
