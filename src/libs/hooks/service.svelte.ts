@@ -4,7 +4,7 @@
 import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
-import { configState } from "#libs/hooks/config.svelte";
+import { configValue } from "#libs/hooks/config.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
 
@@ -205,8 +205,11 @@ export async function stopService(): Promise<void> {
 
 /** 选择模型：运行中切模型自动走“停旧启新”串行段，期间整组禁用； 停止态只记录选择，由启动按钮生效。 */
 export async function selectModel(id: string): Promise<void> {
+  // 切换中重复点选直接忽略：先判后写，避免选中态与实际运行长期不一致
+  if (serviceState.switching) return;
+  const previous = serviceState.selectedModel;
   serviceState.selectedModel = id;
-  if (serviceState.status?.state !== "running" || serviceState.switching) return;
+  if (serviceState.status?.state !== "running") return;
   serviceState.switching = true;
   try {
     await commands.stopService().result();
@@ -216,6 +219,8 @@ export async function selectModel(id: string): Promise<void> {
         toast.success(m.service_started());
       })
       .failed((failure) => {
+        // 切模型失败回滚选中：状态以实际运行为准，不留“选了但没跑起来”的假象
+        serviceState.selectedModel = previous;
         toast.error(m.service_start_failed());
         reportCommandFailure("[service] switch failed", failure);
       });
@@ -229,7 +234,7 @@ export async function selectModel(id: string): Promise<void> {
 /** 启动成功后核验语音快捷键：存量组合未注册（被占用或非法）即提示换组合。 停止态与未配置直接跳过——注册与服务运行态同生命周期，查了也是假阴性。 */
 async function warnIfVoiceShortcutInactive(): Promise<void> {
   if (serviceState.status?.state !== "running") return;
-  const combo = configState.value?.shortcut_voice?.trim();
+  const combo = configValue("shortcut_voice", "").trim();
   if (!combo) return;
   const result = await commands.isShortcutRegistered(combo).result();
   if (result.status === "error") {

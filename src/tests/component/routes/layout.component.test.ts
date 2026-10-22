@@ -58,6 +58,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 vi.mock("#libs/hooks/config.svelte", () => ({
   configState: { value: null },
+  configValue: (_key: string, fallback: unknown) => fallback,
   hydrateConfig: vi.fn(async () => {}),
 }));
 

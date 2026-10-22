@@ -68,7 +68,11 @@ const TRANSCRIBE_TIMEOUT_SECS: u64 = 900;
 const _: () = {
     assert!(LOAD_TIMEOUT_SECS > 0);
     assert!(TRANSCRIBE_TIMEOUT_SECS > 0);
+    assert!(QUEUE_WAIT_SECS > 0);
 };
+
+/// 转写排队等待秒：前序转写未归还时后来者排队而非直接报忙，超限才报忙
+const QUEUE_WAIT_SECS: u64 = 60;
 
 fn service_lock() -> &'static Mutex<Option<LoadedService>> {
     static SERVICE: OnceLock<Mutex<Option<LoadedService>>> = OnceLock::new();
@@ -257,6 +261,13 @@ fn num_cpus() -> i32 {
         .map_or(1, |count| count.saturating_sub(1).max(1))
 }
 
+/// 转写排队锁：并发转写按 FIFO 串行而非直接报忙；`take/put` 仍在临界区内执行，
+/// 停止服务不经此锁（`stop` 直接清空槽位，排队者随后取到“未运行”）
+fn transcribe_queue_lock() -> &'static tokio::sync::Mutex<()> {
+    static QUEUE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    QUEUE.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 /// 取出识别器独占使用；服务未运行、启动中、已有转写占用三种情况错误各异，
 /// 调用方负责归还（`put_back_recognizer`），超时分离回收同样经归还清 `busy`
 fn take_recognizer() -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
@@ -378,6 +389,13 @@ pub async fn transcribe_file(
         );
         anyhow::bail!("audio file is outside app data dir");
     }
+    // 路径校验先行：目录外请求不占排队位；排队超限才报忙（前端提示稍候）
+    let _queue_guard = tokio::time::timeout(
+        std::time::Duration::from_secs(QUEUE_WAIT_SECS),
+        transcribe_queue_lock().lock(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!(TRANSCRIBE_BUSY_MESSAGE))?;
     let recognizer = take_recognizer()?;
     let mut task = tokio::task::spawn_blocking(move || {
         let outcome = transcribe_blocking(&recognizer, &canonical);

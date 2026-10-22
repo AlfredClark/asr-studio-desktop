@@ -49,6 +49,14 @@ export async function updateConfig(patch: ConfigPatch): Promise<boolean> {
   return succeeded;
 }
 
+/** 读配置字段：未水合回落传入的默认值，各调用方不再手写 `?.` + `??` */
+export function configValue<K extends keyof AppConfig>(
+  key: K,
+  fallback: AppConfig[K],
+): AppConfig[K] {
+  return configState.value?.[key] ?? fallback;
+}
+
 /** 重置全部后端配置为默认值，返回写后配置；失败返回空，由调用方提示 */
 export async function resetConfig(): Promise<AppConfig | null> {
   let reset: AppConfig | null = null;

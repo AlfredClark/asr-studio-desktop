@@ -37,6 +37,10 @@ const configStateMock = vi.hoisted(
     value: { shortcut_output: "clipboard", shortcut_paste_restore: false },
   }),
 );
+const configValueMock = vi.hoisted(() => (key: string, fallback: unknown) => {
+  const state = configStateMock.value as unknown as Record<string, unknown> | null;
+  return state?.[key] ?? fallback;
+});
 const serviceStateMock = vi.hoisted(
   (): {
     status: { state: string; modelId: string | null; loadMs: number | null } | null;
@@ -98,6 +102,7 @@ vi.mock("#libs/utils/toast", () => ({ toast: toastMocks }));
 
 vi.mock("#libs/hooks/config.svelte", () => ({
   configState: configStateMock,
+  configValue: configValueMock,
   updateConfig: updateConfigMock,
 }));
 

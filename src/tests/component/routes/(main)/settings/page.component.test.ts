@@ -61,9 +61,14 @@ const defaults: Config_Serialize = {
 };
 
 const configStateMock = vi.hoisted((): { value: Config_Serialize | null } => ({ value: null }));
+const configValueMock = vi.hoisted(() => (key: string, fallback: unknown) => {
+  const state = configStateMock.value as unknown as Record<string, unknown> | null;
+  return state?.[key] ?? fallback;
+});
 
 vi.mock("#libs/hooks/config.svelte", () => ({
   configState: configStateMock,
+  configValue: configValueMock,
   updateConfig: updateConfigMock,
   resetConfig: resetConfigMock,
 }));

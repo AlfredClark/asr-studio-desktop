@@ -8,7 +8,7 @@
   import XIcon from "@lucide/svelte/icons/x";
   import commands from "#libs/commands";
   import { reportCommandFailure } from "#libs/commands/cores";
-  import { configState, updateConfig } from "#libs/hooks/config.svelte";
+  import { configValue, updateConfig } from "#libs/hooks/config.svelte";
   import { serviceState } from "#libs/hooks/service.svelte";
   import { m } from "#libs/i18n/paraglide/messages";
   import {
@@ -35,7 +35,7 @@
   const configKey = $derived(kind === "voice" ? "shortcut_voice" : "shortcut_quick_open");
 
   // 后端配置是唯一真值；水合前回落空字符串，渲染占位
-  const stored = $derived(configState.value?.[configKey] ?? "");
+  const stored = $derived(configValue(configKey, ""));
 
   /** 待机展示的按键分段：`Ctrl+Shift+O` 拆成三段，每段一个徽标 */
   const parts = $derived(stored === "" ? [] : stored.split("+"));

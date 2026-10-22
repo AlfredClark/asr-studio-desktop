@@ -23,7 +23,7 @@
     SelectValue,
   } from "#components/shadcn-svelte/select";
   import { m } from "#libs/i18n/paraglide/messages";
-  import { configState, updateConfig } from "#libs/hooks/config.svelte";
+  import { configValue, updateConfig } from "#libs/hooks/config.svelte";
   import type { ShortcutOutput } from "#libs/commands/types";
   import { toast } from "#libs/utils/toast";
   import {
@@ -110,10 +110,10 @@
   }
 
   /** 粘贴模式才展示恢复开关：水合前按粘贴默认渲染，避免首帧闪烁 */
-  const isPasteMode = $derived((configState.value?.shortcut_output ?? "paste") === "paste");
+  const isPasteMode = $derived(configValue("shortcut_output", "paste") === "paste");
 
   /** 恢复开关以后端配置为真值；水合前按关闭渲染 */
-  const pasteRestore = $derived(configState.value?.shortcut_paste_restore ?? false);
+  const pasteRestore = $derived(configValue("shortcut_paste_restore", false));
 
   /** 恢复开关切换中禁用，避免重复提交 */
   let switchingRestore = $state(false);
@@ -307,7 +307,7 @@
             {#snippet control()}
               <Select
                 type="single"
-                value={configState.value?.shortcut_output ?? "paste"}
+                value={configValue("shortcut_output", "paste")}
                 items={outputItems}
                 onValueChange={(value) => void handleOutputChange(value)}
               >

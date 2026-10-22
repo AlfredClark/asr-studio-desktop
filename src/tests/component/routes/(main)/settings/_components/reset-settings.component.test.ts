@@ -30,6 +30,10 @@ const setLocaleMock = vi.hoisted(() => vi.fn());
 const alignLocaleMock = vi.hoisted(() => vi.fn());
 const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 const configStateMock = vi.hoisted((): { value: Config_Serialize | null } => ({ value: null }));
+const configValueMock = vi.hoisted(() => (key: string, fallback: unknown) => {
+  const state = configStateMock.value as unknown as Record<string, unknown> | null;
+  return state?.[key] ?? fallback;
+});
 
 const defaults: Config_Serialize = {
   locale: "en",
@@ -57,6 +61,7 @@ vi.mock("mode-watcher", () => ({
 
 vi.mock("#libs/hooks/config.svelte", () => ({
   configState: configStateMock,
+  configValue: configValueMock,
   resetConfig: resetConfigMock,
 }));
 

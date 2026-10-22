@@ -42,9 +42,14 @@ const configStateMock = vi.hoisted(() => ({
     schema_version: 1,
   },
 }));
+const configValueMock = vi.hoisted(() => (key: string, fallback: unknown) => {
+  const state = configStateMock.value as unknown as Record<string, unknown> | null;
+  return state?.[key] ?? fallback;
+});
 
 vi.mock("#libs/hooks/config.svelte", () => ({
   configState: configStateMock,
+  configValue: configValueMock,
   updateConfig: updateConfigMock,
 }));
 

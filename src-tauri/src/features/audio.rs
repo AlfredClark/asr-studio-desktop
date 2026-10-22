@@ -31,6 +31,15 @@ pub struct RecordResult {
     pub seconds: f64,
 }
 
+/// 录音留存上限：超 200 个或 1GB 时删最旧的；落盘后修剪，失败只记日志
+const MAX_RECORD_FILES: usize = 200;
+const MAX_RECORD_BYTES: u64 = 1024 * 1024 * 1024;
+
+const _: () = {
+    assert!(MAX_RECORD_FILES > 0);
+    assert!(MAX_RECORD_BYTES > 0);
+};
+
 /// 存档目录名：`<app_data>/records/`
 pub const RECORDS_DIR_NAME: &str = "records";
 
@@ -343,6 +352,7 @@ pub fn stop_recording(app: &tauri::AppHandle) -> anyhow::Result<RecordResult> {
     let dir = records_dir(app)?;
     let path = unique_wav_path(&dir);
     write_wav(&path, &mono, session.sample_rate)?;
+    prune_records(&dir);
     let file_name = path
         .file_name()
         .context("failed to read file name")?
@@ -384,6 +394,56 @@ fn records_dir(app: &tauri::AppHandle) -> anyhow::Result<std::path::PathBuf> {
         .join(RECORDS_DIR_NAME);
     std::fs::create_dir_all(&dir).context("failed to create records dir")?;
     Ok(dir)
+}
+
+/// 修剪旧存档到留存上限；只看 `recording-*.wav`（名内嵌本地时间戳，字典序即新旧序），
+/// 其它文件不动；失败只记日志，不影响本次存档
+fn prune_records(dir: &std::path::Path) {
+    let Ok(list) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries = Vec::new();
+    for entry in list.filter_map(Result::ok) {
+        let path = entry.path();
+        let is_record = path
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .is_some_and(|name| name.starts_with("recording-") && name.ends_with(".wav"));
+        if !is_record {
+            continue;
+        }
+        let size = entry.metadata().map(|meta| meta.len()).unwrap_or_default();
+        entries.push((path, size));
+    }
+    for victim in select_prune_targets(&entries, MAX_RECORD_FILES, MAX_RECORD_BYTES) {
+        if let Err(err) = std::fs::remove_file(&victim) {
+            log::debug!(
+                "failed to prune old recording {}: {err:#}",
+                victim.display()
+            );
+        }
+    }
+}
+
+/// 待删的旧存档：名序即新旧序，超个数或超字节时从最旧删起；纯函数，可单测
+fn select_prune_targets(
+    entries: &[(std::path::PathBuf, u64)],
+    max_files: usize,
+    max_bytes: u64,
+) -> Vec<std::path::PathBuf> {
+    let mut sorted: Vec<(std::path::PathBuf, u64)> = entries.to_vec();
+    sorted.sort();
+    let mut total: u64 = sorted.iter().map(|(_, size)| *size).sum();
+    let mut victims = Vec::new();
+    while sorted.len() > max_files || total > max_bytes {
+        if sorted.is_empty() {
+            break;
+        }
+        let (path, size) = sorted.remove(0);
+        total = total.saturating_sub(size);
+        victims.push(path);
+    }
+    victims
 }
 
 /// 按本地时间生成存档名并避重：`recording-YYYYMMDD-HHMMSS.wav`，已存在追 `-n`
@@ -506,6 +566,44 @@ mod tests {
                 .map(|device| device.name.as_str())
                 .collect::<Vec<_>>(),
             vec!["B", "A"]
+        );
+    }
+
+    #[test]
+    fn prune_keeps_newest_within_limits() {
+        use std::path::PathBuf;
+
+        let entries = vec![
+            (PathBuf::from("recording-20260101-100000.wav"), 10),
+            (PathBuf::from("recording-20260102-100000.wav"), 10),
+        ];
+        assert_eq!(
+            select_prune_targets(&entries, 10, 1000),
+            Vec::<std::path::PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn prune_drops_oldest_over_limits() {
+        use std::path::PathBuf;
+
+        let entries = vec![
+            (PathBuf::from("recording-20260101-100000.wav"), 400),
+            (PathBuf::from("recording-20260102-100000.wav"), 400),
+            (PathBuf::from("recording-20260103-100000.wav"), 400),
+        ];
+        // 超个数：删最旧 1 个
+        assert_eq!(
+            select_prune_targets(&entries, 2, 10_000),
+            vec![PathBuf::from("recording-20260101-100000.wav")]
+        );
+        // 超字节：从最旧删到总量达标
+        assert_eq!(
+            select_prune_targets(&entries, 10, 799),
+            vec![
+                PathBuf::from("recording-20260101-100000.wav"),
+                PathBuf::from("recording-20260102-100000.wav"),
+            ]
         );
     }
 

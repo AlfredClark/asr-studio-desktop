@@ -28,6 +28,9 @@ export const updaterState = $state<{
 
 let progressListening = false;
 
+/** 检查看门狗：单会话同时只跑一个，设新的先清旧的，避免悬挂堆积 */
+let checkTimer: ReturnType<typeof setTimeout> | null = null;
+
 /** 订阅下载进度事件；浏览器 / 单测下动态导入失败则警告并允许下次重试 */
 async function ensureProgressListener(): Promise<void> {
   if (progressListening) return;
@@ -53,7 +56,9 @@ export async function checkForUpdate(options?: { silent?: boolean }): Promise<vo
   updaterState.phase = "checking";
   updaterState.error = null;
   // IPC 永不结算时兜底复位，避免永久卡在 `checking` 挡掉后续检查
-  const checkTimer = setTimeout(() => {
+  if (checkTimer) clearTimeout(checkTimer);
+  checkTimer = setTimeout(() => {
+    checkTimer = null;
     if (updaterState.phase === "checking") {
       updaterState.phase = "error";
       updaterState.error = "check timed out";
@@ -64,7 +69,10 @@ export async function checkForUpdate(options?: { silent?: boolean }): Promise<vo
   await commands
     .checkUpdate()
     .success((info) => {
-      clearTimeout(checkTimer);
+      if (checkTimer) {
+        clearTimeout(checkTimer);
+        checkTimer = null;
+      }
       if (prevPhase === "ready" && prevLatest) {
         updaterState.phase = "ready";
         updaterState.latest = prevLatest;
@@ -82,7 +90,10 @@ export async function checkForUpdate(options?: { silent?: boolean }): Promise<vo
       }
     })
     .failed((failure) => {
-      clearTimeout(checkTimer);
+      if (checkTimer) {
+        clearTimeout(checkTimer);
+        checkTimer = null;
+      }
       updaterState.phase = "error";
       updaterState.error = failure.message;
       // 静默失败允许下次重试：重置标记，网络恢复后切配置/手动检查可再跑

@@ -263,6 +263,30 @@ describe("识别服务状态", () => {
     expect(mocked.startService).not.toHaveBeenCalled();
   });
 
+  it("运行中切模型失败回滚选中", async () => {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedModel = model.id;
+    mocked.startService.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    await selectModel("qwen3-0.6b-int8");
+
+    expect(serviceState.selectedModel).toBe(model.id);
+    expect(mockedToast.error).toHaveBeenCalled();
+  });
+
+  it("切换中重复点选直接忽略", async () => {
+    serviceState.switching = true;
+
+    await selectModel("qwen3-0.6b-int8");
+
+    expect(serviceState.selectedModel).toBeNull();
+    expect(mocked.stopService).not.toHaveBeenCalled();
+    expect(mocked.startService).not.toHaveBeenCalled();
+  });
+
   it("录制中切换设备被拦截", () => {
     serviceState.recording = true;
     serviceState.selectedDevice = device.id;

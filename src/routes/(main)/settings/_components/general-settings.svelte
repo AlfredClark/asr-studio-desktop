@@ -2,7 +2,7 @@
   // 通用设置分组：界面语言（后端持久化）与三项开关（自启/窗口记忆/更新检查），零 props，直接读写配置 hook。
   // 语言切换是“先落盘后端、再重载前端”的两段提交，期间禁用下拉并给出 loading 提示。
   import type { CloseBehavior, Locale } from "#libs/commands/types";
-  import { configState, updateConfig } from "#libs/hooks/config.svelte";
+  import { configValue, updateConfig } from "#libs/hooks/config.svelte";
   import { Switch } from "#components/shadcn-svelte/switch";
   import CardRow from "#components/common/card-row.svelte";
   import CardSection from "#components/common/card-section.svelte";
@@ -49,22 +49,22 @@
   let switchingTray = $state(false);
 
   // 后端配置是语言的唯一真值；水合完成前用 Paraglide 当前语言兜底，避免首帧闪空。
-  const currentLocale = $derived<Locale>(configState.value?.locale ?? getLocale());
+  const currentLocale = $derived<Locale>(configValue("locale", getLocale()));
 
   // 开机自启同样以后端配置为真值；水合前按默认值关闭渲染。
-  const autoStart = $derived(configState.value?.auto_start ?? false);
+  const autoStart = $derived(configValue("auto_start", false));
 
   // 记住窗口同样以后端配置为真值；水合前按默认值关闭渲染。
-  const rememberWindow = $derived(configState.value?.remember_window ?? false);
+  const rememberWindow = $derived(configValue("remember_window", false));
 
   // 自动检查更新同样以后端配置为真值；水合前按默认值关闭渲染。
-  const autoCheckUpdate = $derived(configState.value?.auto_check_update ?? false);
+  const autoCheckUpdate = $derived(configValue("auto_check_update", false));
 
   // 系统托盘同样以后端配置为真值；水合前按默认值开启渲染（与后端缺省一致）。
-  const trayEnabled = $derived(configState.value?.tray_enabled ?? true);
+  const trayEnabled = $derived(configValue("tray_enabled", true));
 
   // 关闭行为同样以后端配置为真值；水合前按默认值弹窗提示渲染。
-  const closeBehavior = $derived<CloseBehavior>(configState.value?.close_behavior ?? "prompt");
+  const closeBehavior = $derived<CloseBehavior>(configValue("close_behavior", "prompt"));
 
   /** 语言先经命令落盘后端，成功后再用 Paraglide 默认重载生效；失败则回滚并提示。 */
   // `bits-ui` 给 `string`，经 `localeItems` 收窄为 `Locale` 后才提交，无类型断言

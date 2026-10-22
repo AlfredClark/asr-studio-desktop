@@ -8,7 +8,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { Snippet } from "svelte";
   import { initAppearance } from "#libs/hooks/appearance.svelte";
-  import { configState, hydrateConfig } from "#libs/hooks/config.svelte";
+  import { configState, configValue, hydrateConfig } from "#libs/hooks/config.svelte";
   import { initDeepLinks } from "#libs/hooks/deep-link.svelte";
   import { listenShortcutVoice } from "#libs/hooks/service.svelte";
   import { maybeAutoCheckForUpdate } from "#libs/hooks/updater.svelte";
@@ -63,7 +63,7 @@
 
   // 启动静默检查更新：开着开关才执行，单会话一次，非 Tauri 环境跳过
   $effect(() => {
-    maybeAutoCheckForUpdate(configState.value?.auto_check_update ?? false);
+    maybeAutoCheckForUpdate(configValue("auto_check_update", false));
   });
 
   // 窗口关闭统一接管：先阻止默认关闭，再按后端关闭行为分流；
@@ -75,7 +75,7 @@
       try {
         const stop = await getCurrentWindow().onCloseRequested(async (event) => {
           await event.preventDefault();
-          const behavior = configState.value?.close_behavior ?? "prompt";
+          const behavior = configValue("close_behavior", "prompt");
           if (behavior === "minimize_to_tray") {
             await getCurrentWindow()
               .hide()
