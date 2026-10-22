@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+import { m } from "#libs/i18n/paraglide/messages";
 import type { RecognitionRecord } from "#libs/hooks/service.svelte";
 import Page from "../../../../../routes/(main)/service/+page.svelte";
 
@@ -300,11 +301,7 @@ describe("服务页", () => {
     render(Page);
 
     expect(screen.getByText("Voice recognition")).not.toBeNull();
-    expect(
-      screen.getByText("Press the global shortcut to start or stop recognition", {
-        exact: false,
-      }),
-    ).not.toBeNull();
+    expect(screen.getByText(m.settings_voice_description())).not.toBeNull();
   });
 
   it("语音与快捷词库之间含指令快捷键行", () => {
@@ -369,7 +366,7 @@ describe("服务页", () => {
   it("快捷词库行常驻，未设快捷键时隐藏词库选择", () => {
     render(Page);
 
-    expect(screen.getByText("Quick lexicon")).not.toBeNull();
+    expect(screen.getByText(m.settings_quick_lexicon_label())).not.toBeNull();
     expect(screen.queryByText("Lexicon group")).toBeNull();
   });
 
