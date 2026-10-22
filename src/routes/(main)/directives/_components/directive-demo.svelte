@@ -18,6 +18,8 @@
   let heldKeys = new SvelteSet<string>();
   /** 当前事件键：描边环，不分方向 */
   let currentKey = $state<string | null>(null);
+  /** 本轮触发过的键：逐事件累积，轮内保留描边，下一轮开始清空 */
+  let visitedKeys = new SvelteSet<string>();
 
   /** 是否允许自动播放：减弱动态效果偏好下静态展示 */
   function motionAllowed(): boolean {
@@ -33,6 +35,7 @@
     const step = Math.max(intervalMs, DEMO_STEP_MIN_MS);
     if (sequence.length === 0 || !motionAllowed()) {
       heldKeys.clear();
+      visitedKeys.clear();
       currentKey = null;
       return;
     }
@@ -44,6 +47,7 @@
       });
     void (async () => {
       while (!cancelled) {
+        visitedKeys.clear();
         for (let index = 0; index < sequence.length; index += 1) {
           if (cancelled) return;
           await later(step);
@@ -51,6 +55,7 @@
           heldKeys.clear();
           for (const key of foldHeldKeys(sequence, index)) heldKeys.add(key);
           currentKey = sequence[index].key;
+          visitedKeys.add(sequence[index].key);
         }
         if (cancelled) return;
         await later(DEMO_REPLAY_PAUSE_MS);
@@ -64,5 +69,5 @@
 </script>
 
 <div class="overflow-x-auto" data-testid="directive-demo" aria-hidden="true">
-  <KeyGrid {heldKeys} {currentKey} />
+  <KeyGrid {heldKeys} markedKeys={visitedKeys} {currentKey} />
 </div>

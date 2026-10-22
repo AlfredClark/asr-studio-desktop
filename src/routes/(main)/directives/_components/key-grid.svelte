@@ -7,12 +7,15 @@
 
   let {
     heldKeys,
+    markedKeys = new Set<string>(),
     currentKey = null,
     interactive = false,
     onRecord,
   }: {
     /** 填充高亮的键集合（父组件按需重建实例以触发更新） */
     heldKeys: Set<string>;
+    /** 描边标记的键集合（演示轮内累积，录制器传空） */
+    markedKeys?: Set<string>;
     /** 当前事件键：描边环，不分方向 */
     currentKey?: string | null;
     /** 交互模式才可点击，未传回调一律只读 */
@@ -31,7 +34,7 @@
         {/if}
         {#each cluster as cap, capIndex (capIndex)}
           {@const pressed = heldKeys.has(cap.id)}
-          {@const current = currentKey === cap.id}
+          {@const current = currentKey === cap.id || markedKeys.has(cap.id)}
           <Button
             variant={pressed ? "default" : "outline"}
             size="sm"
