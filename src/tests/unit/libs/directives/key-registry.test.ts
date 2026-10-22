@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { foldHeldKeys, isKeyHeld, keyLabel } from "#libs/directives/key-registry";
+import { foldHeldKeys, isKeyHeld, keyLabel, unclosedKeys } from "#libs/directives/key-registry";
 
 describe("按键注册表", () => {
   it("未知键回落原标识", () => {
@@ -45,5 +45,32 @@ describe("按键注册表", () => {
     expect(foldHeldKeys(actions, 2)).toEqual(new Set(["Control"]));
     expect(foldHeldKeys(actions, 99)).toEqual(new Set(["Control"]));
     expect(foldHeldKeys([], 0)).toEqual(new Set());
+  });
+
+  it("未闭合按键按按下顺序返回", () => {
+    expect(unclosedKeys([])).toEqual([]);
+    // 配对齐全即闭合
+    expect(
+      unclosedKeys([
+        { key: "Control", direction: "press" as const },
+        { key: "Control", direction: "release" as const },
+      ]),
+    ).toEqual([]);
+    // 按下顺序保留，中间松开不影响其余
+    expect(
+      unclosedKeys([
+        { key: "Control", direction: "press" as const },
+        { key: "C", direction: "press" as const },
+        { key: "Control", direction: "release" as const },
+      ]),
+    ).toEqual(["C"]);
+    // 重复按下只记一次，无故松开不影响
+    expect(
+      unclosedKeys([
+        { key: "C", direction: "press" as const },
+        { key: "C", direction: "press" as const },
+        { key: "X", direction: "release" as const },
+      ]),
+    ).toEqual(["C"]);
   });
 });

@@ -15,6 +15,7 @@
   import CardRow from "#components/common/card-row.svelte";
   import ShortcutRecordRow from "#components/common/shortcut-record-row.svelte";
   import { Switch } from "#components/shadcn-svelte/switch";
+  import RecognitionRecordItem from "#components/common/recognition-record-item.svelte";
   import {
     Select,
     SelectContent,
@@ -25,7 +26,6 @@
   import { m } from "#libs/i18n/paraglide/messages";
   import { configValue, updateConfig } from "#libs/hooks/config.svelte";
   import type { ShortcutOutput } from "#libs/commands/types";
-  import type { RecognitionRecord } from "#libs/hooks/service.svelte";
   import { toast } from "#libs/utils/toast";
   import { groupLabel, lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
   import {
@@ -63,29 +63,6 @@
   function toggleRecord(id: number): void {
     if (expanded.has(id)) expanded.delete(id);
     else expanded.add(id);
-  }
-
-  /** 记录时间展示：UTC 时间戳转本地时分秒 */
-  function recordTime(at: number): string {
-    return new Date(at).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  }
-
-  /** 投递通道文案：快捷键输出的实际去向；未输出（测试按钮/指令回放）显示占位 */
-  function outputLabel(output: RecognitionRecord["output"]): string {
-    switch (output) {
-      case "paste":
-        return m.service_output_option_paste();
-      case "clipboard":
-        return m.service_output_option_clipboard();
-      case "ime":
-        return m.service_output_option_ime();
-      default:
-        return m.service_history_no_output();
-    }
   }
 
   /** 状态徽标文案：四态一一对应，未水合按停止渲染 */
@@ -196,6 +173,9 @@
           </div>
         </div>
         <h2 class="shrink-0 text-sm font-medium">{m.service_history_title()}</h2>
+        <p class="shrink-0 text-xs text-muted-foreground">
+          {m.service_history_session_hint()}
+        </p>
         {#if serviceState.history.length === 0}
           <div class="flex min-h-0 flex-1 items-center justify-center">
             <p class="text-sm text-muted-foreground">{m.service_history_empty()}</p>
@@ -204,29 +184,11 @@
           <ScrollArea class="min-h-0 flex-1">
             <div class="flex flex-col gap-1 pr-1">
               {#each serviceState.history as record (record.id)}
-                {@const open = expanded.has(record.id)}
-                <button
-                  type="button"
-                  class="flex items-start gap-2 rounded-lg bg-muted/50 px-2.5 py-2 text-left hover:bg-muted"
-                  aria-expanded={open}
-                  onclick={() => toggleRecord(record.id)}
-                >
-                  <div class="min-w-0 flex-1">
-                    <p class={open ? "text-sm whitespace-pre-wrap" : "line-clamp-2 text-sm"}>
-                      {record.text}
-                    </p>
-                    <p class="mt-1 text-xs text-muted-foreground tabular-nums">
-                      {recordTime(record.at)} · {m.service_result_audio()}
-                      {record.audioSec.toFixed(1)}s · {m.service_result_time()}
-                      {(record.inferMs / 1000).toFixed(1)}s · {outputLabel(record.output)}
-                    </p>
-                  </div>
-                  <Badge variant="secondary" class="shrink-0">
-                    {record.kind === "directive"
-                      ? m.service_history_kind_directive()
-                      : m.service_history_kind_text()}
-                  </Badge>
-                </button>
+                <RecognitionRecordItem
+                  {record}
+                  open={expanded.has(record.id)}
+                  onToggle={() => toggleRecord(record.id)}
+                />
               {/each}
             </div>
           </ScrollArea>

@@ -15,7 +15,7 @@
     DialogTitle,
   } from "#components/shadcn-svelte/dialog";
   import type { Directive } from "#libs/commands/types";
-  import { isKeyHeld, keyLabel } from "#libs/directives/key-registry";
+  import { isKeyHeld, keyLabel, unclosedKeys } from "#libs/directives/key-registry";
   import {
     DIRECTIVE_INTERVAL_MAX,
     DIRECTIVE_INTERVAL_MIN,
@@ -90,6 +90,17 @@
   function handleKeyRecord(key: string): void {
     const direction = isKeyHeld(draftActions, key) ? "release" : "press";
     draftActions = [...draftActions, { key, direction }];
+  }
+
+  /** 未闭合的按键（按按下顺序）：有残留才展示自动闭合按钮 */
+  const unclosed = $derived(unclosedKeys(draftActions));
+
+  /** 自动闭合：把未松开的键按按下顺序依次松开 */
+  function handleAutoClose(): void {
+    draftActions = [
+      ...draftActions,
+      ...unclosed.map((key): DirectiveAction => ({ key, direction: "release" })),
+    ];
   }
 
   /** 保存：非空 → 拼音回填 → 判重（文本/拼音） → 序列平衡 → 落盘，成功关弹窗 */
@@ -207,21 +218,28 @@
           <span class="text-sm font-medium">
             {m.directives_actions()} ({draftActions.length})
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onclick={() => (draftActions = [])}
-            disabled={draftActions.length === 0}
-          >
-            {m.directives_clear_actions()}
-          </Button>
+          <div class="flex items-center gap-2">
+            {#if unclosed.length > 0}
+              <Button variant="outline" size="sm" onclick={handleAutoClose}>
+                {m.directives_auto_close()}
+              </Button>
+            {/if}
+            <Button
+              variant="ghost"
+              size="sm"
+              onclick={() => (draftActions = [])}
+              disabled={draftActions.length === 0}
+            >
+              {m.directives_clear_actions()}
+            </Button>
+          </div>
         </div>
         {#if draftActions.length === 0}
           <p class="text-sm text-muted-foreground">{m.directives_actions_empty()}</p>
         {:else}
           <div class="flex flex-wrap gap-1.5">
             {#each draftActions as action, index (index)}
-              <Badge variant={action.direction === "press" ? "default" : "secondary"}>
+              <Badge variant={action.direction === "press" ? "default" : "secondary"} class="h-7">
                 {index + 1}. {keyLabel(action.key)}
                 {action.direction === "press" ? "↓" : "↑"}
               </Badge>
