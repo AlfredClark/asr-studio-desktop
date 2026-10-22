@@ -26,6 +26,7 @@
   } from "#components/shadcn-svelte/dialog";
   import PlayIcon from "@lucide/svelte/icons/play";
   import CheckIcon from "@lucide/svelte/icons/check";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
   import MenuIcon from "@lucide/svelte/icons/menu";
@@ -44,8 +45,10 @@
     DEFAULT_LEXICON_FILTER,
     DEFAULT_LEXICON_SORT,
     LEXICON_BATCH_ADD_LIMIT,
+    batchCopyLexiconEntries,
     batchCreateLexiconEntries,
     batchDeleteLexiconEntries,
+    batchMoveLexiconEntries,
     batchSetLexiconEntriesEnabled,
     createLexiconEntry,
     createLexiconGroup,
@@ -150,16 +153,16 @@
     else checked.add(id);
   }
 
-  /** 批量操作项 */
-  const batchItems = $derived([
-    { value: "delete", label: m.lexicon_batch_delete() },
-    { value: "enable", label: m.lexicon_batch_enable() },
-    { value: "disable", label: m.lexicon_batch_disable() },
-  ]);
+  /** 批量复制 / 转移的目标分组：除当前查看分组外的全部分组（含全局组） */
+  const copyTargets = $derived(
+    lexiconState.value.groups.filter((group) => group.id !== effectiveGroupId),
+  );
 
-  /** 执行批量操作：删除走二次确认，启用/禁用直接落盘 */
+  /** 复制 / 转移在途中禁用，避免重复提交 */
+  let copyMoveBusy = $state(false);
+
+  /** 执行批量删除 / 启用 / 禁用：删除走二次确认，启用 / 禁用直接落盘 */
   async function handleBatchAction(value: string): Promise<void> {
-    batchKey += 1;
     if (value === "delete") {
       confirmDeleteBatch = true;
       return;
@@ -168,6 +171,37 @@
     if (ids.length === 0) return;
     if (await batchSetLexiconEntriesEnabled(ids, value === "enable")) {
       batchKey += 1;
+    }
+  }
+
+  /** 批量复制到目标分组：源词条原样保留，选中保持 */
+  async function handleBatchCopy(targetGroupId: string): Promise<void> {
+    if (copyMoveBusy) return;
+    const ids = [...checked];
+    if (ids.length === 0) return;
+    copyMoveBusy = true;
+    try {
+      if ((await batchCopyLexiconEntries(ids, targetGroupId)).ok) {
+        batchKey += 1;
+      }
+    } finally {
+      copyMoveBusy = false;
+    }
+  }
+
+  /** 批量转移到目标分组：成功后清空已转移选中（源词条已不存在） */
+  async function handleBatchMove(targetGroupId: string): Promise<void> {
+    if (copyMoveBusy) return;
+    const ids = [...checked];
+    if (ids.length === 0) return;
+    copyMoveBusy = true;
+    try {
+      if ((await batchMoveLexiconEntries(ids, targetGroupId)).ok) {
+        for (const id of ids) checked.delete(id);
+        batchKey += 1;
+      }
+    } finally {
+      copyMoveBusy = false;
     }
   }
 
@@ -671,25 +705,97 @@
               <div class="flex shrink-0 items-center gap-2">
                 {#if checked.size > 0}
                   {#key batchKey}
-                    <Select
-                      type="single"
-                      items={batchItems}
-                      onValueChange={(value) => void handleBatchAction(value)}
-                    >
-                      <SelectTrigger
-                        class="w-(--control-column-width)"
-                        aria-label={`${m.lexicon_batch_actions()} (${checked.size})`}
+                    <DropdownMenuPrimitive.Root>
+                      <DropdownMenuPrimitive.Trigger>
+                        {#snippet child({ props })}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            {...props}
+                            aria-label={`${m.lexicon_batch_actions()} (${checked.size})`}
+                            disabled={copyMoveBusy}
+                          >
+                            {m.lexicon_batch_actions()} ({checked.size})
+                          </Button>
+                        {/snippet}
+                      </DropdownMenuPrimitive.Trigger>
+                      <DropdownMenuPrimitive.Content
+                        align="end"
+                        sideOffset={4}
+                        class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
                       >
-                        <SelectValue
-                          placeholder={`${m.lexicon_batch_actions()} (${checked.size})`}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {#each batchItems as item (item.value)}
-                          <SelectItem value={item.value}>{item.label}</SelectItem>
-                        {/each}
-                      </SelectContent>
-                    </Select>
+                        <DropdownMenuPrimitive.Item
+                          class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                          onSelect={() => void handleBatchAction("delete")}
+                        >
+                          {m.lexicon_batch_delete()}
+                        </DropdownMenuPrimitive.Item>
+                        <DropdownMenuPrimitive.Item
+                          class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                          onSelect={() => void handleBatchAction("enable")}
+                        >
+                          {m.lexicon_batch_enable()}
+                        </DropdownMenuPrimitive.Item>
+                        <DropdownMenuPrimitive.Item
+                          class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                          onSelect={() => void handleBatchAction("disable")}
+                        >
+                          {m.lexicon_batch_disable()}
+                        </DropdownMenuPrimitive.Item>
+                        <DropdownMenuPrimitive.Sub>
+                          <DropdownMenuPrimitive.SubTrigger
+                            class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                            disabled={copyTargets.length === 0 || copyMoveBusy}
+                          >
+                            <span>{m.lexicon_batch_copy()}</span>
+                            <ChevronRightIcon class="ml-auto size-4" />
+                          </DropdownMenuPrimitive.SubTrigger>
+                          <DropdownMenuPrimitive.SubContent
+                            sideOffset={8}
+                            class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+                          >
+                            {#each copyTargets as target (target.id)}
+                              <DropdownMenuPrimitive.Item
+                                class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                                disabled={copyMoveBusy}
+                                onSelect={() => void handleBatchCopy(target.id)}
+                              >
+                                {groupLabel(target)} ({entriesOfGroup(
+                                  lexiconState.value.entries,
+                                  target.id,
+                                ).length})
+                              </DropdownMenuPrimitive.Item>
+                            {/each}
+                          </DropdownMenuPrimitive.SubContent>
+                        </DropdownMenuPrimitive.Sub>
+                        <DropdownMenuPrimitive.Sub>
+                          <DropdownMenuPrimitive.SubTrigger
+                            class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                            disabled={copyTargets.length === 0 || copyMoveBusy}
+                          >
+                            <span>{m.lexicon_batch_move()}</span>
+                            <ChevronRightIcon class="ml-auto size-4" />
+                          </DropdownMenuPrimitive.SubTrigger>
+                          <DropdownMenuPrimitive.SubContent
+                            sideOffset={8}
+                            class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+                          >
+                            {#each copyTargets as target (target.id)}
+                              <DropdownMenuPrimitive.Item
+                                class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                                disabled={copyMoveBusy}
+                                onSelect={() => void handleBatchMove(target.id)}
+                              >
+                                {groupLabel(target)} ({entriesOfGroup(
+                                  lexiconState.value.entries,
+                                  target.id,
+                                ).length})
+                              </DropdownMenuPrimitive.Item>
+                            {/each}
+                          </DropdownMenuPrimitive.SubContent>
+                        </DropdownMenuPrimitive.Sub>
+                      </DropdownMenuPrimitive.Content>
+                    </DropdownMenuPrimitive.Root>
                   {/key}
                 {/if}
                 <Select

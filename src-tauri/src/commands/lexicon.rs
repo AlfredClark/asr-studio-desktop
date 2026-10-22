@@ -130,6 +130,30 @@ pub fn batch_set_lexicon_entries_enabled(
     Ok(lexicon::set_entries_enabled(&app, &ids, enabled)?)
 }
 
+/// 批量复制词条到其他分组：单事务全有或全无，源词条原样保留，返回落盘统计
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn batch_copy_lexicon_entries(
+    app: tauri::AppHandle,
+    ids: Vec<String>,
+    target_group_id: String,
+) -> CommandResult<lexicon::LexiconBatchCopySummary> {
+    Ok(lexicon::copy_entries(&app, &ids, &target_group_id)?)
+}
+
+/// 批量转移词条到其他分组：单事务先写入目标组再删源，重复跳过但仍删源（去重合并）
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn batch_move_lexicon_entries(
+    app: tauri::AppHandle,
+    ids: Vec<String>,
+    target_group_id: String,
+) -> CommandResult<lexicon::LexiconBatchCopySummary> {
+    Ok(lexicon::move_entries(&app, &ids, &target_group_id)?)
+}
+
 /// 为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认
 #[tauri::command]
 #[specta::specta]

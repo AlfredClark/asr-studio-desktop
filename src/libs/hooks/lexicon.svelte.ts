@@ -181,6 +181,73 @@ export async function batchSetLexiconEntriesEnabled(
   return true;
 }
 
+/** 批量复制 / 转移的结果：写入数、目标组重复跳过数、整体是否成功 */
+export interface BatchCopyLexiconResult {
+  /** 成功写入目标分组数 */
+  copied: number;
+  /** 目标组内（词面 + 归一拼音）命中已存在而跳过数 */
+  skipped: number;
+  /** 无落盘失败即真 */
+  ok: boolean;
+}
+
+/** 批量复制 / 转移的落盘共用：失败上报并返回假，成功刷新并按调用方文案提示 */
+async function settleBatchCopy(
+  save: () => Promise<
+    | { status: "ok"; data: { copied: number; skipped: number } }
+    | { status: "error"; error: unknown }
+  >,
+  scope: string,
+  targetName: string,
+  copiedMessage: (args: { count: number; skipped: number; name: string }) => string,
+): Promise<BatchCopyLexiconResult> {
+  const result = await save();
+  if (result.status === "error") {
+    toast.error(m.lexicon_update_failed());
+    reportCommandFailure(`[lexicon] ${scope} failed`, result.error);
+    return { copied: 0, skipped: 0, ok: false };
+  }
+  await refreshLexicon();
+  toast.success(
+    copiedMessage({ count: result.data.copied, skipped: result.data.skipped, name: targetName }),
+  );
+  return { copied: result.data.copied, skipped: result.data.skipped, ok: true };
+}
+
+/** 批量复制词条到其他分组：源词条原样保留，一次刷新、一次汇总提示 */
+export async function batchCopyLexiconEntries(
+  ids: string[],
+  targetGroupId: string,
+): Promise<BatchCopyLexiconResult> {
+  const targetName = groupLabelOf(targetGroupId);
+  return settleBatchCopy(
+    () => commands.batchCopyLexiconEntries(ids, targetGroupId).result(),
+    "batch copy",
+    targetName,
+    ({ count, skipped, name }) => m.lexicon_batch_copied({ count, skipped, name }),
+  );
+}
+
+/** 批量转移词条到其他分组：先写入目标组再删源（重复跳过但仍删源），一次刷新、一次汇总提示 */
+export async function batchMoveLexiconEntries(
+  ids: string[],
+  targetGroupId: string,
+): Promise<BatchCopyLexiconResult> {
+  const targetName = groupLabelOf(targetGroupId);
+  return settleBatchCopy(
+    () => commands.batchMoveLexiconEntries(ids, targetGroupId).result(),
+    "batch move",
+    targetName,
+    ({ count, skipped, name }) => m.lexicon_batch_moved({ count, skipped, name }),
+  );
+}
+
+/** 目标分组展示名：快照缺失时回落空串，调用方提示仍可结算 */
+function groupLabelOf(groupId: string): string {
+  const group = lexiconState.value.groups.find((item) => item.id === groupId);
+  return group == null ? "" : groupLabel(group);
+}
+
 /** 为词面建议拼音；失败上报并返回空，调用方保留原值 */
 export async function suggestLexiconPinyin(text: string): Promise<string> {
   const result = await commands.suggestLexiconPinyin(text).result();

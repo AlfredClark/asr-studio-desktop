@@ -4,7 +4,9 @@ import {
   DEFAULT_LEXICON_SORT,
   LEXICON_BATCH_ADD_LIMIT,
   batchCreateLexiconEntries,
+  batchCopyLexiconEntries,
   batchDeleteLexiconEntries,
+  batchMoveLexiconEntries,
   batchSetLexiconEntriesEnabled,
   filterLexiconEntries,
   isLexiconFilterMode,
@@ -34,6 +36,8 @@ vi.mock("#libs/commands", () => ({
     updateLexiconEntry: vi.fn(),
     deleteLexiconEntry: vi.fn(),
     batchDeleteLexiconEntries: vi.fn(),
+    batchCopyLexiconEntries: vi.fn(),
+    batchMoveLexiconEntries: vi.fn(),
     batchSetLexiconEntriesEnabled: vi.fn(),
     suggestLexiconPinyin: vi.fn(),
   },
@@ -168,6 +172,48 @@ describe("词库 hook", () => {
     );
 
     expect(await batchSetLexiconEntriesEnabled(["w-1", "w-2"], true)).toBe(false);
+  });
+
+  it("批量复制透传目标分组并返回汇总", async () => {
+    mocked.batchCopyLexiconEntries.mockReturnValue(
+      fakeCommand({ status: "ok", data: { copied: 2, skipped: 1 } }) as never,
+    );
+
+    const result = await batchCopyLexiconEntries(["w-1", "w-2"], "g-life");
+    expect(mocked.batchCopyLexiconEntries).toHaveBeenCalledWith(["w-1", "w-2"], "g-life");
+    expect(result).toEqual({ copied: 2, skipped: 1, ok: true });
+    expect(mocked.listLexicon).toHaveBeenCalled();
+  });
+
+  it("批量复制失败时返回假且不刷新", async () => {
+    mocked.batchCopyLexiconEntries.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    const result = await batchCopyLexiconEntries(["w-1"], "g-life");
+    expect(result).toEqual({ copied: 0, skipped: 0, ok: false });
+    expect(mocked.listLexicon).not.toHaveBeenCalled();
+  });
+
+  it("批量转移透传目标分组并返回汇总", async () => {
+    mocked.batchMoveLexiconEntries.mockReturnValue(
+      fakeCommand({ status: "ok", data: { copied: 1, skipped: 1 } }) as never,
+    );
+
+    const result = await batchMoveLexiconEntries(["w-1", "w-2"], "g-life");
+    expect(mocked.batchMoveLexiconEntries).toHaveBeenCalledWith(["w-1", "w-2"], "g-life");
+    expect(result).toEqual({ copied: 1, skipped: 1, ok: true });
+    expect(mocked.listLexicon).toHaveBeenCalled();
+  });
+
+  it("批量转移失败时返回假且不刷新", async () => {
+    mocked.batchMoveLexiconEntries.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    const result = await batchMoveLexiconEntries(["w-1"], "g-life");
+    expect(result).toEqual({ copied: 0, skipped: 0, ok: false });
+    expect(mocked.listLexicon).not.toHaveBeenCalled();
   });
 });
 

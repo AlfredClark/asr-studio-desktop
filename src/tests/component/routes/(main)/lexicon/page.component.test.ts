@@ -33,6 +33,8 @@ const createEntryMock = vi.hoisted(() => vi.fn());
 const updateEntryMock = vi.hoisted(() => vi.fn());
 const deleteEntryMock = vi.hoisted(() => vi.fn());
 const batchDeleteMock = vi.hoisted(() => vi.fn());
+const batchCopyMock = vi.hoisted(() => vi.fn());
+const batchMoveMock = vi.hoisted(() => vi.fn());
 const batchCreateMock = vi.hoisted(() => vi.fn());
 const exportGroupMock = vi.hoisted(() => vi.fn());
 const importGroupMock = vi.hoisted(() => vi.fn());
@@ -82,6 +84,8 @@ vi.mock("#libs/hooks/lexicon.svelte", async (importOriginal) => {
     updateLexiconEntry: updateEntryMock,
     deleteLexiconEntry: deleteEntryMock,
     batchDeleteLexiconEntries: batchDeleteMock,
+    batchCopyLexiconEntries: batchCopyMock,
+    batchMoveLexiconEntries: batchMoveMock,
     batchCreateLexiconEntries: batchCreateMock,
     exportLexiconGroup: exportGroupMock,
     importLexiconGroup: importGroupMock,
@@ -116,6 +120,8 @@ beforeEach(() => {
   updateEntryMock.mockResolvedValue(true);
   deleteEntryMock.mockResolvedValue(true);
   batchDeleteMock.mockResolvedValue(true);
+  batchCopyMock.mockResolvedValue({ copied: 1, skipped: 0, ok: true });
+  batchMoveMock.mockResolvedValue({ copied: 1, skipped: 0, ok: true });
   batchCreateMock.mockResolvedValue({ created: 1, skipped: 1, ok: true });
   exportGroupMock.mockResolvedValue(true);
   importGroupMock.mockResolvedValue({ id: "g-new", name: "导入", created: 2, skipped: 0 });
@@ -420,9 +426,9 @@ describe("词库页", () => {
     expect(trigger).not.toBeNull();
     await user.click(trigger);
     await waitFor(() => {
-      expect(document.querySelector('[data-value="enable"]')).not.toBeNull();
+      expect(screen.getByText("Enable selected")).not.toBeNull();
     });
-    await user.click(document.querySelector('[data-value="enable"]') as HTMLElement);
+    await user.click(screen.getByText("Enable selected"));
 
     expect(batchSetEnabledMock).toHaveBeenCalledWith(["w-w2"], true);
   });
@@ -435,9 +441,9 @@ describe("词库页", () => {
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
     await user.click(screen.getByRole("button", { name: /Batch actions/ }));
     await waitFor(() => {
-      expect(document.querySelector('[data-value="disable"]')).not.toBeNull();
+      expect(screen.getByText("Disable selected")).not.toBeNull();
     });
-    await user.click(document.querySelector('[data-value="disable"]') as HTMLElement);
+    await user.click(screen.getByText("Disable selected"));
 
     expect(batchSetEnabledMock).toHaveBeenCalledWith(["w-w2"], false);
   });
@@ -450,15 +456,64 @@ describe("词库页", () => {
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
     await user.click(screen.getByRole("button", { name: /Batch actions/ }));
     await waitFor(() => {
-      expect(document.querySelector('[data-value="delete"]')).not.toBeNull();
+      expect(screen.getByText("Delete selected")).not.toBeNull();
     });
-    await user.click(document.querySelector('[data-value="delete"]') as HTMLElement);
+    await user.click(screen.getByText("Delete selected"));
 
     const dialog = screen.getByRole("alertdialog");
     expect(within(dialog).getByText("Delete selected entries?")).not.toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     expect(batchDeleteMock).toHaveBeenCalledWith(["w-w2"]);
+  });
+
+  it("批量复制经二级菜单选目标分组并保持选中", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
+    await user.click(within(row).getByRole("checkbox", { name: "成长" }));
+    await user.click(screen.getByRole("button", { name: /Batch actions/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Copy selected to…")).not.toBeNull();
+    });
+    await user.hover(screen.getByText("Copy selected to…"));
+    await waitFor(() => {
+      expect(screen.getByText("方言 (1)")).not.toBeNull();
+    });
+    // 当前分组不在目标列表中，全局组在
+    expect(screen.queryByText("工作 (2)")).toBeNull();
+    expect(screen.getByText("Global lexicon (1)")).not.toBeNull();
+    await user.click(screen.getByText("方言 (1)"));
+
+    expect(batchCopyMock).toHaveBeenCalledWith(["w-w2"], "g-dialect");
+    // 复制保留选中：批量入口仍在
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Batch actions \(1\)/ })).not.toBeNull();
+    });
+  });
+
+  it("批量转移经二级菜单选目标分组并清空选中", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
+    await user.click(within(row).getByRole("checkbox", { name: "成长" }));
+    await user.click(screen.getByRole("button", { name: /Batch actions/ }));
+    await waitFor(() => {
+      expect(screen.getByText("Move selected to…")).not.toBeNull();
+    });
+    await user.hover(screen.getByText("Move selected to…"));
+    await waitFor(() => {
+      expect(screen.getByText("方言 (1)")).not.toBeNull();
+    });
+    await user.click(screen.getByText("方言 (1)"));
+
+    expect(batchMoveMock).toHaveBeenCalledWith(["w-w2"], "g-dialect");
+    // 转移清空选中：批量入口消失
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Batch actions/ })).toBeNull();
+    });
   });
 
   it("展示排序筛选与选择菜单入口", async () => {

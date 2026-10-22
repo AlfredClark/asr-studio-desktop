@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::cores::lexicon::{LexiconEntry, LexiconGroup};
+use crate::cores::lexicon::{LexiconData, LexiconEntry, LexiconGroup};
 
 /// 分组移动方向：上移（更靠前）/ 下移（更靠后，仲裁时更优先）
 ///
@@ -708,6 +708,115 @@ pub fn set_entries_enabled(
     })
 }
 
+/// 批量复制 / 转移的落盘统计：实际写入数 + 目标组判重跳过数（命令返回体）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct LexiconBatchCopySummary {
+    /// 成功写入目标分组的词条数
+    pub copied: u32,
+    /// 目标组内（词面 + 归一拼音）命中已存在而跳过数
+    pub skipped: u32,
+}
+
+/// 复制判重键：词面 + `parse_pinyin` 归一连接，与匹配口径一致
+fn copy_entry_key(text: &str, pinyin: &str) -> (String, String) {
+    (text.to_owned(), parse_pinyin(pinyin).join(" "))
+}
+
+/// 在内存词库上批量复制：纯函数，可单测；调用方在 `modify` 事务内执行
+///
+/// 目标分组须存在；未知词条 id 直接拒绝；源与目标同组直接拒绝
+/// （前端已过滤，此处兜底，避免转移误删同组词条）
+fn copy_entries_in(
+    data: &mut LexiconData,
+    ids: &[String],
+    target_group_id: &str,
+) -> anyhow::Result<LexiconBatchCopySummary> {
+    if !data.groups.iter().any(|group| group.id == target_group_id) {
+        anyhow::bail!("unknown lexicon group");
+    }
+    let mut sources: Vec<LexiconEntry> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Some(entry) = data.entries.iter().find(|entry| entry.id == *id) else {
+            anyhow::bail!("unknown lexicon entry");
+        };
+        sources.push(entry.clone());
+    }
+    if sources
+        .iter()
+        .any(|entry| entry.group_id == target_group_id)
+    {
+        anyhow::bail!("cannot copy entries into their own group");
+    }
+    let mut seen: std::collections::HashSet<(String, String)> = data
+        .entries
+        .iter()
+        .filter(|entry| entry.group_id == target_group_id)
+        .map(|entry| copy_entry_key(&entry.text, &entry.pinyin))
+        .collect();
+    let mut copied = 0_u32;
+    let mut skipped = 0_u32;
+    for source in &sources {
+        if !seen.insert(copy_entry_key(&source.text, &source.pinyin)) {
+            skipped = skipped.saturating_add(1);
+            continue;
+        }
+        data.entries.push(LexiconEntry {
+            id: crate::cores::lexicon::new_entry_id(&data.entries),
+            group_id: target_group_id.to_owned(),
+            text: source.text.clone(),
+            pinyin: source.pinyin.clone(),
+            weight: source.weight,
+            enabled: source.enabled,
+        });
+        copied = copied.saturating_add(1);
+    }
+    Ok(LexiconBatchCopySummary { copied, skipped })
+}
+
+/// 批量复制词条到其他分组：单事务全有或全无；源词条原样保留
+pub fn copy_entries(
+    app: &tauri::AppHandle,
+    ids: &[String],
+    target_group_id: &str,
+) -> anyhow::Result<LexiconBatchCopySummary> {
+    if ids.is_empty() {
+        return Ok(LexiconBatchCopySummary {
+            copied: 0,
+            skipped: 0,
+        });
+    }
+    crate::cores::lexicon::modify(app, |data| copy_entries_in(data, ids, target_group_id))
+}
+
+/// 在内存词库上批量转移：先复制后删源，纯函数，可单测；调用方在 `modify` 事务内执行
+///
+/// 目标组重复的跳过写入但仍删除源（去重合并），与复制共用同一判重口径
+fn move_entries_in(
+    data: &mut LexiconData,
+    ids: &[String],
+    target_group_id: &str,
+) -> anyhow::Result<LexiconBatchCopySummary> {
+    let summary = copy_entries_in(data, ids, target_group_id)?;
+    data.entries
+        .retain(|entry| !ids.iter().any(|id| id == &entry.id));
+    Ok(summary)
+}
+
+/// 批量转移词条到其他分组：单事务全有或全无；先写入目标组再删源
+pub fn move_entries(
+    app: &tauri::AppHandle,
+    ids: &[String],
+    target_group_id: &str,
+) -> anyhow::Result<LexiconBatchCopySummary> {
+    if ids.is_empty() {
+        return Ok(LexiconBatchCopySummary {
+            copied: 0,
+            skipped: 0,
+        });
+    }
+    crate::cores::lexicon::modify(app, |data| move_entries_in(data, ids, target_group_id))
+}
+
 /// 分组导出文件标识：导入时校验，不符直接拒绝
 pub const LEXICON_EXPORT_FORMAT: &str = "asr-studio-lexicon-group";
 /// 分组导出文件版本：仅当前版本可读
@@ -948,7 +1057,7 @@ pub fn import_group_from_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cores::lexicon::{LexiconEntry, LexiconGroup};
+    use crate::cores::lexicon::{LexiconData, LexiconEntry, LexiconGroup};
 
     fn group(id: &str, global: bool) -> LexiconGroup {
         LexiconGroup {
@@ -1241,5 +1350,131 @@ mod tests {
         ];
         assert_eq!(unique_group_name(&existing, "生活"), "生活");
         assert_eq!(unique_group_name(&existing, "工作"), "工作 (3)");
+    }
+
+    /// 构造内存词库：分组 + 词条直接装配，复制 / 转移纯函数单测共用
+    fn lexicon_data(groups: Vec<LexiconGroup>, entries: Vec<LexiconEntry>) -> LexiconData {
+        LexiconData {
+            version: 1,
+            groups,
+            entries,
+        }
+    }
+
+    fn work_life_data() -> LexiconData {
+        lexicon_data(
+            vec![
+                group("global", true),
+                group("work", false),
+                group("life", false),
+            ],
+            vec![
+                entry("w1", "work", "权力", "quan li", 5),
+                entry("w2", "work", "成长", "cheng zhang", 0),
+                entry("l1", "life", "在", "zai", 0),
+            ],
+        )
+    }
+
+    #[test]
+    fn copy_entries_duplicates_into_target_with_new_ids() {
+        let mut data = work_life_data();
+        let summary = copy_entries_in(&mut data, &["w1".to_owned(), "w2".to_owned()], "life")
+            .expect("copy succeeds");
+        assert_eq!(
+            summary,
+            LexiconBatchCopySummary {
+                copied: 2,
+                skipped: 0,
+            }
+        );
+        // 源保留，目标新增（新 id、原属性）
+        assert_eq!(
+            data.entries.iter().filter(|e| e.group_id == "work").count(),
+            2
+        );
+        let copied: Vec<&LexiconEntry> = data
+            .entries
+            .iter()
+            .filter(|e| e.group_id == "life" && e.text != "在")
+            .collect();
+        assert_eq!(copied.len(), 2);
+        assert!(copied.iter().all(|e| e.id != "w1" && e.id != "w2"));
+        assert!(copied.iter().any(|e| e.text == "权力" && e.weight == 5));
+    }
+
+    #[test]
+    fn copy_entries_skips_target_duplicates() {
+        let mut data = work_life_data();
+        data.entries
+            .push(entry("l2", "life", "权力", "quan  li", 0));
+        let summary = copy_entries_in(&mut data, &["w1".to_owned(), "w2".to_owned()], "life")
+            .expect("copy succeeds");
+        // 多空格拼音归一后命中，"w1" 跳过
+        assert_eq!(
+            summary,
+            LexiconBatchCopySummary {
+                copied: 1,
+                skipped: 1,
+            }
+        );
+        assert_eq!(
+            data.entries.iter().filter(|e| e.group_id == "work").count(),
+            2
+        );
+    }
+
+    #[test]
+    fn copy_entries_rejects_unknown_and_same_group() {
+        let mut data = work_life_data();
+        assert!(copy_entries_in(&mut data, &["missing".to_owned()], "life").is_err());
+        assert!(copy_entries_in(&mut data, &["w1".to_owned()], "missing").is_err());
+        // 同组复制拒绝，避免转移误删同组词条
+        assert!(copy_entries_in(&mut data, &["w1".to_owned()], "work").is_err());
+        // 任一失败都不落盘
+        assert_eq!(data.entries.len(), 3);
+    }
+
+    #[test]
+    fn move_entries_copies_then_deletes_sources() {
+        let mut data = work_life_data();
+        let summary = move_entries_in(&mut data, &["w1".to_owned(), "w2".to_owned()], "life")
+            .expect("move succeeds");
+        assert_eq!(
+            summary,
+            LexiconBatchCopySummary {
+                copied: 2,
+                skipped: 0,
+            }
+        );
+        assert!(data.entries.iter().all(|e| e.id != "w1" && e.id != "w2"));
+        assert_eq!(
+            data.entries.iter().filter(|e| e.group_id == "life").count(),
+            3
+        );
+    }
+
+    #[test]
+    fn move_entries_merges_target_duplicates() {
+        let mut data = work_life_data();
+        data.entries.push(entry("l2", "life", "权力", "quan li", 0));
+        let summary =
+            move_entries_in(&mut data, &["w1".to_owned()], "life").expect("move succeeds");
+        // 跳过写入但仍删除源：去重合并
+        assert_eq!(
+            summary,
+            LexiconBatchCopySummary {
+                copied: 0,
+                skipped: 1,
+            }
+        );
+        assert!(data.entries.iter().all(|e| e.id != "w1"));
+        assert_eq!(
+            data.entries
+                .iter()
+                .filter(|e| e.group_id == "life" && e.text == "权力")
+                .count(),
+            1
+        );
     }
 }

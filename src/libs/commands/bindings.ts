@@ -60,6 +60,10 @@ export const commands = {
 	batchDeleteLexiconEntries: (ids: string[]) => typedError<number, CommandError>(__TAURI_INVOKE("batch_delete_lexicon_entries", { ids })),
 	/**  批量启用 / 禁用词条：单事务全有或全无，返回更新数 */
 	batchSetLexiconEntriesEnabled: (ids: string[], enabled: boolean) => typedError<number, CommandError>(__TAURI_INVOKE("batch_set_lexicon_entries_enabled", { ids, enabled })),
+	/**  批量复制词条到其他分组：单事务全有或全无，源词条原样保留，返回落盘统计 */
+	batchCopyLexiconEntries: (ids: string[], targetGroupId: string) => typedError<LexiconBatchCopySummary, CommandError>(__TAURI_INVOKE("batch_copy_lexicon_entries", { ids, targetGroupId })),
+	/**  批量转移词条到其他分组：单事务先写入目标组再删源，重复跳过但仍删源（去重合并） */
+	batchMoveLexiconEntries: (ids: string[], targetGroupId: string) => typedError<LexiconBatchCopySummary, CommandError>(__TAURI_INVOKE("batch_move_lexicon_entries", { ids, targetGroupId })),
 	/**  为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认 */
 	suggestLexiconPinyin: (text: string) => typedError<string, CommandError>(__TAURI_INVOKE("suggest_lexicon_pinyin", { text })),
 	/**  导出分组到 JSON 文件：返回词条数供前端提示 */
@@ -275,6 +279,14 @@ export type Config_Serialize = {
 	custom_model_dirs: { [key in string]: string },
 	/**  词库生效分组 id 列表；缺失或脏值回落空数组（仅全局组生效） */
 	active_lexicon_groups: string[],
+};
+
+/**  批量复制 / 转移的落盘统计：实际写入数 + 目标组判重跳过数（命令返回体） */
+export type LexiconBatchCopySummary = {
+	/**  成功写入目标分组的词条数 */
+	copied: number,
+	/**  目标组内（词面 + 归一拼音）命中已存在而跳过数 */
+	skipped: number,
 };
 
 /**  词库词条：拼音为空格分隔音节（新建时自动建议、可手动改） */

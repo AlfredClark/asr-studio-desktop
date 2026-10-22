@@ -43,6 +43,8 @@ macro_rules! collect_commands {
             $crate::commands::lexicon::delete_lexicon_entry,
             $crate::commands::lexicon::batch_delete_lexicon_entries,
             $crate::commands::lexicon::batch_set_lexicon_entries_enabled,
+            $crate::commands::lexicon::batch_copy_lexicon_entries,
+            $crate::commands::lexicon::batch_move_lexicon_entries,
             $crate::commands::lexicon::suggest_lexicon_pinyin,
             $crate::commands::lexicon::export_lexicon_group,
             $crate::commands::lexicon::import_lexicon_group,
