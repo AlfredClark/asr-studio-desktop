@@ -36,7 +36,7 @@
             variant={pressed ? "default" : "outline"}
             size="sm"
             class={cn(
-              "h-9 min-w-0 flex-1 px-1 text-xs",
+              "h-9 min-w-0 flex-1 overflow-hidden px-1 text-xs",
               current && "ring-2 ring-primary",
               !interactive && "disabled:cursor-default disabled:opacity-100",
             )}
@@ -45,8 +45,9 @@
             disabled={!interactive}
             aria-pressed={pressed}
             aria-label={keyLabel(cap.id)}
+            title={keyLabel(cap.id)}
           >
-            {keyLabel(cap.id)}
+            <span class="min-w-0 flex-1 truncate">{keyLabel(cap.id)}</span>
           </Button>
         {/each}
       {/each}

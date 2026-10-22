@@ -612,35 +612,35 @@ fn load_close_behavior(app: &tauri::AppHandle) -> CloseBehavior {
 }
 
 /// 读取持久化的快速打开快捷键；未设置或类型不符时回落空字符串（禁用）
-fn load_shortcut_quick_open(app: &tauri::AppHandle) -> String {
+pub fn load_shortcut_quick_open(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_SHORTCUT_QUICK_OPEN)
         .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
         .unwrap_or_default()
 }
 
 /// 读取持久化的语音识别快捷键；未设置或类型不符时回落空字符串（禁用）
-fn load_shortcut_voice(app: &tauri::AppHandle) -> String {
+pub fn load_shortcut_voice(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_SHORTCUT_VOICE)
         .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
         .unwrap_or_default()
 }
 
 /// 读取持久化的快捷词库快捷键；未设置或类型不符时回落空字符串（禁用）
-fn load_shortcut_quick_lexicon(app: &tauri::AppHandle) -> String {
+pub fn load_shortcut_quick_lexicon(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_SHORTCUT_QUICK_LEXICON)
         .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
         .unwrap_or_default()
 }
 
 /// 读取持久化的指令快捷键；未设置或类型不符时回落空字符串（禁用）
-fn load_shortcut_directive(app: &tauri::AppHandle) -> String {
+pub fn load_shortcut_directive(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_SHORTCUT_DIRECTIVE)
         .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
         .unwrap_or_default()
 }
 
 /// 读取持久化的快捷词库目标分组；未设置、空白或类型不符时回落全局分组
-fn load_quick_lexicon_group(app: &tauri::AppHandle) -> String {
+pub fn load_quick_lexicon_group(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_QUICK_LEXICON_GROUP)
         .and_then(|value| {
             value

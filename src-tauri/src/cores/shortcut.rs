@@ -131,8 +131,8 @@ fn voice_registered() -> &'static Mutex<String> {
 /// 清空与停止只解绑。注册失败只记日志，调用方经 `is_registered` 自行提示换组合。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn set_voice_active(app: &AppHandle, active: bool) {
-    let current = crate::cores::config::load_config(app)
-        .shortcut_voice
+    // 热路径单键读取：转写/启停时调用，不拉 13 键全量 `load_config`
+    let current = crate::cores::config::load_shortcut_voice(app)
         .trim()
         .to_owned();
     let mut registered = voice_registered().lock().unwrap_or_else(|poison| {
@@ -173,8 +173,8 @@ fn quick_lexicon_registered() -> &'static Mutex<String> {
 /// 清空与停止只解绑。注册失败只记日志，调用方经 `is_registered` 自行提示换组合。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn set_quick_lexicon_active(app: &AppHandle, active: bool) {
-    let current = crate::cores::config::load_config(app)
-        .shortcut_quick_lexicon
+    // 热路径单键读取：转写/启停时调用，不拉 13 键全量 `load_config`
+    let current = crate::cores::config::load_shortcut_quick_lexicon(app)
         .trim()
         .to_owned();
     let mut registered = quick_lexicon_registered().lock().unwrap_or_else(|poison| {
@@ -215,8 +215,8 @@ fn directive_registered() -> &'static Mutex<String> {
 /// 清空与停止只解绑。注册失败只记日志，调用方经 `is_registered` 自行提示换组合。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn set_directive_active(app: &AppHandle, active: bool) {
-    let current = crate::cores::config::load_config(app)
-        .shortcut_directive
+    // 热路径单键读取：转写/启停时调用，不拉 13 键全量 `load_config`
+    let current = crate::cores::config::load_shortcut_directive(app)
         .trim()
         .to_owned();
     let mut registered = directive_registered().lock().unwrap_or_else(|poison| {

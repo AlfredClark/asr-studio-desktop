@@ -999,6 +999,9 @@ fn is_retryable_error(err: &anyhow::Error) -> bool {
 }
 
 /// 带重试的下载：单次失败（停滞/断流/校验不过）退避后重来，3 次仍失败才交命令层报错
+///
+/// 续传语义：可重试失败保留 `.part` 残留，下次尝试从断点续下；
+/// 不可重试失败（空间不足/校验失败）删残留与暂存目录，避免脏包误导后人。
 async fn download_with_retry(
     app: &tauri::AppHandle,
     spec: &'static ModelSpec,
@@ -1009,11 +1012,10 @@ async fn download_with_retry(
         match download_inner(app, spec).await {
             Ok(()) => return Ok(()),
             Err(err) => {
-                // 残留包不清会影响下次判断：失败即删，下次尝试从干净状态开始
-                if let Ok(part) = part_path(app, spec) {
-                    std::fs::remove_file(&part).ok();
-                }
                 if !is_retryable_error(&err) {
+                    if let Ok(part) = part_path(app, spec) {
+                        std::fs::remove_file(&part).ok();
+                    }
                     if let Ok(root) = models_root(app) {
                         std::fs::remove_dir_all(staging_dir(&root, spec.id)).ok();
                     }
@@ -1031,6 +1033,11 @@ async fn download_with_retry(
             }
         }
     }
+}
+
+/// 解析 `Content-Range: bytes from-to/total` 的全量字节数；格式不对返回 `None`
+fn parse_content_range_total(header: &str) -> Option<u64> {
+    header.rsplit('/').next()?.trim().parse().ok()
 }
 
 /// 下载前空间预检：压缩包 + 解压后文件总和 + 余量；空间不足直接拒绝，不浪费下载时间
@@ -1146,45 +1153,84 @@ fn preflight_download(
     ensure_free_space(app, spec, total)
 }
 
-/// 下载主体：拉包 → 改名 → 解压 → 校验；任一步失败直接返回错误并清理现场
-async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> anyhow::Result<()> {
+/// 拉包建连（含断点续传协商）：`.part` 残留即带 `Range` 请求；
+/// 服务端不支持续传（200）或区间失效时丢弃残留全量重下；
+/// 返回（响应，是否续传，续传起点）。
+async fn fetch_package_response(
+    client: &reqwest::Client,
+    spec: &'static ModelSpec,
+    part: &std::path::Path,
+    resume_from: u64,
+) -> anyhow::Result<(reqwest::Response, bool, u64)> {
+    let mut request = client.get(spec.download_url());
+    if resume_from > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
+    }
+    let response = request
+        .send()
+        .await
+        .context("failed to start model download")?;
+    let resumed = response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    if resume_from > 0 && !resumed {
+        log::info!("server ignored range request, restarting download from scratch");
+        std::fs::remove_file(part).ok();
+        let response = client
+            .get(spec.download_url())
+            .send()
+            .await
+            .context("failed to restart model download")?;
+        return Ok((response, false, 0));
+    }
+    Ok((response, resumed, if resumed { resume_from } else { 0 }))
+}
+
+/// 取包全量字节数：206 时 `content_length` 只是剩余量，从 `Content-Range` 取全量
+fn package_total(response: &reqwest::Response, resumed: bool, resume_from: u64) -> Option<u64> {
+    if !resumed {
+        return response.content_length();
+    }
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_content_range_total)
+        .or_else(|| resume_from.checked_add(response.content_length().unwrap_or(0)))
+}
+
+/// 流式落盘：续传追加、全量截断；进度节流推送；结束做全量字节核对
+async fn stream_to_part(
+    app: &tauri::AppHandle,
+    spec: &'static ModelSpec,
+    response: reqwest::Response,
+    part: &std::path::Path,
+    resumed: bool,
+    resume_from: u64,
+    total: Option<u64>,
+) -> anyhow::Result<()> {
     use futures_util::StreamExt as _;
     use std::io::Write as _;
 
     /// 相邻数据包最大间隔：超时即判停滞，避免弱网下无限挂起
     const IDLE_TIMEOUT_SECS: u64 = 60;
 
-    let part = part_path(app, spec)?;
-    if part.is_file() {
-        std::fs::remove_file(&part).context("failed to clear stale partial package")?;
-    }
-
-    let client = reqwest::Client::builder()
-        .user_agent("asr-studio-desktop")
-        .connect_timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("failed to build http client")?;
-    let response = client
-        .get(spec.download_url())
-        .send()
-        .await
-        .context("failed to start model download")?
+    let response = response
         .error_for_status()
         .context("model download request failed")?;
-    let total = response.content_length();
-
-    // 上游重发同名包时字节数会变：只告警不断言，最终以解压后 `verify_model` 为准
-    preflight_download(app, spec, total)?;
-
-    let mut file = std::fs::File::create(&part).context("failed to create partial package")?;
-    let mut downloaded = 0_u64;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(resumed)
+        .write(true)
+        .truncate(!resumed)
+        .open(part)
+        .context("failed to open partial package")?;
+    let mut downloaded = resume_from;
     let mut throttle = ProgressThrottle::new();
     emit_progress(
         app,
         DownloadProgress {
             id: spec.id.to_owned(),
             phase: DownloadPhase::Download,
-            downloaded: 0,
+            downloaded,
             total,
             current: None,
         },
@@ -1223,14 +1269,49 @@ async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> any
         }
     }
     drop(file);
-    if let Some(total) = total.filter(|total| *total > 0) {
-        let actual = std::fs::metadata(&part)
-            .context("failed to stat package")?
-            .len();
-        if actual != total {
-            std::fs::remove_file(&part).ok();
-            anyhow::bail!("downloaded package size mismatch: {actual} != {total}");
-        }
+    Ok(())
+}
+
+/// 下载主体：拉包（断点续传）→ 改名 → 解压 → 校验；任一步失败直接返回错误
+///
+/// 续传语义：`.part` 残留即为续传起点（重试/取消后下次接着下）；
+/// 服务端不支持 `Range` 时回落全量重下；上游改包导致体积变化时丢弃残留重下。
+async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> anyhow::Result<()> {
+    let part = part_path(app, spec)?;
+    let resume_from = std::fs::metadata(&part).map_or(0, |meta| meta.len());
+
+    let client = reqwest::Client::builder()
+        .user_agent("asr-studio-desktop")
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("failed to build http client")?;
+    let (response, resumed, resume_from) =
+        fetch_package_response(&client, spec, &part, resume_from).await?;
+    let total = package_total(&response, resumed, resume_from);
+
+    // 残留比全量还大：上游改包，丢弃重下
+    if let Some(total) = total.filter(|total| *total > 0)
+        && resume_from > total
+    {
+        log::warn!("stale partial package larger than remote, restarting download");
+        std::fs::remove_file(&part).ok();
+        return Err(anyhow::anyhow!(
+            "remote model package changed, retry download"
+        ));
+    }
+
+    // 上游重发同名包时字节数会变：只告警不断言，最终以解压后 `verify_model` 为准
+    preflight_download(app, spec, total)?;
+
+    stream_to_part(app, spec, response, &part, resumed, resume_from, total).await?;
+    let downloaded = std::fs::metadata(&part)
+        .context("failed to stat package")?
+        .len();
+    if let Some(total) = total.filter(|total| *total > 0)
+        && downloaded != total
+    {
+        std::fs::remove_file(&part).ok();
+        anyhow::bail!("downloaded package size mismatch: {downloaded} != {total}");
     }
     emit_progress(
         app,
@@ -1386,6 +1467,14 @@ mod tests {
     fn staging_dir_uses_dot_prefixed_name() {
         let root = std::path::Path::new("/data/models");
         assert_eq!(staging_dir(root, "demo"), root.join(".demo.extracting"));
+    }
+
+    #[test]
+    fn content_range_total_parses_last_segment() {
+        assert_eq!(parse_content_range_total("bytes 100-200/1234"), Some(1234));
+        assert_eq!(parse_content_range_total("bytes */5678"), Some(5678));
+        assert_eq!(parse_content_range_total("garbage"), None);
+        assert_eq!(parse_content_range_total("bytes 0-10/"), None);
     }
 
     #[test]

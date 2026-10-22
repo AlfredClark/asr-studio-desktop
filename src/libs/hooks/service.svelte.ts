@@ -155,7 +155,7 @@ export async function refreshServiceData(): Promise<void> {
     .listInputDevices()
     .success((devices) => {
       // 设备列表会话内只取一次：枚举会打开硬件，进页就刷又慢又刷屏；
-      // 热插拔暂不支持，需要时重启应用重取
+      // 热插拔经下方 `refreshDevices` 手动重取，此处保留首刷
       if (serviceState.devices.length > 0) return;
       serviceState.devices = devices;
       if (
@@ -177,6 +177,30 @@ export async function refreshServiceData(): Promise<void> {
   await syncStatus();
 }
 
+/** 手动重取录音设备（热插拔）：录制中禁止，失败提示；成功后补齐默认选中 */
+export async function refreshDevices(): Promise<void> {
+  if (serviceState.recording) return;
+  await commands
+    .listInputDevices()
+    .success((devices) => {
+      serviceState.devices = devices;
+      if (
+        serviceState.selectedDevice == null ||
+        !devices.some((device) => device.id === serviceState.selectedDevice)
+      ) {
+        serviceState.selectedDevice =
+          devices.find((device) => device.id === DEFAULT_DEVICE_ID)?.id ??
+          devices.find((device) => device.is_default)?.id ??
+          devices[0]?.id ??
+          null;
+      }
+    })
+    .failed((failure) => {
+      toast.error(m.service_load_devices_failed());
+      reportCommandFailure("[service] failed to reload devices", failure);
+    });
+}
+
 /** 启动服务：只接受已选中的就绪模型，成功后同步快照并核验语音键注册 */
 export async function startService(): Promise<void> {
   const id = serviceState.selectedModel;
@@ -196,7 +220,7 @@ export async function startService(): Promise<void> {
   } finally {
     serviceState.switching = false;
   }
-  await warnIfVoiceShortcutInactive();
+  await warnIfShortcutsInactive();
 }
 
 /** 停止服务：幂等成功，后端未运行也视为成功 */
@@ -238,21 +262,39 @@ export async function selectModel(id: string): Promise<void> {
   } finally {
     serviceState.switching = false;
   }
-  await warnIfVoiceShortcutInactive();
+  await warnIfShortcutsInactive();
 }
 
-/** 启动成功后核验语音快捷键：存量组合未注册（被占用或非法）即提示换组合。 停止态与未配置直接跳过——注册与服务运行态同生命周期，查了也是假阴性。 */
-async function warnIfVoiceShortcutInactive(): Promise<void> {
+/** 启动成功后核验三路服务期快捷键：存量组合未注册（被占用或非法）即提示换组合。 停止态与未配置直接跳过——注册与服务运行态同生命周期，查了也是假阴性。 */
+async function warnIfShortcutsInactive(): Promise<void> {
   if (serviceState.status?.state !== "running") return;
-  const combo = configValue("shortcut_voice", "").trim();
-  if (!combo) return;
-  const result = await commands.isShortcutRegistered(combo).result();
-  if (result.status === "error") {
-    reportCommandFailure("[service] voice shortcut check failed", result.error);
-    return;
-  }
-  if (!result.data) {
-    toast.warning(m.settings_voice_not_registered());
+  const checks: { combo: string; message: () => string; tag: string }[] = [
+    {
+      combo: configValue("shortcut_voice", "").trim(),
+      message: m.settings_voice_not_registered,
+      tag: "[service] voice shortcut check failed",
+    },
+    {
+      combo: configValue("shortcut_quick_lexicon", "").trim(),
+      message: m.settings_quick_lexicon_not_registered,
+      tag: "[service] quick lexicon shortcut check failed",
+    },
+    {
+      combo: configValue("shortcut_directive", "").trim(),
+      message: m.settings_directive_not_registered,
+      tag: "[service] directive shortcut check failed",
+    },
+  ];
+  for (const check of checks) {
+    if (!check.combo) continue;
+    const result = await commands.isShortcutRegistered(check.combo).result();
+    if (result.status === "error") {
+      reportCommandFailure(check.tag, result.error);
+      continue;
+    }
+    if (!result.data) {
+      toast.warning(check.message());
+    }
   }
 }
 
@@ -314,7 +356,9 @@ async function stopAndTranscribe(raw = false): Promise<TestResult | null> {
       ? await commands.transcribeFileRaw(record.data.path).result()
       : await commands.transcribeFile(record.data.path).result();
     if (transcribed.status === "error") {
-      if (isTranscribeBusyFailure(transcribed.error.message)) {
+      if (isTranscribeCancelledFailure(transcribed.error.message)) {
+        toast.message(m.service_recognize_cancelled());
+      } else if (isTranscribeBusyFailure(transcribed.error.message)) {
         toast.warning(m.service_recognize_busy());
       } else {
         toast.error(m.service_recognize_failed());
@@ -457,10 +501,24 @@ const SHORTCUT_VOICE_TRIGGER_EVENT = "shortcut-voice-trigger";
 
 /** 后端转写忙错误字面量（与 Rust 侧 `TRANSCRIBE_BUSY_MESSAGE` 会合，改名需两端同步） */
 export const TRANSCRIBE_BUSY_MESSAGE = "transcription already in progress";
+/** 后端转写取消口径（与 Rust 侧 `TRANSCRIBE_CANCELLED_MESSAGE` 会合，改名需两端同步） */
+export const TRANSCRIBE_CANCELLED_MESSAGE = "transcription cancelled";
 
 /** 是否为“已有转写占用”失败：命中则提示稍候而非报失败；纯函数，可单测 */
 export function isTranscribeBusyFailure(message: unknown): boolean {
   return typeof message === "string" && message.includes(TRANSCRIBE_BUSY_MESSAGE);
+}
+
+/** 是否为“转写已取消”：命中则静默收尾（仅提示已取消），不报失败；纯函数，可单测 */
+export function isTranscribeCancelledFailure(message: unknown): boolean {
+  return typeof message === "string" && message.includes(TRANSCRIBE_CANCELLED_MESSAGE);
+}
+
+/** 取消当前转写：后端 200ms 内以取消结算，等待中的识别提前返回；幂等 */
+export async function cancelTranscription(): Promise<void> {
+  await commands.cancelTranscription().failed((failure) => {
+    reportCommandFailure("[service] cancel transcribe failed", failure);
+  });
 }
 
 let shortcutVoiceListening = false;

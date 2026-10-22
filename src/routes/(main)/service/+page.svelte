@@ -29,6 +29,8 @@
   import { groupLabel, lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
   import {
     deviceLabel,
+    cancelTranscription,
+    refreshDevices,
     refreshServiceData,
     selectDevice,
     selectModel,
@@ -248,8 +250,8 @@
                 {m.service_record_stop()}
               </Button>
             {:else if serviceState.recognizing}
-              <Button size="sm" disabled>
-                {m.service_recognizing()}
+              <Button variant="outline" size="sm" onclick={() => void cancelTranscription()}>
+                {m.service_cancel_recognition()}
               </Button>
             {:else}
               <Button
@@ -322,6 +324,16 @@
               {/if}
             {/snippet}
           </CardRow>
+          <div class="flex shrink-0 justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              onclick={() => void refreshDevices()}
+              disabled={serviceState.recording || serviceState.recognizing}
+            >
+              {m.service_device_refresh()}
+            </Button>
+          </div>
           <CardRow label={m.settings_voice_label()} description={m.settings_voice_description()}>
             {#snippet control()}
               <ShortcutRecordRow kind="voice" />

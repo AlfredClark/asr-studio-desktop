@@ -5,6 +5,7 @@
 //! 识别器全局单例常驻内存（`SERVICE`），转写时取出独占使用后归还；
 //! 快捷键触发的识别复用同一入口（`transcribe_file`），不经过命令层。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// 服务状态：启动中与运行中互斥，同一时刻只加载一个模型
@@ -65,9 +66,31 @@ fn next_generation() -> u64 {
     GENERATION.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
 }
 
+/// 转写取消标志：`cancel_transcription` 置位，运行中的转写轮询到后提前结算；
+/// 一次置位只消费一次（`take` 即清零），排队中的后来者不受牵连。
+fn transcribe_cancel_flag() -> &'static AtomicBool {
+    static CANCEL: OnceLock<AtomicBool> = OnceLock::new();
+    CANCEL.get_or_init(|| AtomicBool::new(false))
+}
+
+/// 请求取消当前转写：幂等，无运行中转写时置位保留到下一次转写启动即消费
+/// （调用方为取消命令与 `stop`，后者停服务同时中断等待中的转写结算）。
+pub fn request_cancel_transcription() {
+    transcribe_cancel_flag().store(true, Ordering::SeqCst);
+}
+
+/// 取走一次取消请求；返回真表示本次等待应提前结算
+fn take_transcribe_cancel() -> bool {
+    transcribe_cancel_flag().swap(false, Ordering::SeqCst)
+}
+
 /// 转写忙错误：与前端 `isTranscribeBusyFailure` 的同字面量会合，改名需两端同步
 /// （`transcribe_busy_message_is_stable` 测试锁定取值）
 pub const TRANSCRIBE_BUSY_MESSAGE: &str = "transcription already in progress";
+/// 转写取消：前端取消按钮与 `stop` 联动的结算口径，改名需两端同步
+pub const TRANSCRIBE_CANCELLED_MESSAGE: &str = "transcription cancelled";
+/// 取消轮询步长：转写等待以此步长检查取消标志，200ms 内响应取消
+const TRANSCRIBE_CANCEL_POLL_MS: u64 = 200;
 /// 启动中错误：服务占位加载时转写直接拒绝，不与“忙”混淆
 pub const SERVICE_STARTING_MESSAGE: &str = "service is starting, please wait";
 /// 识别器加载超时秒：2GB 级大模型慢盘加载兜底，超时清占位并分离回收后台句柄
@@ -208,7 +231,10 @@ pub async fn start(_app: &tauri::AppHandle, _model_id: &str) -> anyhow::Result<(
 }
 
 /// 停止服务：释放识别器占用的内存并解绑语音、快捷词库与指令快捷键；未运行视为成功（幂等）
+///
+/// 同时置位转写取消：等待中的转写提前以取消结算，不再空等解码完成
 pub fn stop(app: &tauri::AppHandle) {
+    request_cancel_transcription();
     *lock_service() = None;
     crate::cores::shortcut::set_voice_active(app, false);
     crate::cores::shortcut::set_quick_lexicon_active(app, false);
@@ -474,29 +500,45 @@ async fn transcribe_file_inner(
     .await
     .map_err(|_| busy_or_stopped_error())?;
     let (generation, recognizer) = take_recognizer()?;
+    // 进入解码等待即清掉陈旧取消（停服务残留的置位不应误杀下一次转写）
+    take_transcribe_cancel();
+    // 取消感知的等待：onnx 解码不可中断，取消/超时均分离等待其结束再按代归还，
+    // 调用方提前结算（取消 200ms 内响应，超时按常量），回收前的新转写报“忙”
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(TRANSCRIBE_TIMEOUT_SECS))
+        .unwrap_or_else(std::time::Instant::now);
     let mut task = tokio::task::spawn_blocking(move || {
         let outcome = transcribe_blocking(&recognizer, &canonical);
         (recognizer, outcome)
     });
-    let task_outcome = if let Ok(join) = tokio::time::timeout(
-        std::time::Duration::from_secs(TRANSCRIBE_TIMEOUT_SECS),
-        &mut task,
-    )
-    .await
-    {
-        join.context("transcribe task failed")?
-    } else {
-        // 超时不 abort 阻塞线程（onnx 解码不可中断）：分离等待其结束再按代归还，
-        // 回收前的新转写报“忙”而非“未运行”；任务异常结束则仅清同代 `busy` 防卡死
-        tokio::spawn(async move {
-            match task.await {
-                Ok((recognizer, _)) => put_back_recognizer(generation, recognizer),
-                Err(_) => clear_busy(generation),
+    let task_outcome = loop {
+        tokio::select! {
+            join = &mut task => {
+                break join.context("transcribe task failed")?;
             }
-        });
-        return Err(busy_or_stopped_error()).context(format!(
-            "transcription timed out after {TRANSCRIBE_TIMEOUT_SECS}s"
-        ));
+            () = tokio::time::sleep(std::time::Duration::from_millis(TRANSCRIBE_CANCEL_POLL_MS)) => {
+                if take_transcribe_cancel() {
+                    tokio::spawn(async move {
+                        match task.await {
+                            Ok((recognizer, _)) => put_back_recognizer(generation, recognizer),
+                            Err(_) => clear_busy(generation),
+                        }
+                    });
+                    return Err(anyhow::anyhow!(TRANSCRIBE_CANCELLED_MESSAGE));
+                }
+                if std::time::Instant::now() >= deadline {
+                    tokio::spawn(async move {
+                        match task.await {
+                            Ok((recognizer, _)) => put_back_recognizer(generation, recognizer),
+                            Err(_) => clear_busy(generation),
+                        }
+                    });
+                    return Err(busy_or_stopped_error()).context(format!(
+                        "transcription timed out after {TRANSCRIBE_TIMEOUT_SECS}s"
+                    ));
+                }
+            }
+        }
     };
     let (recognizer, outcome) = task_outcome;
     // 归还识别器：按代归还，期间被停止或换新则直接释放旧句柄，不覆盖新状态
@@ -577,6 +619,7 @@ mod tests {
         // 前端 `isTranscribeBusyFailure` 硬编码同一字面量，改名需两端同步
         assert_eq!(TRANSCRIBE_BUSY_MESSAGE, "transcription already in progress");
         assert_eq!(SERVICE_STARTING_MESSAGE, "service is starting, please wait");
+        assert_eq!(TRANSCRIBE_CANCELLED_MESSAGE, "transcription cancelled");
     }
 
     #[test]

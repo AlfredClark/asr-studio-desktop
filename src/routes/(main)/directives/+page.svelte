@@ -100,7 +100,7 @@
     </div>
   {:else}
     <ResizablePaneGroup direction="horizontal" class="h-full gap-2">
-      <ResizablePane defaultSize={40} minSize={30}>
+      <ResizablePane defaultSize={30} minSize={22}>
         <div class="flex h-full flex-col gap-2 p-4">
           <div class="flex shrink-0 items-baseline justify-between gap-2">
             <h2 class="text-sm font-medium">{m.directives_list_title()}</h2>
@@ -139,7 +139,7 @@
         </div>
       </ResizablePane>
       <ResizableHandle withHandle />
-      <ResizablePane defaultSize={60} minSize={40}>
+      <ResizablePane defaultSize={70} minSize={45}>
         <ScrollArea class="h-full">
           <div class="flex h-full flex-col gap-2 p-4">
             <DirectiveDetail directive={selected} onEdit={() => selected && openEdit(selected)} />
