@@ -193,10 +193,11 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
         service.recognizer = Some(recognizer);
     }
     drop(guard);
-    // 启动成功才开始监听语音与快捷词库快捷键：注册存量组合，失败只记日志，
+    // 启动成功才开始监听语音、快捷词库与指令快捷键：注册存量组合，失败只记日志，
     // 前端在启动结算后经 `is_shortcut_registered` 自行提示换组合
     crate::cores::shortcut::set_voice_active(app, true);
     crate::cores::shortcut::set_quick_lexicon_active(app, true);
+    crate::cores::shortcut::set_directive_active(app, true);
     Ok(())
 }
 
@@ -206,11 +207,12 @@ pub async fn start(_app: &tauri::AppHandle, _model_id: &str) -> anyhow::Result<(
     Err(anyhow::anyhow!("asr service is not supported on mobile"))
 }
 
-/// 停止服务：释放识别器占用的内存并解绑语音与快捷词库快捷键；未运行视为成功（幂等）
+/// 停止服务：释放识别器占用的内存并解绑语音、快捷词库与指令快捷键；未运行视为成功（幂等）
 pub fn stop(app: &tauri::AppHandle) {
     *lock_service() = None;
     crate::cores::shortcut::set_voice_active(app, false);
     crate::cores::shortcut::set_quick_lexicon_active(app, false);
+    crate::cores::shortcut::set_directive_active(app, false);
 }
 
 /// 按服务运行态对账语音快捷键注册：配置更新（改键 / 清空 / 重置）后由命令层调用，
@@ -222,6 +224,11 @@ pub fn sync_voice_shortcut(app: &tauri::AppHandle) {
 /// 按服务运行态对账快捷词库快捷键注册：与语音路同生命周期，调用点与之保持一致
 pub fn sync_quick_lexicon_shortcut(app: &tauri::AppHandle) {
     crate::cores::shortcut::set_quick_lexicon_active(app, lock_service().is_some());
+}
+
+/// 按服务运行态对账指令快捷键注册：与语音路同生命周期，调用点与之保持一致
+pub fn sync_directive_shortcut(app: &tauri::AppHandle) {
+    crate::cores::shortcut::set_directive_active(app, lock_service().is_some());
 }
 
 /// 按分类组装识别器配置：文件路径全部派生自模型目录，不手写绝对路径；
@@ -407,7 +414,7 @@ fn is_within_dir(file: &std::path::Path, root: &std::path::Path) -> bool {
     }
 }
 
-/// 转写音频文件：服务必须运行中；路径收敛到应用数据目录内，目录外拒绝；
+/// 转写音频文件（词库后处理版）：服务必须运行中；路径收敛到应用数据目录内，目录外拒绝；
 ///
 /// 识别器取出独占使用后归还；归还时服务已被停止则直接释放。
 /// （仅桌面端，移动端直接报错）
@@ -415,6 +422,28 @@ fn is_within_dir(file: &std::path::Path, root: &std::path::Path) -> bool {
 pub async fn transcribe_file(
     app: &tauri::AppHandle,
     path: &str,
+) -> anyhow::Result<TranscribeResult> {
+    transcribe_file_inner(app, path, true).await
+}
+
+/// 转写音频文件（原始文本版，供指令触发匹配用）：除跳过词库后处理外与常规转写一致
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub async fn transcribe_file_raw(
+    app: &tauri::AppHandle,
+    path: &str,
+) -> anyhow::Result<TranscribeResult> {
+    transcribe_file_inner(app, path, false).await
+}
+
+/// 转写音频文件：服务必须运行中；路径收敛到应用数据目录内，目录外拒绝；
+///
+/// 识别器取出独占使用后归还；归还时服务已被停止则直接释放。
+/// （仅桌面端，移动端直接报错）
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+async fn transcribe_file_inner(
+    app: &tauri::AppHandle,
+    path: &str,
+    post_process: bool,
 ) -> anyhow::Result<TranscribeResult> {
     use anyhow::Context;
     use tauri::Manager;
@@ -472,6 +501,9 @@ pub async fn transcribe_file(
     let (recognizer, outcome) = task_outcome;
     // 归还识别器：按代归还，期间被停止或换新则直接释放旧句柄，不覆盖新状态
     put_back_recognizer(generation, recognizer);
+    if !post_process {
+        return outcome;
+    }
     // 词库后处理：空词库直接原文返回，推理耗时不受影响
     outcome.map(|mut result| {
         result.text = crate::features::lexicon::apply_lexicon(app, &result.text);
@@ -482,6 +514,15 @@ pub async fn transcribe_file(
 /// 转写音频文件；移动端无此能力，直接返回错误
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub async fn transcribe_file(
+    _app: &tauri::AppHandle,
+    _path: &str,
+) -> anyhow::Result<TranscribeResult> {
+    Err(anyhow::anyhow!("transcription is not supported on mobile"))
+}
+
+/// 转写音频文件（原始文本版）；移动端无此能力，直接返回错误
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn transcribe_file_raw(
     _app: &tauri::AppHandle,
     _path: &str,
 ) -> anyhow::Result<TranscribeResult> {

@@ -69,6 +69,7 @@ vi.mock("#libs/hooks/deep-link.svelte", () => ({
 vi.mock("#libs/hooks/service.svelte", () => ({
   listenShortcutVoice: vi.fn(async () => {}),
   listenQuickLexicon: vi.fn(async () => {}),
+  listenDirective: vi.fn(async () => {}),
 }));
 
 vi.mock("#libs/hooks/updater.svelte", () => ({
@@ -153,6 +154,7 @@ describe("根布局启动水合", () => {
     active_lexicon_groups: [],
     shortcut_voice: "",
     shortcut_quick_lexicon: "",
+    shortcut_directive: "",
     quick_lexicon_group: "global",
     schema_version: 1,
   };

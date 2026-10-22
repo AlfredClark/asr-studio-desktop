@@ -3,6 +3,7 @@ import {
   DEFAULT_DEVICE_ID,
   TRANSCRIBE_BUSY_MESSAGE,
   deviceLabel,
+  handleDirectiveTrigger,
   handleQuickLexiconTrigger,
   handleShortcutTrigger,
   isTranscribeBusyFailure,
@@ -15,7 +16,7 @@ import {
   stopService,
   stopTestRecording,
 } from "#libs/hooks/service.svelte";
-import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+import type { AudioDevice, Directive, ModelEntry } from "#libs/commands/types";
 import type { LexiconGroup } from "#libs/commands/types";
 import { configState, type AppConfig } from "#libs/hooks/config.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
@@ -31,10 +32,24 @@ vi.mock("#libs/commands", () => ({
     startRecording: vi.fn(),
     stopRecording: vi.fn(),
     transcribeFile: vi.fn(),
+    transcribeFileRaw: vi.fn(),
     outputText: vi.fn(),
     isShortcutRegistered: vi.fn(),
     quickAddSelectionToLexicon: vi.fn(),
+    replayDirective: vi.fn(),
   },
+}));
+
+const directiveStateMock = vi.hoisted((): { value: Directive[] } => ({ value: [] }));
+const findDirectiveByPinyinMock = vi.hoisted(() => vi.fn());
+const refreshDirectivesMock = vi.hoisted(() => vi.fn());
+const suggestDirectivePinyinMock = vi.hoisted(() => vi.fn());
+vi.mock("#libs/hooks/directives.svelte", () => ({
+  directiveState: directiveStateMock,
+  findDirectiveByPinyin: findDirectiveByPinyinMock,
+  normalizeDirectivePinyin: (pinyin: string) => pinyin,
+  refreshDirectives: refreshDirectivesMock,
+  suggestDirectivePinyin: suggestDirectivePinyinMock,
 }));
 
 const lexiconStateMock = vi.hoisted(
@@ -166,6 +181,18 @@ beforeEach(() => {
   mocked.quickAddSelectionToLexicon.mockReturnValue(
     fakeCommand({ status: "ok", data: { added: 0, skipped: 0 } }) as never,
   );
+  mocked.transcribeFileRaw.mockReturnValue(
+    fakeCommand({
+      status: "ok",
+      data: { text: "你好", audio_sec: 2.5, infer_ms: 300 },
+    }) as never,
+  );
+  mocked.replayDirective.mockReturnValue(
+    fakeCommand({ status: "ok", data: { executed: 4 } }) as never,
+  );
+  refreshDirectivesMock.mockResolvedValue(true);
+  suggestDirectivePinyinMock.mockResolvedValue("da kai ji shi ben");
+  findDirectiveByPinyinMock.mockReturnValue(null);
   refreshLexiconMock.mockResolvedValue(true);
   configState.value = null;
 });
@@ -418,6 +445,7 @@ describe("识别服务状态", () => {
       fileName: `old-${index}.wav`,
       id: index + 1,
       at: index,
+      kind: "voice" as const,
     }));
 
     await startTestRecording();
@@ -433,8 +461,16 @@ describe("识别服务状态", () => {
 
   it("历史统计：条数、字符总数与推理耗时均值", () => {
     const stats = summarizeHistory([
-      { text: "你好", audioSec: 2, inferMs: 1000, fileName: "a.wav", id: 1, at: 1 },
-      { text: "世界！", audioSec: 3, inferMs: 3000, fileName: "b.wav", id: 2, at: 2 },
+      { text: "你好", audioSec: 2, inferMs: 1000, fileName: "a.wav", id: 1, at: 1, kind: "voice" },
+      {
+        text: "世界！",
+        audioSec: 3,
+        inferMs: 3000,
+        fileName: "b.wav",
+        id: 2,
+        at: 2,
+        kind: "directive",
+      },
     ]);
 
     expect(stats).toEqual({ count: 2, totalChars: 5, avgInferMs: 2000 });
@@ -489,6 +525,7 @@ describe("识别服务状态", () => {
     expect(serviceState.result?.text).toBe("你好");
     expect(mocked.outputText).toHaveBeenCalledWith("你好");
     expect(mockedToast.warning).not.toHaveBeenCalled();
+    expect(serviceState.history[0]).toMatchObject({ text: "你好", kind: "voice" });
   });
 
   it("快捷键降级输出时提示用户", async () => {
@@ -614,5 +651,86 @@ describe("快捷词库触发", () => {
     await handleQuickLexiconTrigger();
 
     expect(mocked.quickAddSelectionToLexicon).not.toHaveBeenCalled();
+  });
+});
+
+describe("指令触发", () => {
+  function runningRecording(): void {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedDevice = device.id;
+    serviceState.recording = true;
+  }
+
+  it("空闲时直接开始录制", async () => {
+    runningStatus();
+    serviceState.selectedDevice = device.id;
+
+    await handleDirectiveTrigger();
+
+    expect(mocked.startRecording).toHaveBeenCalledWith(device.id);
+    expect(serviceState.recording).toBe(true);
+  });
+
+  it("录制中按第二次走原始文本转写并回放命中指令", async () => {
+    runningRecording();
+    findDirectiveByPinyinMock.mockReturnValue({ id: "d-1" } as Directive);
+
+    await handleDirectiveTrigger();
+
+    expect(mocked.transcribeFileRaw).toHaveBeenCalledWith("/records/a.wav");
+    expect(mocked.transcribeFile).not.toHaveBeenCalled();
+    expect(findDirectiveByPinyinMock).toHaveBeenCalled();
+    expect(mocked.replayDirective).toHaveBeenCalledWith("d-1");
+    expect(serviceState.history[0]).toMatchObject({ text: "你好", kind: "directive" });
+    expect(mockedToast.success).not.toHaveBeenCalled();
+    expect(mockedToast.error).not.toHaveBeenCalled();
+  });
+
+  it("未命中时静默返回", async () => {
+    runningRecording();
+    findDirectiveByPinyinMock.mockReturnValue(null);
+
+    await handleDirectiveTrigger();
+
+    expect(refreshDirectivesMock).toHaveBeenCalledOnce();
+    expect(mocked.replayDirective).not.toHaveBeenCalled();
+    expect(mockedToast.success).not.toHaveBeenCalled();
+    expect(mockedToast.error).not.toHaveBeenCalled();
+    expect(mockedToast.warning).not.toHaveBeenCalled();
+  });
+
+  it("转写失败走内核提示且不回放", async () => {
+    runningRecording();
+    mocked.transcribeFileRaw.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    await handleDirectiveTrigger();
+
+    expect(mockedToast.error).toHaveBeenCalledWith(m.service_recognize_failed());
+    expect(mocked.replayDirective).not.toHaveBeenCalled();
+  });
+
+  it("回放失败时提示", async () => {
+    runningRecording();
+    findDirectiveByPinyinMock.mockReturnValue({ id: "d-1" } as Directive);
+    mocked.replayDirective.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    await handleDirectiveTrigger();
+
+    expect(mockedToast.error).toHaveBeenCalledWith(m.directives_replay_failed());
+  });
+
+  it("服务未运行时直接忽略", async () => {
+    serviceState.status = { state: "stopped", modelId: null, loadMs: null };
+
+    await handleDirectiveTrigger();
+
+    expect(mocked.startRecording).not.toHaveBeenCalled();
+    expect(mocked.transcribeFileRaw).not.toHaveBeenCalled();
+    expect(mocked.replayDirective).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,7 @@
 
 pub mod asr;
 pub mod config;
+pub mod directives;
 pub mod lexicon;
 pub mod models;
 pub mod shortcut;
@@ -46,6 +47,12 @@ macro_rules! collect_commands {
             $crate::commands::lexicon::batch_copy_lexicon_entries,
             $crate::commands::lexicon::batch_move_lexicon_entries,
             $crate::commands::lexicon::quick_add_selection_to_lexicon,
+            $crate::commands::directives::list_directives,
+            $crate::commands::directives::create_directive,
+            $crate::commands::directives::update_directive,
+            $crate::commands::directives::delete_directive,
+            $crate::commands::directives::move_directive,
+            $crate::commands::directives::replay_directive,
             $crate::commands::lexicon::suggest_lexicon_pinyin,
             $crate::commands::lexicon::export_lexicon_group,
             $crate::commands::lexicon::import_lexicon_group,
@@ -56,6 +63,7 @@ macro_rules! collect_commands {
             $crate::commands::asr::start_recording,
             $crate::commands::asr::stop_recording,
             $crate::commands::asr::transcribe_file,
+            $crate::commands::asr::transcribe_file_raw,
             $crate::commands::asr::output_text,
             $crate::commands::shortcut::is_shortcut_registered,
             $crate::commands::system::get_system_info,

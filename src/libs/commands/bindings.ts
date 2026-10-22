@@ -8,13 +8,13 @@ export const commands = {
 	getConfig: () => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("get_config")),
 	/**
 	 *  重置全部已知配置项为默认值，返回写后的完整配置；
-	 *  语音与快捷词库快捷键同样按运行态对账（重置清空后不再占用全局按键）。
+	 *  语音、快捷词库与指令快捷键同样按运行态对账（重置清空后不再占用全局按键）。
 	 */
 	resetConfig: () => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("reset_config")),
 	/**
 	 *  局部更新配置：只写提交的字段，返回写后的完整配置（前端据此回写内存态，无需再读一次）。
 	 *  界面语言亦经此切换——运行时 `rust_i18n` 由 `config::apply_runtime_effects` 统一同步。
-	 *  语音与快捷词库快捷键注册均与服务运行态同生命周期：落盘成功后按运行态对账（改键 / 清空即时生效）。
+	 *  语音、快捷词库与指令快捷键注册均与服务运行态同生命周期：落盘成功后按运行态对账（改键 / 清空即时生效）。
 	 */
 	updateConfig: (patch: ConfigPatch) => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("update_config", { patch })),
 	/**  列出全部模型及其本机状态；前端据此渲染分组与按钮 */
@@ -70,6 +70,25 @@ export const commands = {
 	 *  剪贴板抓取阻塞约 800ms（含松开等待），`spawn_blocking` 内执行，不占异步运行时
 	 */
 	quickAddSelectionToLexicon: () => typedError<QuickLexiconSummary, CommandError>(__TAURI_INVOKE("quick_add_selection_to_lexicon")),
+	/**  列出全部指令：数组顺序即展示顺序，前端一次拿全 */
+	listDirectives: () => typedError<Directive[], CommandError>(__TAURI_INVOKE("list_directives")),
+	/**
+	 *  新建指令输入（前端透传）：与 `features::directives::NewDirective` 同构
+	 * 
+	 *  命令层保持薄封装，结构体转换在此完成，避免前端直接依赖内部类型
+	 */
+	createDirective: (name: string, triggerText: string, triggerPinyin: string | null, enabled: boolean, intervalMs: number, actions: DirectiveAction[]) => typedError<Directive, CommandError>(__TAURI_INVOKE("create_directive", { name, triggerText, triggerPinyin, enabled, intervalMs, actions })),
+	/**  更新指令输入（前端透传）：各字段缺省即不改 */
+	updateDirective: (id: string, name: string | null, triggerText: string | null, triggerPinyin: string | null, enabled: boolean | null, intervalMs: number | null, actions: DirectiveAction[] | null) => typedError<Directive, CommandError>(__TAURI_INVOKE("update_directive", { id, name, triggerText, triggerPinyin, enabled, intervalMs, actions })),
+	/**  删除指令 */
+	deleteDirective: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_directive", { id })),
+	/**  移动指令：列表内换位；触顶 / 触底原地不动 */
+	moveDirective: (id: string, direction: MoveDirection) => typedError<null, CommandError>(__TAURI_INVOKE("move_directive", { id, direction })),
+	/**
+	 *  回放指令的按键序列：每个事件前等待落盘间隔；调用方静默处理未命中，
+	 *  失败（未知 id / 停用 / 校验失败）走错误上报
+	 */
+	replayDirective: (id: string) => typedError<ReplayReport, CommandError>(__TAURI_INVOKE("replay_directive", { id })),
 	/**  为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认 */
 	suggestLexiconPinyin: (text: string) => typedError<string, CommandError>(__TAURI_INVOKE("suggest_lexicon_pinyin", { text })),
 	/**  导出分组到 JSON 文件：返回词条数供前端提示 */
@@ -90,6 +109,8 @@ export const commands = {
 	stopRecording: () => typedError<RecordResult, CommandError>(__TAURI_INVOKE("stop_recording")),
 	/**  转写音频文件：服务必须运行中；路径收敛到应用数据目录内 */
 	transcribeFile: (path: string) => typedError<TranscribeResult, CommandError>(__TAURI_INVOKE("transcribe_file", { path })),
+	/**  转写音频文件（原始文本版，供指令触发匹配用）：跳过词库后处理 */
+	transcribeFileRaw: (path: string) => typedError<TranscribeResult, CommandError>(__TAURI_INVOKE("transcribe_file_raw", { path })),
 	/**  按配置输出识别文本：返回实际投递通道与是否降级，调用方据此提示 */
 	outputText: (text: string) => typedError<OutputReport, CommandError>(__TAURI_INVOKE("output_text", { text })),
 	/**  查询某组合是否由本应用注册；空值与非法串一律返回 `false` */
@@ -126,6 +147,13 @@ export const commands = {
 };
 
 /* Types */
+/**  按键事件方向：按下 / 松开，录制时按点击交替产生 */
+export type ActionDirection = 
+/**  按下：键帽置 pressed 态 */
+"press" | 
+/**  松开：键帽恢复正常 */
+"release";
+
 /**
  *  录音设备条目：`id` 即设备名（热插拔下序号会漂移，名制更稳定），重名设备以去重保留第一个；
  *  “系统默认”合成项的 id 为 `DEFAULT_DEVICE_ID`，启动时实时解析跟随系统切换
@@ -187,6 +215,8 @@ export type ConfigPatch = {
 	shortcut_voice?: string | null,
 	/**  快捷词库的全局快捷键；空字符串表示禁用，仅服务运行时注册 */
 	shortcut_quick_lexicon?: string | null,
+	/**  指令触发的全局快捷键；空字符串表示禁用，仅服务运行时注册 */
+	shortcut_directive?: string | null,
 	/**  快捷词库目标分组 id；空白回落全局分组 */
 	quick_lexicon_group?: string | null,
 	/**  快捷键语音识别结果的输出方式 */
@@ -234,6 +264,8 @@ export type Config_Deserialize = {
 	shortcut_voice?: string,
 	/**  快捷词库的全局快捷键：缺失或类型不符时回落空字符串（禁用），仅服务运行时注册 */
 	shortcut_quick_lexicon?: string,
+	/**  指令触发的全局快捷键：缺失或类型不符时回落空字符串（禁用），仅服务运行时注册 */
+	shortcut_directive?: string,
 	/**  快捷词库目标分组 id：缺失、类型不符或空白时回落全局分组 */
 	quick_lexicon_group?: string,
 	/**  快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板 */
@@ -284,6 +316,8 @@ export type Config_Serialize = {
 	shortcut_voice: string,
 	/**  快捷词库的全局快捷键：缺失或类型不符时回落空字符串（禁用），仅服务运行时注册 */
 	shortcut_quick_lexicon: string,
+	/**  指令触发的全局快捷键：缺失或类型不符时回落空字符串（禁用），仅服务运行时注册 */
+	shortcut_directive: string,
 	/**  快捷词库目标分组 id：缺失、类型不符或空白时回落全局分组 */
 	quick_lexicon_group: string,
 	/**  快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板 */
@@ -297,6 +331,32 @@ export type Config_Serialize = {
 	custom_model_dirs: { [key in string]: string },
 	/**  词库生效分组 id 列表；缺失或脏值回落空数组（仅全局组生效） */
 	active_lexicon_groups: string[],
+};
+
+/**  指令：触发文本命中后回放整套按键事件 */
+export type Directive = {
+	/**  指令 id */
+	id: string,
+	/**  展示名 */
+	name: string,
+	/**  触发文本（语音命中比对用） */
+	trigger_text: string,
+	/**  触发文本的拼音（空格分隔，落盘形态） */
+	trigger_pinyin: string,
+	/**  是否启用 */
+	enabled: boolean,
+	/**  事件间隔毫秒：触发回放时每个事件前等待 */
+	interval_ms: number,
+	/**  按键事件序列：收尾必须平衡（无残留按下） */
+	actions: DirectiveAction[],
+};
+
+/**  指令的单个按键事件：键标识 + 方向；键标识与前端按键注册表同名（下期映射到 enigo） */
+export type DirectiveAction = {
+	/**  键标识（如 `"Control"`、`"Enter"`、`"F1"`、`"A"`） */
+	key: string,
+	/**  按下或松开 */
+	direction: ActionDirection,
 };
 
 /**  批量复制 / 转移的落盘统计：实际写入数 + 目标组判重跳过数（命令返回体） */
@@ -477,6 +537,12 @@ export type RecordResult = {
 	file_name: string,
 	/**  录制秒数 */
 	seconds: number | null,
+};
+
+/**  回放落盘统计：实际执行的按键事件数 */
+export type ReplayReport = {
+	/**  成功执行的按键事件数 */
+	executed: number,
 };
 
 /**  服务状态：启动中与运行中互斥，同一时刻只加载一个模型 */

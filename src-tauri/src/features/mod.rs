@@ -5,6 +5,7 @@
 
 pub mod asr;
 pub mod audio;
+pub mod directives;
 pub mod focus;
 pub mod lexicon;
 pub mod models;

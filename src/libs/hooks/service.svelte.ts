@@ -5,6 +5,13 @@ import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
 import { configValue } from "#libs/hooks/config.svelte";
+import {
+  directiveState,
+  findDirectiveByPinyin,
+  normalizeDirectivePinyin,
+  refreshDirectives,
+  suggestDirectivePinyin,
+} from "#libs/hooks/directives.svelte";
 import { groupLabel, lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
@@ -31,12 +38,14 @@ export interface TestResult {
   fileName: string;
 }
 
-/** 会话级识别记录：`TestResult` 加 id 与完成时间戳；只放会话内存，重启即失效 */
+/** 会话级识别记录：`TestResult` 加 id、完成时间戳与来源；只放会话内存，重启即失效 */
 export interface RecognitionRecord extends TestResult {
   /** 会话内自增 id */
   id: number;
   /** 完成时间戳（UTC 毫秒，展示层转本地时区） */
   at: number;
+  /** 记录来源：语音识别为文本，指令触发为指令（raw 转写走指令通道） */
+  kind: "voice" | "directive";
 }
 
 /** 历史上限：最新在前，超限截尾，避免长会话内存膨胀 */
@@ -286,8 +295,10 @@ export async function stopTestRecording(): Promise<void> {
 /**
  * 停止录制并转写（共用内核）：测试按钮只取回显，快捷键流程拿到结果再按配置输出。 失败已在内部提示并上报，调用方按 `null`
  * 收尾即可；成功结果同时记入会话历史。
+ *
+ * `raw` 为真时跳过词库后处理（指令触发匹配用原始文本）。
  */
-async function stopAndTranscribe(): Promise<TestResult | null> {
+async function stopAndTranscribe(raw = false): Promise<TestResult | null> {
   if (!serviceState.recording || serviceState.recognizing) return null;
   serviceState.recording = false;
   serviceState.recognizing = true;
@@ -299,7 +310,9 @@ async function stopAndTranscribe(): Promise<TestResult | null> {
       return null;
     }
     const fileName = record.data.path.split(/[/\\]/).pop() ?? record.data.path;
-    const transcribed = await commands.transcribeFile(record.data.path).result();
+    const transcribed = raw
+      ? await commands.transcribeFileRaw(record.data.path).result()
+      : await commands.transcribeFile(record.data.path).result();
     if (transcribed.status === "error") {
       if (isTranscribeBusyFailure(transcribed.error.message)) {
         toast.warning(m.service_recognize_busy());
@@ -316,6 +329,7 @@ async function stopAndTranscribe(): Promise<TestResult | null> {
       fileName,
       id: (recordSeq += 1),
       at: Date.now(),
+      kind: raw ? "directive" : "voice",
     };
     // 会话历史：测试按钮与快捷键两路共用同一内核，此处一次记入，最新在前、超限截尾
     serviceState.history.unshift(entry);
@@ -373,6 +387,68 @@ export async function handleQuickLexiconTrigger(): Promise<void> {
     toast.success(m.lexicon_quick_added({ count: result.data.added, name }));
   } finally {
     quickLexiconBusy = false;
+  }
+}
+
+/** 指令触发事件名（与 Rust 侧同名字面量会合，改名需两端同步） */
+const SHORTCUT_DIRECTIVE_TRIGGER_EVENT = "directive-trigger";
+
+/** 指令触发处理中：防重复提交（转写 + 回放为长任务） */
+let directiveBusy = false;
+
+let directiveListening = false;
+
+/** 订阅指令触发（全局单例，根布局挂载一次）；非 Tauri 环境无事件可订，失败仅上报不抛错。 */
+export async function listenDirective(): Promise<void> {
+  if (directiveListening) return;
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    await listen(SHORTCUT_DIRECTIVE_TRIGGER_EVENT, () => {
+      void handleDirectiveTrigger();
+    });
+    directiveListening = true;
+  } catch (error) {
+    reportCommandFailure("[service] directive listener unavailable", error);
+  }
+}
+
+/**
+ * 指令触发处理：空闲按直接开始录制（与语音键共用同一台录制机，停止者语义）； 录制中按则停止并转写原始文本，按拼音或原文精确匹配指令，命中回放，未命中静默。
+ * 全程不显示本窗口，焦点留在用户当前应用；回放失败才提示。
+ */
+export async function handleDirectiveTrigger(): Promise<void> {
+  if (directiveBusy || serviceState.switching || serviceState.recognizing) return;
+  directiveBusy = true;
+  try {
+    if (serviceState.recording) {
+      const result = await stopAndTranscribe(true);
+      if (result == null) return;
+      await refreshDirectives();
+      const spoken = normalizeDirectivePinyin(await suggestDirectivePinyin(result.text));
+      const matched = findDirectiveByPinyin(directiveState.value, spoken, result.text);
+      if (matched == null) return;
+      const replayed = await commands.replayDirective(matched.id).result();
+      if (replayed.status === "error") {
+        toast.error(m.directives_replay_failed());
+        reportCommandFailure("[service] directive replay failed", replayed.error);
+      }
+      return;
+    }
+    // 热路径：已有选中与状态只同步快照（模型清单走全盘 stat，枚举设备碰硬件）；
+    // 冷启动（未水合）才全量刷新，补齐默认模型与设备
+    if (
+      serviceState.selectedDevice != null &&
+      serviceState.selectedModel != null &&
+      serviceState.status != null
+    ) {
+      await refreshServiceStatus();
+    } else {
+      await refreshServiceData();
+    }
+    if (serviceState.status?.state !== "running") return;
+    await startTestRecording();
+  } finally {
+    directiveBusy = false;
   }
 }
 

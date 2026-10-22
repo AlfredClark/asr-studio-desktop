@@ -21,6 +21,11 @@ pub const SHORTCUT_VOICE_TRIGGER_EVENT: &str = "shortcut-voice-trigger";
 /// 与前端同名字面量会合，改名需两端同步（`shortcut_quick_lexicon_event_is_stable` 锁定取值）。
 pub const SHORTCUT_QUICK_LEXICON_TRIGGER_EVENT: &str = "quick-lexicon-trigger";
 
+/// 指令触发事件名：后端只负责触发，前端按录制态决定开始还是结束录制；
+/// 与前端 `libs/hooks/service.svelte.ts` 的同名字面量会合，改名需两端同步
+/// （`shortcut_directive_event_name_is_stable` 测试锁定取值）。
+pub const SHORTCUT_DIRECTIVE_TRIGGER_EVENT: &str = "directive-trigger";
+
 /// 是否需要切换注册；调用方传入已落盘的前后值，此处只做相等判断
 pub fn should_switch(before: &str, after: &str) -> bool {
     before.trim() != after.trim()
@@ -195,6 +200,48 @@ pub fn set_quick_lexicon_active(app: &AppHandle, active: bool) {
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub fn set_quick_lexicon_active(_app: &AppHandle, _active: bool) {}
 
+/// 本模块实际注册出去的指令组合：对账时先解绑它，再按需注册存量值，
+/// 配置更新改键、重置清空都不会把旧组合漏在全局快捷键里
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn directive_registered() -> &'static Mutex<String> {
+    static DIRECTIVE_REGISTERED: OnceLock<Mutex<String>> = OnceLock::new();
+    DIRECTIVE_REGISTERED.get_or_init(|| Mutex::new(String::new()))
+}
+
+/// 指令快捷键的生命周期开关：与语音路同生命周期，只在服务运行时注册；
+/// `features::asr` 在启停与配置更新后调用，本层不反向读取服务状态。
+///
+/// 对账语义：先解绑上次注册出去的组合，再按存量决定是否注册——改键不泄漏旧键，
+/// 清空与停止只解绑。注册失败只记日志，调用方经 `is_registered` 自行提示换组合。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_directive_active(app: &AppHandle, active: bool) {
+    let current = crate::cores::config::load_config(app)
+        .shortcut_directive
+        .trim()
+        .to_owned();
+    let mut registered = directive_registered().lock().unwrap_or_else(|poison| {
+        log::error!("directive shortcut lock poisoned, continuing with recovered guard");
+        poison.into_inner()
+    });
+    if !registered.is_empty() {
+        unregister_shortcut(app, &registered);
+    }
+    if active && !current.is_empty() {
+        if let Err(err) = register_directive(app, &current) {
+            log::warn!("failed to register directive shortcut on service start: {err:#}");
+            *registered = String::new();
+            return;
+        }
+        *registered = current;
+    } else {
+        *registered = String::new();
+    }
+}
+
+/// 指令快捷键的生命周期开关；移动端无全局快捷键，直接返回
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn set_directive_active(_app: &AppHandle, _active: bool) {}
+
 /// 注册快速打开快捷键并绑定唤起处理：只显示主窗口；空值跳过，调用方保证已 trim
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn register_quick_open(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
@@ -255,6 +302,33 @@ fn on_quick_lexicon_shortcut_pressed(app: &AppHandle) {
     }
 }
 
+/// 注册指令快捷键并绑定唤起处理：按键即发事件交前端；只在服务运行时注册，空值跳过
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn register_directive(app: &AppHandle, shortcut: &str) -> anyhow::Result<()> {
+    if shortcut.is_empty() {
+        return Ok(());
+    }
+    app.global_shortcut()
+        .on_shortcut(shortcut, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                on_directive_shortcut_pressed(app);
+            }
+        })
+        .map_err(|err| anyhow::anyhow!("failed to register shortcut {shortcut}: {err:#}"))?;
+    Ok(())
+}
+
+/// 指令快捷键按下处理：发射事件交前端；已注册即服务运行中（注册与运行态同生命周期），
+/// 前端仍保留运行态守卫防停启竞态；服务运行时不显示本窗口（焦点必须留在用户当前应用）
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn on_directive_shortcut_pressed(app: &AppHandle) {
+    use tauri::Emitter;
+
+    if let Err(err) = app.emit(SHORTCUT_DIRECTIVE_TRIGGER_EVENT, ()) {
+        log::warn!("failed to emit shortcut directive trigger: {err:#}");
+    }
+}
+
 /// 语音快捷键按下处理：发射事件交前端；已注册即服务运行中（注册与运行态同生命周期），
 /// 前端仍保留运行态守卫防停启竞态；服务运行时不显示本窗口（焦点必须留在用户当前应用）
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -302,6 +376,11 @@ mod tests {
             SHORTCUT_QUICK_LEXICON_TRIGGER_EVENT,
             "quick-lexicon-trigger"
         );
+    }
+
+    #[test]
+    fn shortcut_directive_event_name_is_stable() {
+        assert_eq!(SHORTCUT_DIRECTIVE_TRIGGER_EVENT, "directive-trigger");
     }
 
     #[test]

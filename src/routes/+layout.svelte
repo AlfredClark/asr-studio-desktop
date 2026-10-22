@@ -10,7 +10,11 @@
   import { initAppearance } from "#libs/hooks/appearance.svelte";
   import { configState, configValue, hydrateConfig } from "#libs/hooks/config.svelte";
   import { initDeepLinks } from "#libs/hooks/deep-link.svelte";
-  import { listenQuickLexicon, listenShortcutVoice } from "#libs/hooks/service.svelte";
+  import {
+    listenDirective,
+    listenQuickLexicon,
+    listenShortcutVoice,
+  } from "#libs/hooks/service.svelte";
   import { maybeAutoCheckForUpdate } from "#libs/hooks/updater.svelte";
   import ConfirmDialog from "#components/common/confirm-dialog.svelte";
   import ErrorBoundary from "#components/common/error-boundary.svelte";
@@ -150,6 +154,14 @@
   $effect(() => {
     void listenQuickLexicon().catch((error: unknown) =>
       reportCommandFailure("[service] quick lexicon listener failed", error),
+    );
+  });
+
+  // 指令触发：会话级单例订阅，按下快捷键时按录制态开始或结束录制。
+  // 注册与服务运行态同生命周期，故事件只在服务运行时到来；前端运行态守卫保留，防停启竞态。
+  $effect(() => {
+    void listenDirective().catch((error: unknown) =>
+      reportCommandFailure("[service] directive listener failed", error),
     );
   });
 </script>

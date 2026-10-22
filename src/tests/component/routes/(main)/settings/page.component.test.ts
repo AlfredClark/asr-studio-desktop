@@ -58,6 +58,7 @@ const defaults: Config_Serialize = {
   active_lexicon_groups: [],
   shortcut_voice: "",
   shortcut_quick_lexicon: "",
+  shortcut_directive: "",
   quick_lexicon_group: "global",
   schema_version: 1,
 };

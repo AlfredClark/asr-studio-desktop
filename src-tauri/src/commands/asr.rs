@@ -63,6 +63,17 @@ pub async fn transcribe_file(
     Ok(asr::transcribe_file(&app, &path).await?)
 }
 
+/// 转写音频文件（原始文本版，供指令触发匹配用）：跳过词库后处理
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn transcribe_file_raw(
+    app: tauri::AppHandle,
+    path: String,
+) -> CommandResult<TranscribeResult> {
+    Ok(asr::transcribe_file_raw(&app, &path).await?)
+}
+
 /// 按配置输出识别文本：返回实际投递通道与是否降级，调用方据此提示
 #[tauri::command]
 #[specta::specta]

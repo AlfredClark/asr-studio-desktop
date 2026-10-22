@@ -200,7 +200,10 @@
                   <p class="mt-1 text-xs text-muted-foreground tabular-nums">
                     {recordTime(record.at)} · {m.service_result_audio()}
                     {record.audioSec.toFixed(1)}s · {m.service_result_time()}
-                    {(record.inferMs / 1000).toFixed(1)}s
+                    {(record.inferMs / 1000).toFixed(1)}s ·
+                    {record.kind === "directive"
+                      ? m.service_history_kind_directive()
+                      : m.service_history_kind_text()}
                   </p>
                 </button>
               {/each}
@@ -322,6 +325,14 @@
           <CardRow label={m.settings_voice_label()} description={m.settings_voice_description()}>
             {#snippet control()}
               <ShortcutRecordRow kind="voice" />
+            {/snippet}
+          </CardRow>
+          <CardRow
+            label={m.settings_directive_label()}
+            description={m.settings_directive_description()}
+          >
+            {#snippet control()}
+              <ShortcutRecordRow kind="directive" />
             {/snippet}
           </CardRow>
           <CardRow
