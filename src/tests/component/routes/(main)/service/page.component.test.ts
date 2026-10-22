@@ -197,6 +197,7 @@ describe("服务页", () => {
         id: 2,
         at: 2,
         kind: "voice",
+        output: "paste",
       },
       {
         text: longText,
@@ -206,6 +207,7 @@ describe("服务页", () => {
         id: 1,
         at: 1,
         kind: "directive",
+        output: null,
       },
     ];
     render(Page);
@@ -215,9 +217,11 @@ describe("服务页", () => {
     expect(stats.textContent).toContain("2");
     expect(stats.textContent).toContain("0.9 s");
     expect(screen.getByText("你好世界")).not.toBeNull();
-    // 用时后方标注来源类型：语音为文本，指令为指令
-    expect(screen.getByText(/· Text$/)).not.toBeNull();
-    expect(screen.getByText(/· Directive$/)).not.toBeNull();
+    // 来源类型移至行最右徽标，输出方式跟在用时后方
+    expect(screen.getAllByText("Text")).not.toHaveLength(0);
+    expect(screen.getByText("Directive")).not.toBeNull();
+    expect(screen.getByText(/· Simulate copy-paste$/)).not.toBeNull();
+    expect(screen.getByText(/· No output$/)).not.toBeNull();
 
     const recordButton = screen.getByRole("button", { name: new RegExp("补字") });
     expect(recordButton.getAttribute("aria-expanded")).toBe("false");

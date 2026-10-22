@@ -3,7 +3,7 @@
 // 前端不做本地推断（后端是唯一真值，与配置中心的约定一致）。
 import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
-import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+import type { AudioDevice, ModelEntry, OutputReport, OutputVia } from "#libs/commands/types";
 import { configValue } from "#libs/hooks/config.svelte";
 import {
   directiveState,
@@ -46,6 +46,8 @@ export interface RecognitionRecord extends TestResult {
   at: number;
   /** 记录来源：语音识别为文本，指令触发为指令（raw 转写走指令通道） */
   kind: "voice" | "directive";
+  /** 实际投递通道：快捷键输出成功后回填；测试按钮与指令回放不走文本输出，恒为 `null` */
+  output: OutputVia | null;
 }
 
 /** 历史上限：最新在前，超限截尾，避免长会话内存膨胀 */
@@ -385,7 +387,7 @@ export async function stopTestRecording(): Promise<void> {
  *
  * `raw` 为真时跳过词库后处理（指令触发匹配用原始文本）。
  */
-async function stopAndTranscribe(raw = false): Promise<TestResult | null> {
+async function stopAndTranscribe(raw = false): Promise<RecognitionRecord | null> {
   if (!serviceState.recording || serviceState.recognizing) return null;
   serviceState.recording = false;
   serviceState.recognizing = true;
@@ -419,6 +421,8 @@ async function stopAndTranscribe(raw = false): Promise<TestResult | null> {
       id: (recordSeq += 1),
       at: Date.now(),
       kind: raw ? "directive" : "voice",
+      // 投递通道由调用方回填：快捷键输出成功后写实际通道，其余流程保持空
+      output: null,
     };
     // 会话历史：测试按钮与快捷键两路共用同一内核，此处一次记入，最新在前、超限截尾
     serviceState.history.unshift(entry);
@@ -592,7 +596,9 @@ export async function handleShortcutTrigger(): Promise<void> {
     const result = await stopAndTranscribe();
     if (!result) return;
     serviceState.result = result;
-    await outputResult(result.text);
+    const delivered = await outputResult(result.text);
+    // 回填实际投递通道：降级走剪贴板时记剪贴板，失败保持空
+    if (delivered) result.output = delivered.via;
     return;
   }
   // 热路径：已有选中与状态只同步快照（模型清单走全盘 stat，枚举设备碰硬件）；
@@ -610,13 +616,13 @@ export async function handleShortcutTrigger(): Promise<void> {
   await startTestRecording();
 }
 
-/** 按配置输出识别文本；降级或失败时提示用户（文本仍保留在回显区） */
-async function outputResult(text: string): Promise<void> {
+/** 按配置输出识别文本；降级或失败时提示用户（文本仍保留在回显区）。 成功返回后端报告（含实际通道，供历史记录回填），失败返回 `null`。 */
+async function outputResult(text: string): Promise<OutputReport | null> {
   const delivered = await commands.outputText(text).result();
   if (delivered.status === "error") {
     toast.error(m.service_output_failed());
     reportCommandFailure("[service] output failed", delivered.error);
-    return;
+    return null;
   }
   if (delivered.data.fallback) {
     if (delivered.data.reason === "no_editable_focus") {
@@ -625,4 +631,5 @@ async function outputResult(text: string): Promise<void> {
       toast.warning(m.service_output_fallback());
     }
   }
+  return delivered.data;
 }

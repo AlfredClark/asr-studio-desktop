@@ -345,6 +345,7 @@
   "service_result_time": "用时",
   "service_history_kind_text": "文本",
   "service_history_kind_directive": "指令",
+  "service_history_no_output": "未输出",
   "service_record_failed": "录制失败",
   "service_recognize_failed": "识别失败",
   "service_recognize_busy": "已有识别正在进行，请稍候",
