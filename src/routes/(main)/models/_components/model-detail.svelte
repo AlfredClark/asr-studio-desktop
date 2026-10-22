@@ -220,14 +220,22 @@
       </div>
       <p class="text-sm text-muted-foreground">{modelIntro()}</p>
       <div class="flex flex-col gap-1.5 rounded-lg bg-muted/50 p-2.5 text-xs">
-        <div class="flex items-center justify-between gap-2">
-          <span class="shrink-0 text-muted-foreground">{m.models_detail_size_label()}</span>
-          {#if entry.manual}
+        {#if entry.local_bytes > 0}
+          <div class="flex items-center justify-between gap-2">
+            <span class="shrink-0 text-muted-foreground">{m.models_local_size_label()}</span>
+            <span class="tabular-nums">{formatBytes(entry.local_bytes)}</span>
+          </div>
+        {:else if entry.manual}
+          <div class="flex items-center justify-between gap-2">
+            <span class="shrink-0 text-muted-foreground">{m.models_detail_size_label()}</span>
             <span>{m.models_manual_size()}</span>
-          {:else}
+          </div>
+        {:else}
+          <div class="flex items-center justify-between gap-2">
+            <span class="shrink-0 text-muted-foreground">{m.models_detail_size_label()}</span>
             <span class="tabular-nums">{formatBytes(entry.tarball_bytes)}</span>
-          {/if}
-        </div>
+          </div>
+        {/if}
         {#if shownPath}
           <div class="flex items-center gap-2">
             <span class="shrink-0 text-muted-foreground">{m.models_detail_path_label()}</span>

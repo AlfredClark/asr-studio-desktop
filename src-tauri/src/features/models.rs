@@ -469,6 +469,9 @@ pub struct ModelEntry {
     /// 必需文件字节数之和（展示用；手工模型为清单参考值），精度口径同上
     #[specta(type = u32)]
     pub required_bytes: u64,
+    /// 本地实占字节数（磁盘实测之和；目录缺失记 0），精度口径同上
+    #[specta(type = u32)]
+    pub local_bytes: u64,
     /// 本机状态
     pub status: ModelStatus,
     /// 模型目录绝对路径（`Missing` 时为 `None`，用户指定目录缺失同样为 `None`）
@@ -796,16 +799,22 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
         .iter()
         .map(|spec| {
             let custom = effective_custom_dir(custom_dirs.get(spec.id).map(String::as_str));
-            let (status, local_path) = match resolve_model_dir(app, spec) {
+            let (status, local_path, local_bytes) = match resolve_model_dir(app, spec) {
                 Ok(dir) if dir.is_dir() => {
                     let (missing, mismatched) = check_files(&dir, spec.files, spec.verify);
+                    // 实占体积一次读出：与 `list_model_files` 同口径（磁盘实测，缺失记 0）
+                    let local_bytes = stat_sizes(&dir, spec.files).values().sum();
                     let status = fold_status(spec.files.len(), missing.len(), mismatched.len());
                     let status = if running.contains(spec.id) && status != ModelStatus::Ready {
                         ModelStatus::Downloading
                     } else {
                         status
                     };
-                    (status, Some(dir.to_string_lossy().into_owned()))
+                    (
+                        status,
+                        Some(dir.to_string_lossy().into_owned()),
+                        local_bytes,
+                    )
                 }
                 _ => {
                     let status = if running.contains(spec.id) {
@@ -813,7 +822,7 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
                     } else {
                         ModelStatus::Missing
                     };
-                    (status, None)
+                    (status, None, 0)
                 }
             };
             ModelEntry {
@@ -822,6 +831,7 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
                 display_name: spec.display_name.to_owned(),
                 tarball_bytes: spec.tarball_bytes,
                 required_bytes: spec.files.iter().map(|file| file.size).sum(),
+                local_bytes,
                 status,
                 local_path,
                 manual: spec.manual,

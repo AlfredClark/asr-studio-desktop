@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { Directive, LexiconEntry, LexiconGroup, ModelEntry } from "#libs/commands/types";
+import { formatBytes } from "#libs/utils/format";
 import { m } from "#libs/i18n/paraglide/messages";
 import Page from "../../../../routes/(main)/+page.svelte";
 
@@ -115,6 +116,7 @@ const readyEntry: ModelEntry = {
   display_name: "SenseVoice int8",
   tarball_bytes: 163_002_883,
   required_bytes: 239_549_735,
+  local_bytes: 239_549_735,
   status: "ready",
   local_path: "/models",
   custom_dir: null,
@@ -181,7 +183,10 @@ describe("首页工作台", () => {
     serviceStateMock.selectedModel = readyEntry.id;
     serviceStateMock.status = { state: "stopped", modelId: null, loadMs: null };
     lexiconStateMock.value = {
-      groups: [{ id: "global", name: "", is_global: true }],
+      groups: [
+        { id: "global", name: "", is_global: true },
+        { id: "g-work", name: "工作", is_global: false },
+      ],
       entries: [
         {
           id: "w1",
@@ -191,6 +196,14 @@ describe("首页工作台", () => {
           weight: 0,
           enabled: true,
         },
+        {
+          id: "w2",
+          group_id: "g-work",
+          text: "成长",
+          pinyin: "cheng zhang",
+          weight: 0,
+          enabled: false,
+        },
       ],
       active_group_ids: [],
     };
@@ -199,7 +212,13 @@ describe("首页工作台", () => {
     const workspace = await screen.findByTestId("home-workspace");
     expect(within(workspace).getByText(m.home_models_ready({ count: 1 }))).not.toBeNull();
     expect(
-      within(workspace).getByText(m.home_lexicon_summary({ entries: 1, groups: 1 })),
+      within(workspace).getByText(m.home_models_disk({ size: formatBytes(239_549_735) })),
+    ).not.toBeNull();
+    expect(
+      within(workspace).getByText(m.home_lexicon_groups({ total: 2, active: 1, inactive: 1 })),
+    ).not.toBeNull();
+    expect(
+      within(workspace).getByText(m.home_lexicon_entries({ total: 2, active: 1, inactive: 1 })),
     ).not.toBeNull();
     expect(
       within(workspace).getByText(m.home_directives_summary({ enabled: 1, total: 2 })),
