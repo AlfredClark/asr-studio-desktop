@@ -9,10 +9,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::Context as _;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-/// 录音设备条目：`id` 为枚举序号（字符串化），重名设备以序号区分
+/// 录音设备条目：`id` 即设备名（热插拔下序号会漂移，名制更稳定），重名设备以去重保留第一个；
+/// “系统默认”合成项的 id 为 `DEFAULT_DEVICE_ID`，启动时实时解析跟随系统切换
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct AudioDevice {
-    /// 设备序号（本次进程内枚举顺序）
+    /// 设备名（合成项为 `DEFAULT_DEVICE_ID`）
     pub id: String,
     /// 系统上报的设备名
     pub name: String,
@@ -85,17 +86,10 @@ fn lock_recording() -> std::sync::MutexGuard<'static, Option<RecordingSession>> 
     })
 }
 
-/// 序号解析：非数字一律返回 `None`（命令层转“设备不存在”错误）；
-/// “系统默认”走独立分支，此处只处理序号
-fn parse_device_index(id: &str) -> Option<usize> {
-    if id == DEFAULT_DEVICE_ID {
-        return None;
-    }
-    id.parse().ok()
-}
-
 /// 解析录制设备：“系统默认”走实时默认输入（跟随系统切换与热插拔），
-/// 序号走枚举位置；非法 id 直接报错。碰硬件的分支不单测。
+/// 其余按设备名精确匹配；插入式设备改名即视为新设备，调用方重枚举即可。
+/// 名为 `default` 的物理设备与合成项同义（ALSA 的 `default` 本就是系统默认 PCM），
+/// 列表侧已剔除该重名项，此处无需二义分支。未知名直接报错。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn resolve_device(host: &cpal::Host, device_id: &str) -> anyhow::Result<cpal::Device> {
     use anyhow::Context as _;
@@ -105,12 +99,13 @@ fn resolve_device(host: &cpal::Host, device_id: &str) -> anyhow::Result<cpal::De
             .default_input_device()
             .context("no default input device");
     }
-    let index = parse_device_index(device_id).context("unknown audio device")?;
     host.input_devices()
         .context("failed to list input devices")?
-        .enumerate()
-        .nth(index)
-        .map(|(_, device)| device)
+        .find(|device| {
+            device
+                .description()
+                .is_ok_and(|description| description.name() == device_id)
+        })
         .context("unknown audio device")
 }
 
@@ -155,7 +150,7 @@ pub fn list_input_devices() -> Vec<AudioDevice> {
     let Ok(list) = host.input_devices() else {
         return devices;
     };
-    for (index, device) in list.enumerate() {
+    for device in list {
         let Ok(description) = device.description() else {
             continue;
         };
@@ -174,14 +169,18 @@ pub fn list_input_devices() -> Vec<AudioDevice> {
             default_marked = true;
         }
         devices.push(AudioDevice {
-            id: index.to_string(),
+            id: name.clone(),
             name,
             is_default,
         });
     }
     let mut devices = dedupe_devices(devices);
-    // 系统默认入口置顶：有默认输入才给，没有不给，避免选中后启动即报错
+    // 系统默认入口置顶：有默认输入才给，没有不给，避免选中后启动即报错；
+    // 物理设备若恰好重名 `default` 则剔除（它就是系统默认 PCM 本身，合成项已覆盖，
+    // 且 id 撞车会让下拉 key 重复）
     if default_device.is_some() {
+        devices
+            .retain(|device| device.id != DEFAULT_DEVICE_ID && device.name != DEFAULT_DEVICE_NAME);
         devices.insert(
             0,
             AudioDevice {
@@ -486,26 +485,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn device_index_rejects_non_numeric() {
-        assert_eq!(parse_device_index("0"), Some(0));
-        assert_eq!(parse_device_index("12"), Some(12));
-        assert_eq!(parse_device_index(""), None);
-        assert_eq!(parse_device_index("default"), None);
-        assert_eq!(parse_device_index("unknown"), None);
+    fn resolve_device_rejects_unknown_name() {
+        // 未知名走硬件枚举后匹配失败，无副作用，可单测
+        let host = cpal::default_host();
+        assert!(resolve_device(&host, "not-a-device-xyz").is_err());
+        assert!(resolve_device(&host, "").is_err());
     }
 
     #[test]
     fn default_device_id_is_stable() {
         // 前端下拉硬编码同字面量，改名需两端同步
         assert_eq!(DEFAULT_DEVICE_ID, "default");
-    }
-
-    #[test]
-    fn resolve_device_rejects_garbage_id() {
-        // 非法 id 在碰硬件前即报错，无副作用，可单测
-        let host = cpal::default_host();
-        assert!(resolve_device(&host, "not-a-device").is_err());
-        assert!(resolve_device(&host, "").is_err());
     }
 
     fn entry(id: &str, name: &str, is_default: bool) -> AudioDevice {
@@ -542,17 +532,17 @@ mod tests {
     #[test]
     fn dedupe_keeps_first_and_floats_default() {
         let devices = vec![
-            entry("0", "Mic", false),
-            entry("1", "Mic", false),
-            entry("2", "USB", true),
-            entry("3", "USB", false),
+            entry("Mic", "Mic", false),
+            entry("Mic", "Mic", false),
+            entry("USB", "USB", true),
+            entry("USB", "USB", false),
         ];
         let kept = dedupe_devices(devices);
         assert_eq!(
             kept.iter()
                 .map(|device| device.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["2", "0"]
+            vec!["USB", "Mic"]
         );
         assert!(kept[0].is_default);
     }

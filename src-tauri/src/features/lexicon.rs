@@ -662,10 +662,78 @@ pub fn delete_entry(app: &tauri::AppHandle, id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 批量删除词条：单事务全有或全无（未知 id 直接拒绝、不落盘）；返回删除数
+pub fn delete_entries(app: &tauri::AppHandle, ids: &[String]) -> anyhow::Result<u32> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    crate::cores::lexicon::modify(app, |data| {
+        for id in ids {
+            if !data.entries.iter().any(|entry| entry.id == *id) {
+                anyhow::bail!("unknown lexicon entry");
+            }
+        }
+        let before = data.entries.len();
+        data.entries
+            .retain(|entry| !ids.iter().any(|id| id == &entry.id));
+        Ok(u32::try_from(before - data.entries.len()).unwrap_or(u32::MAX))
+    })
+}
+
+/// 批量启用 / 禁用词条：单事务全有或全无；返回更新数（状态本就一致的也计数）
+pub fn set_entries_enabled(
+    app: &tauri::AppHandle,
+    ids: &[String],
+    enabled: bool,
+) -> anyhow::Result<u32> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    crate::cores::lexicon::modify(app, |data| {
+        for id in ids {
+            if !data.entries.iter().any(|entry| entry.id == *id) {
+                anyhow::bail!("unknown lexicon entry");
+            }
+        }
+        let mut updated = 0_u32;
+        for entry in data
+            .entries
+            .iter_mut()
+            .filter(|entry| ids.iter().any(|id| id == &entry.id))
+        {
+            entry.enabled = enabled;
+            updated = updated.saturating_add(1);
+        }
+        Ok(updated)
+    })
+}
+
 /// 分组导出文件标识：导入时校验，不符直接拒绝
 pub const LEXICON_EXPORT_FORMAT: &str = "asr-studio-lexicon-group";
 /// 分组导出文件版本：仅当前版本可读
 pub const LEXICON_EXPORT_VERSION: u32 = 1;
+/// 导入文件上限：正常导出仅几十 KB，超限视为误选或恶意文件，直接拒绝不读全量
+const MAX_IMPORT_BYTES: u64 = 5 * 1024 * 1024;
+/// 导入词条上限：超限直接拒绝，避免单次 `modify` 持锁过久
+const MAX_IMPORT_ENTRIES: usize = 5000;
+
+const _: () = {
+    assert!(MAX_IMPORT_BYTES > 0);
+    assert!(MAX_IMPORT_ENTRIES > 0);
+};
+
+/// 导入输入校验：文件体积与条目数双封顶；纯函数，可单测
+fn check_import_limits(size: u64, entries: usize) -> anyhow::Result<()> {
+    if size > MAX_IMPORT_BYTES {
+        anyhow::bail!("lexicon file too large: {size} bytes exceeds {MAX_IMPORT_BYTES} limit");
+    }
+    if entries > MAX_IMPORT_ENTRIES {
+        anyhow::bail!(
+            "lexicon file has too many entries: {entries} exceeds {MAX_IMPORT_ENTRIES} limit"
+        );
+    }
+    Ok(())
+}
 
 /// 分组导出文件体：无 id（导入时重生成），无全局标记（导入恒建普通分组）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -841,9 +909,13 @@ pub fn import_group_from_file(
 ) -> anyhow::Result<LexiconImportSummary> {
     use anyhow::Context;
 
+    // 先看体积再读全量：对话框 `filters` 只防君子，误选大文件直接拒绝不 OOM
+    let size = std::fs::metadata(path).map_or(u64::MAX, |meta| meta.len());
+    check_import_limits(size, 0)?;
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read lexicon file {path}"))?;
     let parsed = parse_group_export(&raw)?;
+    check_import_limits(size, parsed.entries.len())?;
     let (valid, skipped) = normalize_import_entries(&parsed.entries);
     crate::cores::lexicon::modify(app, |data| {
         let name = unique_group_name(&data.groups, parsed.name.trim());
@@ -1142,6 +1214,14 @@ mod tests {
         assert_eq!(valid[1].text, "在");
         assert_eq!(valid[1].weight, -100);
         assert!(!valid[1].enabled);
+    }
+
+    #[test]
+    fn import_limits_reject_oversize() {
+        assert!(check_import_limits(0, 0).is_ok());
+        assert!(check_import_limits(MAX_IMPORT_BYTES, MAX_IMPORT_ENTRIES).is_ok());
+        assert!(check_import_limits(MAX_IMPORT_BYTES + 1, 0).is_err());
+        assert!(check_import_limits(0, MAX_IMPORT_ENTRIES + 1).is_err());
     }
 
     #[test]

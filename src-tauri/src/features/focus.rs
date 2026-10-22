@@ -2,8 +2,8 @@
 //!
 //! 三态语义：`Editable`（后续 UIA 阶段使用）/ `NonEditable`（高置信不可输入，
 //! 直接跳过注入）/ `Unknown`（拿不准一律放行，不误拦截）。
-//! 首版仅识别桌面、任务栏等高置信场景，不引入新依赖；
-//! 未知场景（浏览器自定义控件、Wayland 等）按可输入假设处理。
+//! 首版仅识别高置信场景：Windows 桌面类窗口 + Linux X11 根窗口聚焦；
+//! 未知场景（浏览器自定义控件、Wayland、macOS 等）按可输入假设处理。
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -66,7 +66,34 @@ fn check_platform() -> FocusKind {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+fn check_platform() -> FocusKind {
+    check_x11_focus().unwrap_or(FocusKind::Unknown)
+}
+
+/// Linux X11 焦点预检：聚焦落在根窗口（无窗口持有焦点）即高置信不可输入；
+/// 无 X 服务（Wayland/纯终端）或查询失败返回 `None`，调用方回落 `Unknown`。
+/// 纯只读查询，不改窗口状态，永不抛错
+#[cfg(target_os = "linux")]
+fn check_x11_focus() -> Option<FocusKind> {
+    use x11rb::connection::Connection as _;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+
+    let (connection, screen) = x11rb::connect(None).ok()?;
+    let focus = connection.get_input_focus().ok()?.reply().ok()?.focus;
+    // `0`（None）与根窗口都表示没有可输入的前台窗口
+    if focus == 0 {
+        return Some(FocusKind::NonEditable);
+    }
+    let root = connection.setup().roots.get(screen)?.root;
+    if focus == root {
+        return Some(FocusKind::NonEditable);
+    }
+    // 具体窗口归属（桌面悬浮窗等）拿不准，按可输入假设放行
+    None
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const fn check_platform() -> FocusKind {
     FocusKind::Unknown
 }
@@ -106,9 +133,19 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(all(not(target_os = "windows"), not(target_os = "linux")))]
     #[test]
     fn non_windows_reports_unknown() {
         assert_eq!(check_focus(), FocusKind::Unknown);
+    }
+
+    /// Linux 有 X 即查根窗口、无 X 即回落：两种结论都合法，不断言具体值
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_reports_known_verdict() {
+        assert!(matches!(
+            check_focus(),
+            FocusKind::Unknown | FocusKind::NonEditable
+        ));
     }
 }

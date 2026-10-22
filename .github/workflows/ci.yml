@@ -153,10 +153,38 @@ jobs:
       - name: Bindings
         run: git diff --exit-code src/libs/commands/bindings.ts
 
+  backend-windows:
+    name: Check Windows Target
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    # Windows 专属代码（Win32 FFI、DirectML/CUDA 底座对接、全局快捷键）在 ubuntu 上永不编译，
+    # 曾出现“本地全绿、release 打包才爆”的断层；此 job 在原生 Windows 上只做 check，
+    # 不跑测试（sherpa-onnx 预编译库下载慢）不打断冒烟节奏
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Toolchain
+        # toolchain 版本必须与 rust-toolchain.toml 保持一致
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Check
+        run: cargo check --manifest-path Cargo.toml --workspace --all-targets
+
   ci-passed:
     name: Passed
     runs-on: ubuntu-latest
-    needs: [changes, frontend, backend]
+    needs: [changes, frontend, backend, backend-windows]
     if: always()
 
     steps:
@@ -165,11 +193,13 @@ jobs:
           echo "Changes:  ${{ needs.changes.result }}"
           echo "Frontend: ${{ needs.frontend.result }}"
           echo "Backend:  ${{ needs.backend.result }}"
+          echo "Windows:  ${{ needs.backend-windows.result }}"
 
           # changes 失败时前后端会被跳过，门禁必须一并拦住，否则会"安全通过"
           if [[ "${{ needs.changes.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.frontend.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.backend.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.backend.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.backend-windows.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "::error::One or more essential checks failed."
             exit 1
           fi

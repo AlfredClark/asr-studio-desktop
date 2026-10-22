@@ -56,6 +56,10 @@ export const commands = {
 	updateLexiconEntry: (id: string, groupId: string | null, text: string | null, pinyin: string | null, weight: number | null, enabled: boolean | null) => typedError<LexiconEntry, CommandError>(__TAURI_INVOKE("update_lexicon_entry", { id, groupId, text, pinyin, weight, enabled })),
 	/**  删除词条 */
 	deleteLexiconEntry: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_lexicon_entry", { id })),
+	/**  批量删除词条：单事务全有或全无，返回删除数 */
+	batchDeleteLexiconEntries: (ids: string[]) => typedError<number, CommandError>(__TAURI_INVOKE("batch_delete_lexicon_entries", { ids })),
+	/**  批量启用 / 禁用词条：单事务全有或全无，返回更新数 */
+	batchSetLexiconEntriesEnabled: (ids: string[], enabled: boolean) => typedError<number, CommandError>(__TAURI_INVOKE("batch_set_lexicon_entries_enabled", { ids, enabled })),
 	/**  为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认 */
 	suggestLexiconPinyin: (text: string) => typedError<string, CommandError>(__TAURI_INVOKE("suggest_lexicon_pinyin", { text })),
 	/**  导出分组到 JSON 文件：返回词条数供前端提示 */
@@ -112,9 +116,12 @@ export const commands = {
 };
 
 /* Types */
-/**  录音设备条目：`id` 为枚举序号（字符串化），重名设备以序号区分 */
+/**
+ *  录音设备条目：`id` 即设备名（热插拔下序号会漂移，名制更稳定），重名设备以去重保留第一个；
+ *  “系统默认”合成项的 id 为 `DEFAULT_DEVICE_ID`，启动时实时解析跟随系统切换
+ */
 export type AudioDevice = {
-	/**  设备序号（本次进程内枚举顺序） */
+	/**  设备名（合成项为 `DEFAULT_DEVICE_ID`） */
 	id: string,
 	/**  系统上报的设备名 */
 	name: string,
@@ -340,9 +347,13 @@ export type ModelEntry = {
 	category: ModelCategory,
 	/**  展示名 */
 	display_name: string,
-	/**  压缩包字节数（展示用，均小于 4GB，见 `registry_sizes_fit_u32`）；手工模型为 0 */
+	/**
+	 *  压缩包字节数（展示用；`u64` 全量，JS 侧 `number` 在 2^53 内精确，见 `registry_sizes_fit_js_number`）
+	 *  `specta` 禁止直接导出 `u64`（防精度丢失），此处声明为 `u32` 即 TS `number`（仅 TS 侧类型，
+	 *  运行时 serde 仍按 `u64` 精确序列化，2^53 内与前端无损会合）
+	 */
 	tarball_bytes: number,
-	/**  必需文件字节数之和（展示用；手工模型为清单参考值） */
+	/**  必需文件字节数之和（展示用；手工模型为清单参考值），精度口径同上 */
 	required_bytes: number,
 	/**  本机状态 */
 	status: ModelStatus,
@@ -360,7 +371,7 @@ export type ModelEntry = {
 export type ModelFileEntry = {
 	/**  相对包顶层目录的路径，分隔符统一 `/`，目录不带尾部分隔符 */
 	path: string,
-	/**  展示字节数（磁盘实测优先，缺失回落清单值；目录为所含展示之和） */
+	/**  展示字节数（磁盘实测优先，缺失回落清单值；目录为所含展示之和），精度口径同 `ModelEntry` */
 	size: number,
 	/**  是否为目录 */
 	is_dir: boolean,

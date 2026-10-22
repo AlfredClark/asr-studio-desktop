@@ -461,10 +461,14 @@ pub struct ModelEntry {
     pub category: ModelCategory,
     /// 展示名
     pub display_name: String,
-    /// 压缩包字节数（展示用，均小于 4GB，见 `registry_sizes_fit_u32`）；手工模型为 0
-    pub tarball_bytes: u32,
-    /// 必需文件字节数之和（展示用；手工模型为清单参考值）
-    pub required_bytes: u32,
+    /// 压缩包字节数（展示用；`u64` 全量，JS 侧 `number` 在 2^53 内精确，见 `registry_sizes_fit_js_number`）
+    /// `specta` 禁止直接导出 `u64`（防精度丢失），此处声明为 `u32` 即 TS `number`（仅 TS 侧类型，
+    /// 运行时 serde 仍按 `u64` 精确序列化，2^53 内与前端无损会合）
+    #[specta(type = u32)]
+    pub tarball_bytes: u64,
+    /// 必需文件字节数之和（展示用；手工模型为清单参考值），精度口径同上
+    #[specta(type = u32)]
+    pub required_bytes: u64,
     /// 本机状态
     pub status: ModelStatus,
     /// 模型目录绝对路径（`Missing` 时为 `None`，用户指定目录缺失同样为 `None`）
@@ -485,9 +489,9 @@ pub struct DownloadProgress {
     /// 当前阶段
     pub phase: DownloadPhase,
     /// 累计字节数（下载阶段）或已解压条目数（解压阶段）
-    pub downloaded: u32,
+    pub downloaded: u64,
     /// 总字节数（下载阶段，服务端未提供时为 `None`）；解压阶段恒为 `None`
-    pub total: Option<u32>,
+    pub total: Option<u64>,
     /// 当前处理文件名（仅解压阶段）
     pub current: Option<String>,
 }
@@ -497,8 +501,9 @@ pub struct DownloadProgress {
 pub struct ModelFileEntry {
     /// 相对包顶层目录的路径，分隔符统一 `/`，目录不带尾部分隔符
     pub path: String,
-    /// 展示字节数（磁盘实测优先，缺失回落清单值；目录为所含展示之和）
-    pub size: u32,
+    /// 展示字节数（磁盘实测优先，缺失回落清单值；目录为所含展示之和），精度口径同 `ModelEntry`
+    #[specta(type = u32)]
+    pub size: u64,
     /// 是否为目录
     pub is_dir: bool,
     /// 本文件/目录的核对结论：就绪 / 不完整（缺失或大小不符）/ 未下载（整目录缺失）
@@ -567,7 +572,7 @@ fn file_states(
             };
             ModelFileEntry {
                 path: file.path.to_owned(),
-                size: sat_u32(shown_size(file.path, file.size)),
+                size: shown_size(file.path, file.size),
                 is_dir: false,
                 status,
             }
@@ -604,7 +609,7 @@ fn file_states(
         };
         out.push(ModelFileEntry {
             path: dir.to_owned(),
-            size: sat_u32(fold.size),
+            size: fold.size,
             is_dir: true,
             status,
         });
@@ -782,13 +787,6 @@ const fn fold_status(file_count: usize, missing: usize, mismatched: usize) -> Mo
     }
 }
 
-/// `u64` 字节数转前端展示用 `u32`：注册表模型均小于 4GB（`registry_sizes_fit_u32` 锁定），
-///
-/// 超界时饱和到 `u32::MAX` 而非截断，避免回绕成小值误导进度条。
-fn sat_u32(value: u64) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
-}
-
 /// 列出全部模型及其本机状态；下载中的模型强制标 `Downloading`
 pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
     let running: std::collections::HashSet<&str> = lock_downloads().keys().copied().collect();
@@ -822,8 +820,8 @@ pub fn list_models(app: &tauri::AppHandle) -> Vec<ModelEntry> {
                 id: spec.id.to_owned(),
                 category: spec.category,
                 display_name: spec.display_name.to_owned(),
-                tarball_bytes: sat_u32(spec.tarball_bytes),
-                required_bytes: sat_u32(spec.files.iter().map(|file| file.size).sum()),
+                tarball_bytes: spec.tarball_bytes,
+                required_bytes: spec.files.iter().map(|file| file.size).sum(),
                 status,
                 local_path,
                 manual: spec.manual,
@@ -988,6 +986,18 @@ fn staging_dir(models_root: &std::path::Path, id: &str) -> std::path::PathBuf {
 /// 下载重试：断网/抖动常见，大包从头重下；每次尝试前清残留 `.part`，最终失败清暂存目录
 const MAX_DOWNLOAD_ATTEMPTS: u32 = 3;
 
+/// 不可重试的失败口径：空间不足与包校验失败重来也没用，直接交命令层报错；
+/// 其余（断网/停滞/服务端错误）退避重试。按错误链全文匹配，各口径文案由单测锁定
+fn is_retryable_error(err: &anyhow::Error) -> bool {
+    const FATAL_MARKERS: &[&str] = &[
+        "not enough disk space",
+        "failed verification",
+        "size mismatch",
+    ];
+    let report = format!("{err:#}");
+    !FATAL_MARKERS.iter().any(|marker| report.contains(marker))
+}
+
 /// 带重试的下载：单次失败（停滞/断流/校验不过）退避后重来，3 次仍失败才交命令层报错
 async fn download_with_retry(
     app: &tauri::AppHandle,
@@ -1002,6 +1012,12 @@ async fn download_with_retry(
                 // 残留包不清会影响下次判断：失败即删，下次尝试从干净状态开始
                 if let Ok(part) = part_path(app, spec) {
                     std::fs::remove_file(&part).ok();
+                }
+                if !is_retryable_error(&err) {
+                    if let Ok(root) = models_root(app) {
+                        std::fs::remove_dir_all(staging_dir(&root, spec.id)).ok();
+                    }
+                    return Err(err).context("model download failed (not retryable)");
                 }
                 if attempt >= MAX_DOWNLOAD_ATTEMPTS {
                     if let Ok(root) = models_root(app) {
@@ -1169,7 +1185,7 @@ async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> any
             id: spec.id.to_owned(),
             phase: DownloadPhase::Download,
             downloaded: 0,
-            total: total.map(sat_u32),
+            total,
             current: None,
         },
     );
@@ -1199,8 +1215,8 @@ async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> any
                 DownloadProgress {
                     id: spec.id.to_owned(),
                     phase: DownloadPhase::Download,
-                    downloaded: sat_u32(downloaded),
-                    total: total.map(sat_u32),
+                    downloaded,
+                    total,
                     current: None,
                 },
             );
@@ -1221,8 +1237,8 @@ async fn download_inner(app: &tauri::AppHandle, spec: &'static ModelSpec) -> any
         DownloadProgress {
             id: spec.id.to_owned(),
             phase: DownloadPhase::Download,
-            downloaded: sat_u32(downloaded),
-            total: total.map(sat_u32),
+            downloaded,
+            total,
             current: None,
         },
     );
@@ -1278,8 +1294,11 @@ fn extract_inner(
     let file = std::fs::File::open(part).context("failed to open package")?;
     let decoder = bzip2::read::BzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
-    let mut done = 0_u64;
-    for entry in archive.entries().context("failed to list package")? {
+    for (index, entry) in archive
+        .entries()
+        .context("failed to list package")?
+        .enumerate()
+    {
         let mut entry = entry.context("failed to read package entry")?;
         let name = entry
             .path()
@@ -1289,11 +1308,10 @@ fn extract_inner(
         entry
             .unpack_in(&staging)
             .context("failed to unpack package entry")?;
-        done += 1;
         emit(DownloadProgress {
             id: id.to_owned(),
             phase: DownloadPhase::Extract,
-            downloaded: sat_u32(done),
+            downloaded: u64::try_from(index + 1).unwrap_or(u64::MAX),
             total: None,
             current: Some(file_name_of(&name)),
         });
@@ -1337,6 +1355,32 @@ fn file_name_of(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_skips_fatal_failures() {
+        // 空间不足 / 校验失败 / 包大小不符：重试无意义，直接失败
+        for message in [
+            "not enough disk space: need 1 bytes, only 0 available",
+            "extracted model failed verification: [\"a.onnx\"]",
+            "downloaded package size mismatch: 10 != 20",
+        ] {
+            assert!(
+                !is_retryable_error(&anyhow::anyhow!("{message}")),
+                "fatal failure should not retry: {message}"
+            );
+        }
+        // 断网 / 停滞 / 服务端错误：退避重试
+        for message in [
+            "failed to start model download: timeout",
+            "model download stalled: no data for 60s",
+            "model download request failed: 503",
+        ] {
+            assert!(
+                is_retryable_error(&anyhow::anyhow!("{message}")),
+                "transient failure should retry: {message}"
+            );
+        }
+    }
 
     #[test]
     fn staging_dir_uses_dot_prefixed_name() {
@@ -1465,10 +1509,12 @@ mod tests {
     }
 
     #[test]
-    fn registry_sizes_fit_u32() {
+    fn registry_sizes_fit_js_number() {
+        // 前端 `number` 在 2^53 内精确：体积字段按 `u64` 全量透出，不再压到 `u32`
+        const MAX_SAFE: u64 = 9_007_199_254_740_991;
         for spec in MODELS {
-            assert!(u32::try_from(spec.tarball_bytes).is_ok());
-            assert!(u32::try_from(spec.files.iter().map(|file| file.size).sum::<u64>()).is_ok());
+            assert!(spec.tarball_bytes <= MAX_SAFE);
+            assert!(spec.files.iter().map(|file| file.size).sum::<u64>() <= MAX_SAFE);
         }
     }
 

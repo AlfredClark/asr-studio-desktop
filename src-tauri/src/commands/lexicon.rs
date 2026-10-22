@@ -110,6 +110,26 @@ pub fn delete_lexicon_entry(app: tauri::AppHandle, id: String) -> CommandResult<
     Ok(lexicon::delete_entry(&app, &id)?)
 }
 
+/// 批量删除词条：单事务全有或全无，返回删除数
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn batch_delete_lexicon_entries(app: tauri::AppHandle, ids: Vec<String>) -> CommandResult<u32> {
+    Ok(lexicon::delete_entries(&app, &ids)?)
+}
+
+/// 批量启用 / 禁用词条：单事务全有或全无，返回更新数
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn batch_set_lexicon_entries_enabled(
+    app: tauri::AppHandle,
+    ids: Vec<String>,
+    enabled: bool,
+) -> CommandResult<u32> {
+    Ok(lexicon::set_entries_enabled(&app, &ids, enabled)?)
+}
+
 /// 为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认
 #[tauri::command]
 #[specta::specta]

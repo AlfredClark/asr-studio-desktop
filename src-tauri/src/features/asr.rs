@@ -52,6 +52,17 @@ struct LoadedService {
     /// 是否有转写正在占用识别器（取出未归还）；`busy` 为真且识别器为空即“忙”，
     /// 为假且识别器为空即“启动中占位”，两者前端提示不同
     busy: bool,
+    /// 服务代际：每次 `start` 占位即领新号；停启交错时旧任务的归还/清理只认同代，
+    /// 跨代写入一律丢弃（旧识别器不塞进新服务，新占位不被旧失败清掉）
+    generation: u64,
+}
+
+/// 领新代际号；`wrapping` 防极端长运行回绕（回绕后仍靠“槽空 + 同代”双条件兜底）
+fn next_generation() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    GENERATION.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
 }
 
 /// 转写忙错误：与前端 `isTranscribeBusyFailure` 的同字面量会合，改名需两端同步
@@ -64,15 +75,15 @@ const LOAD_TIMEOUT_SECS: u64 = 900;
 /// 单次转写超时秒：onnx 解码不可中断，超时后分离等待其结束再归还，服务保持可用
 const TRANSCRIBE_TIMEOUT_SECS: u64 = 900;
 
+/// 转写排队等待秒：前序转写未归还时后来者排队而非直接报忙，超限才报忙
+const QUEUE_WAIT_SECS: u64 = 60;
+
 /// 超时常量编译期断言：0 会让 `timeout` 立刻超时，服务永远不可用
 const _: () = {
     assert!(LOAD_TIMEOUT_SECS > 0);
     assert!(TRANSCRIBE_TIMEOUT_SECS > 0);
     assert!(QUEUE_WAIT_SECS > 0);
 };
-
-/// 转写排队等待秒：前序转写未归还时后来者排队而非直接报忙，超限才报忙
-const QUEUE_WAIT_SECS: u64 = 60;
 
 fn service_lock() -> &'static Mutex<Option<LoadedService>> {
     static SERVICE: OnceLock<Mutex<Option<LoadedService>>> = OnceLock::new();
@@ -120,6 +131,7 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
     use anyhow::Context;
 
     let spec = crate::features::models::find_spec(model_id).context("unknown model id")?;
+    let generation = next_generation();
     {
         // 单守卫内检查并占位：两路并发 `start` 不会同时通过检查（TOCTOU 已堵）
         let mut guard = lock_service();
@@ -132,11 +144,12 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
             load_ms: 0,
             recognizer: None,
             busy: false,
+            generation,
         });
     }
     let report = crate::features::models::verify_model(app, spec.id)?;
     if report.status != crate::features::models::ModelStatus::Ready {
-        *lock_service() = None;
+        clear_placeholder(generation);
         anyhow::bail!("model is not ready, download and verify it first");
     }
 
@@ -158,21 +171,24 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
         tokio::spawn(async move {
             let _ = load_task.await;
         });
-        *lock_service() = None;
+        clear_placeholder(generation);
         anyhow::bail!("recognizer load timed out after {LOAD_TIMEOUT_SECS}s");
     };
     let recognizer = match load_outcome {
         Ok(recognizer) => recognizer,
         // 加载失败清占位：否则快照永远停在 `Starting`，前端切模型与启动按钮持续被禁
         Err(err) => {
-            *lock_service() = None;
+            clear_placeholder(generation);
             return Err(err);
         }
     };
     let load_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     let mut guard = lock_service();
-    if let Some(service) = guard.as_mut() {
+    // 只认同代占位：期间被停止重起（新代际）则丢弃本次句柄，不覆盖新服务
+    if let Some(service) = guard.as_mut()
+        && service.generation == generation
+    {
         service.load_ms = load_ms;
         service.recognizer = Some(recognizer);
     }
@@ -268,9 +284,10 @@ fn transcribe_queue_lock() -> &'static tokio::sync::Mutex<()> {
     QUEUE.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-/// 取出识别器独占使用；服务未运行、启动中、已有转写占用三种情况错误各异，
-/// 调用方负责归还（`put_back_recognizer`），超时分离回收同样经归还清 `busy`
-fn take_recognizer() -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
+/// 取出识别器独占使用，连同代际号一起交调用方；服务未运行、启动中、
+/// 已有转写占用三种情况错误各异，调用方负责按代归还（`put_back_recognizer`），
+/// 超时分离回收同样按代归还
+fn take_recognizer() -> anyhow::Result<(u64, sherpa_onnx::OfflineRecognizer)> {
     use anyhow::Context;
 
     let mut guard = lock_service();
@@ -288,15 +305,17 @@ fn take_recognizer() -> anyhow::Result<sherpa_onnx::OfflineRecognizer> {
                 .take()
                 .context("service is not running")?;
             service.busy = true;
-            Ok(recognizer)
+            Ok((service.generation, recognizer))
         }
     }
 }
 
-/// 归还识别器；期间被停止或换新则直接释放旧句柄，不覆盖新状态；
-/// 归还必清 `busy`，超时分离回收走同一入口
-fn put_back_recognizer(recognizer: sherpa_onnx::OfflineRecognizer) {
-    if let Some(service) = lock_service().as_mut() {
+/// 归还识别器：只认同代且槽空；期间被停止（无槽）或换新（新代际）则直接释放旧句柄，
+/// 不覆盖新状态；归还必清 `busy`，超时分离回收走同一入口
+fn put_back_recognizer(generation: u64, recognizer: sherpa_onnx::OfflineRecognizer) {
+    if let Some(service) = lock_service().as_mut()
+        && service.generation == generation
+    {
         service.busy = false;
         if service.recognizer.is_none() {
             service.recognizer = Some(recognizer);
@@ -305,10 +324,32 @@ fn put_back_recognizer(recognizer: sherpa_onnx::OfflineRecognizer) {
 }
 
 /// 仅清 `busy`：阻塞任务异常结束（panic/取消）导致识别器丢失时调用，
-/// 避免服务卡在“忙”而识别器永远回不来
-fn clear_busy() {
-    if let Some(service) = lock_service().as_mut() {
+/// 只认同代，避免把新服务的忙态误清；新服务本就没有旧 `busy`，天然安全
+fn clear_busy(generation: u64) {
+    if let Some(service) = lock_service().as_mut()
+        && service.generation == generation
+    {
         service.busy = false;
+    }
+}
+
+/// 清启动占位：只认“同代且仍为空槽”（加载中）；停启交错产生的新占位不受旧失败牵连
+fn clear_placeholder(generation: u64) {
+    let mut guard = lock_service();
+    let is_mine = guard
+        .as_ref()
+        .is_some_and(|service| service.generation == generation && service.recognizer.is_none());
+    if is_mine {
+        *guard = None;
+    }
+}
+
+/// 排队/转写超时的错误口径：停止态报“未运行”，运行态才报忙，避免误导等待
+fn busy_or_stopped_error() -> anyhow::Error {
+    if lock_service().is_none() {
+        anyhow::anyhow!("service is not running")
+    } else {
+        anyhow::anyhow!(TRANSCRIBE_BUSY_MESSAGE)
     }
 }
 
@@ -389,14 +430,14 @@ pub async fn transcribe_file(
         );
         anyhow::bail!("audio file is outside app data dir");
     }
-    // 路径校验先行：目录外请求不占排队位；排队超限才报忙（前端提示稍候）
+    // 路径校验先行：目录外请求不占排队位；排队超限按实际状态报忙/未运行
     let _queue_guard = tokio::time::timeout(
         std::time::Duration::from_secs(QUEUE_WAIT_SECS),
         transcribe_queue_lock().lock(),
     )
     .await
-    .map_err(|_| anyhow::anyhow!(TRANSCRIBE_BUSY_MESSAGE))?;
-    let recognizer = take_recognizer()?;
+    .map_err(|_| busy_or_stopped_error())?;
+    let (generation, recognizer) = take_recognizer()?;
     let mut task = tokio::task::spawn_blocking(move || {
         let outcome = transcribe_blocking(&recognizer, &canonical);
         (recognizer, outcome)
@@ -409,19 +450,21 @@ pub async fn transcribe_file(
     {
         join.context("transcribe task failed")?
     } else {
-        // 超时不 abort 阻塞线程（onnx 解码不可中断）：分离等待其结束再归还，
-        // 回收前的新转写报“忙”而非“未运行”；任务异常结束则仅清 `busy` 防卡死
+        // 超时不 abort 阻塞线程（onnx 解码不可中断）：分离等待其结束再按代归还，
+        // 回收前的新转写报“忙”而非“未运行”；任务异常结束则仅清同代 `busy` 防卡死
         tokio::spawn(async move {
             match task.await {
-                Ok((recognizer, _)) => put_back_recognizer(recognizer),
-                Err(_) => clear_busy(),
+                Ok((recognizer, _)) => put_back_recognizer(generation, recognizer),
+                Err(_) => clear_busy(generation),
             }
         });
-        anyhow::bail!("transcription timed out after {TRANSCRIBE_TIMEOUT_SECS}s");
+        return Err(busy_or_stopped_error()).context(format!(
+            "transcription timed out after {TRANSCRIBE_TIMEOUT_SECS}s"
+        ));
     };
     let (recognizer, outcome) = task_outcome;
-    // 归还识别器：期间被停止或换新则直接释放旧句柄，不覆盖新状态
-    put_back_recognizer(recognizer);
+    // 归还识别器：按代归还，期间被停止或换新则直接释放旧句柄，不覆盖新状态
+    put_back_recognizer(generation, recognizer);
     // 词库后处理：空词库直接原文返回，推理耗时不受影响
     outcome.map(|mut result| {
         result.text = crate::features::lexicon::apply_lexicon(app, &result.text);
@@ -486,6 +529,35 @@ mod tests {
         // 前端 `isTranscribeBusyFailure` 硬编码同一字面量，改名需两端同步
         assert_eq!(TRANSCRIBE_BUSY_MESSAGE, "transcription already in progress");
         assert_eq!(SERVICE_STARTING_MESSAGE, "service is starting, please wait");
+    }
+
+    #[test]
+    fn generation_ids_increase_monotonically() {
+        assert!(next_generation() < next_generation());
+    }
+
+    #[test]
+    fn take_recognizer_rejects_stopped_service() {
+        // 全局单例被其他用例污染（运行中）时跳过：取出会真的拿走识别器
+        if status().state != ServiceState::Stopped {
+            return;
+        }
+        let Err(err) = take_recognizer() else {
+            panic!("stopped service must refuse take")
+        };
+        assert!(format!("{err:#}").contains("service is not running"));
+        // 拒绝路径不碰槽位：快照仍为停止态
+        assert_eq!(status().state, ServiceState::Stopped);
+    }
+
+    #[test]
+    fn clear_placeholder_ignores_empty_slot() {
+        if status().state != ServiceState::Stopped {
+            return;
+        }
+        // 空槽清占位必须是空操作：不 panic、不改变停止态
+        clear_placeholder(u64::MAX);
+        assert_eq!(status().state, ServiceState::Stopped);
     }
 
     #[test]

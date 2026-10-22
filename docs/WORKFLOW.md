@@ -118,6 +118,7 @@ pnpm release                       # bumpp 联动升级三处版本号（package
 
 - **前端**：`i18n:compile` → `lint:frontend` → `check` → `test` → `build`。
 - **后端**：`fmt --check` → `clippy -D warnings`（警告即错误）→ `check` → `test` → `git diff --exit-code src/libs/commands/bindings.ts`（绑定同步校验；`bindings.ts` 已纳入 backend 的 `changes` 过滤器，单改它也会触发后端校验）。
+- **后端 Windows**：`windows-latest` 原生 `cargo check --workspace --all-targets`（只编译不测试）。Windows 专属代码（Win32 FFI、全局快捷键）在 ubuntu 上永不编译，此 job 堵住“本地全绿、release 打包才爆”的断层；`backend` 的 `changes` 过滤器同样覆盖它（后端配置文件属 backend 变更）。
 - 门禁作业（`ci-passed`）同时拦截 `changes`（变更检测）作业的失败——它失败时前后端都会被跳过，只查前后端会漏放。
 
 发布流水线（`.github/workflows/release.yml`）会校验三处版本号（`package.json` + `tauri.conf.json` + `Cargo.toml`）与 `v*` 标签一致。

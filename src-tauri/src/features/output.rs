@@ -150,12 +150,24 @@ fn read_clipboard(app: &tauri::AppHandle) -> Option<String> {
     }
 }
 
-/// 粘贴成功后按需恢复原剪贴板：等目标应用消费完（300ms）再比对，
-/// 当前仍是本次文本才写回（用户中途复制了新内容则让路）；恢复失败只记日志，不翻转输出结论
+/// 粘贴成功后按需恢复原剪贴板：轮询代替一次睡满（50ms×6，上限仍是 300ms），
+/// 用户中途复制即提前让路；300ms 内无人动剪贴板才写回；
+/// 恢复失败只记日志，不翻转输出结论
 fn restore_clipboard_if_unchanged(app: &tauri::AppHandle, pasted: &str, previous: &str) {
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let current = read_clipboard(app);
-    if !should_restore_clipboard(current.as_deref(), pasted, previous) {
+    /// 恢复等待总时长：给目标应用留足消费粘贴的时间
+    const RESTORE_WAIT_MS: u64 = 300;
+    /// 轮询步长：用户复制即提前退出，不必每次都等满
+    const RESTORE_POLL_MS: u64 = 50;
+
+    let mut waited = 0_u64;
+    while waited < RESTORE_WAIT_MS {
+        std::thread::sleep(std::time::Duration::from_millis(RESTORE_POLL_MS));
+        waited += RESTORE_POLL_MS;
+        if read_clipboard(app).as_deref() != Some(pasted) {
+            return;
+        }
+    }
+    if !should_restore_clipboard(Some(pasted), pasted, previous) {
         return;
     }
     if let Err(err) = write_clipboard(app, previous) {
@@ -172,6 +184,34 @@ fn should_restore_clipboard(current: Option<&str>, pasted: &str, previous: &str)
     current == Some(pasted)
 }
 
+// 键盘模拟句柄缓存：`Enigo::new` 每次初始化约毫秒级，线程内复用；
+// 调用方恒在 `spawn_blocking` 内执行，工作线程复用使缓存命中率高。
+// 初始化失败即时返回错误走降级，不缓存半成品
+// （`thread_local!` 展开不生成文档，刻意用普通注释而非 `///`）
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+thread_local! {
+    static ENIGO: std::cell::RefCell<Option<enigo::Enigo>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 复用线程内句柄执行键盘操作；闭包内禁止嵌套调用（`RefCell` 会 panic）
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn with_enigo<R>(task: impl FnOnce(&mut enigo::Enigo) -> anyhow::Result<R>) -> anyhow::Result<R> {
+    use anyhow::Context;
+
+    ENIGO.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(
+                enigo::Enigo::new(&enigo::Settings::default())
+                    .context("failed to init keyboard")?,
+            );
+        }
+        let enigo = slot.as_mut().expect("enigo cached above");
+        task(enigo)
+    })
+}
+
 /// 模拟输入法：Unicode 逐字注入（等价于 demo 的 `SendInput` 做法），跨平台走 `enigo`
 ///
 /// 阻塞调用方线程约输入时长；调用方在 `spawn_blocking` 内执行，不占异步运行时。
@@ -179,11 +219,12 @@ fn should_restore_clipboard(current: Option<&str>, pasted: &str, previous: &str)
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn ime_type_text(text: &str) -> anyhow::Result<()> {
     use anyhow::Context;
-    use enigo::{Enigo, Keyboard, Settings};
+    use enigo::Keyboard;
 
-    let mut enigo = Enigo::new(&Settings::default()).context("failed to init keyboard")?;
-    enigo.text(text).context("failed to type text")?;
-    Ok(())
+    with_enigo(|enigo| {
+        enigo.text(text).context("failed to type text")?;
+        Ok(())
+    })
 }
 
 /// 模拟输入法；移动端无此能力，直接返回错误走降级
@@ -199,21 +240,22 @@ fn ime_type_text(_text: &str) -> anyhow::Result<()> {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn paste_from_clipboard() -> anyhow::Result<()> {
     use anyhow::Context;
-    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    use enigo::{Direction, Key, Keyboard};
 
     std::thread::sleep(std::time::Duration::from_millis(150));
-    let mut enigo = Enigo::new(&Settings::default()).context("failed to init keyboard")?;
-    #[cfg(target_os = "macos")]
-    let modifier = Key::Meta;
-    #[cfg(not(target_os = "macos"))]
-    let modifier = Key::Control;
-    enigo
-        .key(modifier, Direction::Press)
-        .context("failed to press paste modifier")?;
-    let clicked = enigo.key(Key::Unicode('v'), Direction::Click);
-    let _ = enigo.key(modifier, Direction::Release);
-    clicked.context("failed to send paste keystroke")?;
-    Ok(())
+    with_enigo(|enigo| {
+        #[cfg(target_os = "macos")]
+        let modifier = Key::Meta;
+        #[cfg(not(target_os = "macos"))]
+        let modifier = Key::Control;
+        enigo
+            .key(modifier, Direction::Press)
+            .context("failed to press paste modifier")?;
+        let clicked = enigo.key(Key::Unicode('v'), Direction::Click);
+        let _ = enigo.key(modifier, Direction::Release);
+        clicked.context("failed to send paste keystroke")?;
+        Ok(())
+    })
 }
 
 /// 发粘贴键；移动端无此能力，直接返回错误走降级

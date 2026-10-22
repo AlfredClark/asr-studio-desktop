@@ -152,43 +152,31 @@ export async function deleteLexiconEntry(id: string): Promise<boolean> {
   return settle(await commands.deleteLexiconEntry(id).result(), () => {}, "delete entry");
 }
 
-/** 批量删除词条：逐个落盘后统一刷新，一次提示；失败逐项上报 */
+/** 批量删除词条：单事务全有或全无，一次刷新、一次提示 */
 export async function batchDeleteLexiconEntries(ids: string[]): Promise<boolean> {
-  let failed = 0;
-  for (const id of ids) {
-    const result = await commands.deleteLexiconEntry(id).result();
-    if (result.status === "error") {
-      failed += 1;
-      reportCommandFailure("[lexicon] batch delete failed", result.error);
-    }
-  }
-  await refreshLexicon();
-  if (failed > 0) {
+  const result = await commands.batchDeleteLexiconEntries(ids).result();
+  if (result.status === "error") {
     toast.error(m.lexicon_update_failed());
+    reportCommandFailure("[lexicon] batch delete failed", result.error);
     return false;
   }
+  await refreshLexicon();
   toast.success(m.lexicon_updated());
   return true;
 }
 
-/** 批量启用 / 禁用词条：逐个落盘后统一刷新，一次提示 */
+/** 批量启用 / 禁用词条：单事务全有或全无，一次刷新、一次提示 */
 export async function batchSetLexiconEntriesEnabled(
   ids: string[],
   enabled: boolean,
 ): Promise<boolean> {
-  let failed = 0;
-  for (const id of ids) {
-    const result = await commands.updateLexiconEntry(id, null, null, null, null, enabled).result();
-    if (result.status === "error") {
-      failed += 1;
-      reportCommandFailure("[lexicon] batch enable failed", result.error);
-    }
-  }
-  await refreshLexicon();
-  if (failed > 0) {
+  const result = await commands.batchSetLexiconEntriesEnabled(ids, enabled).result();
+  if (result.status === "error") {
     toast.error(m.lexicon_update_failed());
+    reportCommandFailure("[lexicon] batch enable failed", result.error);
     return false;
   }
+  await refreshLexicon();
   toast.success(m.lexicon_updated());
   return true;
 }

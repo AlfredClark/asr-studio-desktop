@@ -33,6 +33,8 @@ vi.mock("#libs/commands", () => ({
     createLexiconEntry: vi.fn(),
     updateLexiconEntry: vi.fn(),
     deleteLexiconEntry: vi.fn(),
+    batchDeleteLexiconEntries: vi.fn(),
+    batchSetLexiconEntriesEnabled: vi.fn(),
     suggestLexiconPinyin: vi.fn(),
   },
 }));
@@ -132,24 +134,40 @@ describe("词库 hook", () => {
     expect(await moveLexiconGroup("g-work", "down")).toBe(false);
   });
 
-  it("批量删除逐个落盘后统一刷新", async () => {
-    mocked.deleteLexiconEntry.mockReturnValue(fakeCommand({ status: "ok", data: null }) as never);
+  it("批量删除单事务落盘后统一刷新", async () => {
+    mocked.batchDeleteLexiconEntries.mockReturnValue(
+      fakeCommand({ status: "ok", data: 2 }) as never,
+    );
 
     expect(await batchDeleteLexiconEntries(["w-1", "w-2"])).toBe(true);
-    expect(mocked.deleteLexiconEntry).toHaveBeenCalledTimes(2);
+    expect(mocked.batchDeleteLexiconEntries).toHaveBeenCalledWith(["w-1", "w-2"]);
     expect(mocked.listLexicon).toHaveBeenCalled();
   });
 
-  it("批量启用部分失败时返回假", async () => {
-    mocked.updateLexiconEntry
-      .mockReturnValueOnce(fakeCommand({ status: "ok", data: null }) as never)
-      .mockReturnValueOnce(
-        fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
-      );
+  it("批量删除失败时返回假", async () => {
+    mocked.batchDeleteLexiconEntries.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    expect(await batchDeleteLexiconEntries(["w-1", "w-2"])).toBe(false);
+  });
+
+  it("批量启用单事务落盘", async () => {
+    mocked.batchSetLexiconEntriesEnabled.mockReturnValue(
+      fakeCommand({ status: "ok", data: 2 }) as never,
+    );
+
+    expect(await batchSetLexiconEntriesEnabled(["w-1", "w-2"], true)).toBe(true);
+    expect(mocked.batchSetLexiconEntriesEnabled).toHaveBeenCalledWith(["w-1", "w-2"], true);
+    expect(mocked.listLexicon).toHaveBeenCalled();
+  });
+
+  it("批量启用失败时返回假", async () => {
+    mocked.batchSetLexiconEntriesEnabled.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
 
     expect(await batchSetLexiconEntriesEnabled(["w-1", "w-2"], true)).toBe(false);
-    expect(mocked.updateLexiconEntry).toHaveBeenCalledTimes(2);
-    expect(mocked.updateLexiconEntry).toHaveBeenCalledWith("w-1", null, null, null, null, true);
   });
 });
 

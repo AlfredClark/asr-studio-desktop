@@ -206,6 +206,7 @@ dependencies = [
  "tauri-specta",
  "thiserror 2.0.21",
  "tokio",
+ "x11rb",
 ]
 
 [[package]]
