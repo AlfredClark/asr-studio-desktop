@@ -113,7 +113,7 @@ describe("通用设置分组", () => {
     triggerName: string,
     value: string,
   ): Promise<void> {
-    await user.click(screen.getByRole("button", { name: triggerName }));
+    await user.click(screen.getByRole("combobox", { name: triggerName }));
     await waitFor(() => {
       expect(document.querySelector(`[data-value="${value}"]`)).not.toBeNull();
     });
@@ -131,9 +131,9 @@ describe("通用设置分组", () => {
     expect(screen.getByText("System tray")).not.toBeNull();
     expect(screen.getByText("Close behavior")).not.toBeNull();
     // 下拉触发器展示当前选中项的文案
-    const languageTrigger = screen.getByRole("button", { name: "Language" });
+    const languageTrigger = screen.getByRole("combobox", { name: "Language" });
     expect(languageTrigger.textContent).toContain("English");
-    const closeBehaviorTrigger = screen.getByRole("button", { name: "Close behavior" });
+    const closeBehaviorTrigger = screen.getByRole("combobox", { name: "Close behavior" });
     expect(closeBehaviorTrigger.textContent).toContain("Ask every time");
   });
 
@@ -182,7 +182,9 @@ describe("通用设置分组", () => {
     });
     // finally 复位：下拉恢复可用，不会永久禁用
     await vi.waitFor(() => {
-      expect(screen.getByRole("button", { name: "Language" }).hasAttribute("disabled")).toBe(false);
+      expect(screen.getByRole("combobox", { name: "Language" }).hasAttribute("disabled")).toBe(
+        false,
+      );
     });
   });
 
@@ -375,7 +377,7 @@ describe("通用设置分组", () => {
     };
     render(Component);
 
-    await user.click(screen.getByRole("button", { name: "Close behavior" }));
+    await user.click(screen.getByRole("combobox", { name: "Close behavior" }));
     await waitFor(() => {
       expect(document.querySelector('[data-value="minimize_to_tray"]')).not.toBeNull();
     });

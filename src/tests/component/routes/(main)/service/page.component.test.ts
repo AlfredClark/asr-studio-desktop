@@ -325,7 +325,7 @@ describe("服务页", () => {
     const user = userEvent.setup();
     render(Page);
 
-    await user.click(screen.getByRole("button", { name: "Output method" }));
+    await user.click(screen.getByRole("combobox", { name: "Output method" }));
     await waitFor(() => {
       expect(document.querySelector('[data-value="paste"]')).not.toBeNull();
     });
@@ -410,7 +410,7 @@ describe("服务页", () => {
     };
     render(Page);
 
-    await user.click(screen.getByRole("button", { name: "Lexicon group" }));
+    await user.click(screen.getByRole("combobox", { name: "Lexicon group" }));
     await waitFor(() => {
       expect(document.querySelector('[data-value="g-work"]')).not.toBeNull();
     });

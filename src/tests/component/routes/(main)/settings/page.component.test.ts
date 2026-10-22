@@ -174,7 +174,7 @@ describe("设置页", () => {
   it("语言下拉展示当前语言", () => {
     render(Page);
 
-    const trigger = screen.getByRole("button", { name: "Language" });
+    const trigger = screen.getByRole("combobox", { name: "Language" });
     expect(trigger.textContent).toContain("English");
   });
 });

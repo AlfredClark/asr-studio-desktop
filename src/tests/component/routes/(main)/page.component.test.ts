@@ -289,12 +289,14 @@ describe("首页工作台", () => {
     render(Page);
     const workspace = await screen.findByTestId("home-workspace");
     // 模型 + 设备 + 输出三个下拉（bits-ui 触发器为 button 角色，名取各自标签）
-    expect(within(workspace).getByRole("button", { name: m.service_model_label() })).not.toBeNull();
     expect(
-      within(workspace).getByRole("button", { name: m.service_device_label() }),
+      within(workspace).getByRole("combobox", { name: m.service_model_label() }),
     ).not.toBeNull();
     expect(
-      within(workspace).getByRole("button", { name: m.service_output_label() }),
+      within(workspace).getByRole("combobox", { name: m.service_device_label() }),
+    ).not.toBeNull();
+    expect(
+      within(workspace).getByRole("combobox", { name: m.service_output_label() }),
     ).not.toBeNull();
     expect(within(workspace).getByText(readyEntry.display_name)).not.toBeNull();
   });
@@ -304,7 +306,7 @@ describe("首页工作台", () => {
     modelsStateMock.entries = [readyEntry];
     render(Page);
     const workspace = await screen.findByTestId("home-workspace");
-    await user.click(within(workspace).getByRole("button", { name: m.service_output_label() }));
+    await user.click(within(workspace).getByRole("combobox", { name: m.service_output_label() }));
     // bits-ui 选项在 jsdom 下隐藏渲染，按文本匹配（勾选图标干扰可访问名计算）
     const option = await waitFor(() => {
       const el =

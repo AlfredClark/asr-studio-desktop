@@ -519,8 +519,8 @@ describe("词库页", () => {
   it("展示排序筛选与选择菜单入口", async () => {
     await renderReady();
 
-    expect(screen.getByRole("button", { name: "Sort" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Filter" })).not.toBeNull();
+    expect(screen.getByRole("combobox", { name: "Sort" })).not.toBeNull();
+    expect(screen.getByRole("combobox", { name: "Filter" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Selection" })).not.toBeNull();
   });
 
@@ -543,7 +543,7 @@ describe("词库页", () => {
     };
     await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Filter" }));
+    await user.click(screen.getByRole("combobox", { name: "Filter" }));
     await waitFor(() => {
       expect(document.querySelector('[data-value="disabled"]')).not.toBeNull();
     });
@@ -561,7 +561,7 @@ describe("词库页", () => {
     await renderReady();
 
     // 工作组两条均为启用，切到“未启用”即无匹配
-    await user.click(screen.getByRole("button", { name: "Filter" }));
+    await user.click(screen.getByRole("combobox", { name: "Filter" }));
     await waitFor(() => {
       expect(document.querySelector('[data-value="disabled"]')).not.toBeNull();
     });
@@ -591,7 +591,7 @@ describe("词库页", () => {
     };
     await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Sort" }));
+    await user.click(screen.getByRole("combobox", { name: "Sort" }));
     await waitFor(() => {
       expect(document.querySelector('[data-value="pinyin-asc"]')).not.toBeNull();
     });
