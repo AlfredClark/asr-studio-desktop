@@ -204,3 +204,20 @@ export function foldHeldKeys(
   }
   return held;
 }
+
+/** 未闭合的按键：按按下顺序返回仍处于按下态的键；纯函数，可单测 */
+export function unclosedKeys(
+  actions: Array<{ key: string; direction: "press" | "release" }>,
+): string[] {
+  const held: string[] = [];
+  for (const action of actions) {
+    if (action.direction === "press") {
+      if (!held.includes(action.key)) held.push(action.key);
+    } else {
+      const index = held.indexOf(action.key);
+      // 无故松开（无对应按下）不影响闭合判定，保存校验会单独拦截
+      if (index !== -1) held.splice(index, 1);
+    }
+  }
+  return held;
+}

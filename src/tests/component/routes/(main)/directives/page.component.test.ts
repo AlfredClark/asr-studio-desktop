@@ -179,6 +179,33 @@ describe("指令页", () => {
     expect(ctrl.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("未闭合时自动闭合按钮按序补松开", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New directive" }));
+    await waitFor(() => {
+      expect(screen.getByText("Action sequence (0)")).not.toBeNull();
+    });
+    const dialog = screen.getByRole("dialog");
+    const dialogScope = within(dialog);
+
+    // 空序列不展示自动闭合
+    expect(dialogScope.queryByRole("button", { name: "Auto release" })).toBeNull();
+
+    // 录 Ctrl + C：两键按住未放
+    await user.click(dialogScope.getAllByRole("button", { name: "Ctrl" })[0]);
+    await user.click(dialogScope.getByRole("button", { name: "C" }));
+    expect(dialogScope.getByText("2. C ↓")).not.toBeNull();
+
+    await user.click(dialogScope.getByRole("button", { name: "Auto release" }));
+    // 按按下顺序补松开：先 Ctrl 后 C
+    expect(dialogScope.getByText("3. Ctrl ↑")).not.toBeNull();
+    expect(dialogScope.getByText("4. C ↑")).not.toBeNull();
+    // 闭合后按钮收起
+    expect(dialogScope.queryByRole("button", { name: "Auto release" })).toBeNull();
+  });
+
   it("保存新建透传全部字段", async () => {
     const user = userEvent.setup();
     await renderReady();

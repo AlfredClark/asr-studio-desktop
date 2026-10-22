@@ -16,18 +16,24 @@
     onAction,
     actionDisabled = false,
     headerExtra,
+    secondaryLabel,
+    onSecondaryAction,
     children,
   }: {
     /** 卡片标题（导航名复用） */
     title: string;
-    /** 底部操作按钮文案 */
+    /** 底部主操作按钮文案（右对齐） */
     actionLabel: string;
-    /** 按钮点击回调 */
+    /** 主按钮点击回调 */
     onAction: () => void;
-    /** 按钮禁用态 */
+    /** 主按钮禁用态 */
     actionDisabled?: boolean;
     /** 标题栏右侧附加内容（如状态徽标），缺省不渲染 */
     headerExtra?: Snippet;
+    /** 底部次操作按钮文案（左对齐），缺省不渲染 */
+    secondaryLabel?: string;
+    /** 次按钮点击回调 */
+    onSecondaryAction?: () => void;
     /** 卡片内容（徽标 + 摘要行） */
     children: Snippet;
   } = $props();
@@ -45,7 +51,12 @@
   <CardContent class="flex-1">
     {@render children()}
   </CardContent>
-  <CardFooter>
+  <CardFooter class={secondaryLabel ? "justify-between" : undefined}>
+    {#if secondaryLabel}
+      <Button size="sm" variant="ghost" onclick={onSecondaryAction}>
+        {secondaryLabel}
+      </Button>
+    {/if}
     <Button size="sm" variant="outline" onclick={onAction} disabled={actionDisabled}>
       {actionLabel}
     </Button>

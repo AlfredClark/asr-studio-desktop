@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { Directive, LexiconEntry, LexiconGroup, ModelEntry } from "#libs/commands/types";
-import { formatBytes } from "#libs/utils/format";
 import { m } from "#libs/i18n/paraglide/messages";
 import Page from "../../../../routes/(main)/+page.svelte";
 
@@ -211,16 +210,13 @@ describe("首页工作台", () => {
     directiveStateMock.value = [directive("d-1", true), directive("d-2", false)];
     render(Page);
     const workspace = await screen.findByTestId("home-workspace");
-    expect(within(workspace).getByText(m.home_models_ready({ count: 1 }))).not.toBeNull();
-    expect(
-      within(workspace).getByText(m.home_models_disk({ size: formatBytes(239_549_735) })),
-    ).not.toBeNull();
-    expect(
-      within(workspace).getByText(m.home_lexicon_groups({ total: 2, active: 1, inactive: 1 })),
-    ).not.toBeNull();
-    expect(
-      within(workspace).getByText(m.home_lexicon_entries({ total: 2, active: 1, inactive: 1 })),
-    ).not.toBeNull();
+    // 模型卡一行：计数与占用同行展示（同节点多文本，用正则匹配）
+    expect(within(workspace).getByText(/1 ready/)).not.toBeNull();
+    // 模型卡一行：计数与占用同行展示
+    expect(within(workspace).getByText(/239\.5 MB/)).not.toBeNull();
+    // 词库卡一行：分组与词条同行展示（测试环境为英文文案）
+    expect(within(workspace).getByText(/2 groups/)).not.toBeNull();
+    expect(within(workspace).getByText(/2 entries/)).not.toBeNull();
     expect(
       within(workspace).getByText(m.home_directives_summary({ enabled: 1, total: 2 })),
     ).not.toBeNull();
@@ -239,6 +235,15 @@ describe("首页工作台", () => {
     expect(startServiceMock).toHaveBeenCalledOnce();
   });
 
+  it("服务卡管理按钮跳服务页", async () => {
+    const user = userEvent.setup();
+    modelsStateMock.entries = [readyEntry];
+    render(Page);
+    const workspace = await screen.findByTestId("home-workspace");
+    await user.click(within(workspace).getByRole("button", { name: m.home_service_manage() }));
+    expect(gotoMock).toHaveBeenCalledWith("/service");
+  });
+
   it("运行态显示停止按钮与运行中模型名", async () => {
     const user = userEvent.setup();
     modelsStateMock.entries = [readyEntry];
@@ -252,23 +257,26 @@ describe("首页工作台", () => {
     expect(stopServiceMock).toHaveBeenCalledOnce();
   });
 
-  it("最近识别展示前三条文本", async () => {
+  it("识别记录不截断，全部展示", async () => {
     modelsStateMock.entries = [readyEntry];
-    serviceStateMock.history = [
-      {
-        id: 1,
-        text: "你好世界",
-        audioSec: 1,
-        inferMs: 100,
-        fileName: "a.wav",
-        at: 1,
-        kind: "voice",
-        output: "paste",
-      },
-    ];
+    serviceStateMock.history = [1, 2, 3, 4].map((id) => ({
+      id,
+      text: `记录${id}`,
+      audioSec: 1,
+      inferMs: 100,
+      fileName: "a.wav",
+      at: id,
+      kind: "voice" as const,
+      output: "paste" as const,
+    }));
     render(Page);
     const workspace = await screen.findByTestId("home-workspace");
-    expect(within(workspace).getByText("你好世界")).not.toBeNull();
+    for (const id of [1, 2, 3, 4]) {
+      expect(within(workspace).getByText(`记录${id}`)).not.toBeNull();
+    }
+    // 来源徽标居右，输出方式跟在时间后方（带“·”前缀以区别输出下拉的选中值）
+    expect(within(workspace).getAllByText(m.service_history_kind_text())).not.toHaveLength(0);
+    expect(within(workspace).getAllByText(/· Simulate copy-paste$/)).not.toHaveLength(0);
   });
 
   it("服务卡渲染模型、设备与输出三个下拉", async () => {

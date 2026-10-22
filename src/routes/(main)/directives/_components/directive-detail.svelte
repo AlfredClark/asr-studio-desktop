@@ -31,12 +31,12 @@
         <dd class="min-w-0 flex-1 truncate">{directive.trigger_text}</dd>
       </div>
       <div class="flex gap-2">
-        <dt class="shrink-0 font-medium">{m.directives_trigger_pinyin()}</dt>
+        <dt class="shrink-0 font-medium">{m.directives_trigger_pinyin_label()}</dt>
         <dd class="min-w-0 flex-1 truncate text-muted-foreground">{directive.trigger_pinyin}</dd>
       </div>
       <div class="flex gap-2">
-        <dt class="shrink-0 font-medium">{m.directives_interval()}</dt>
-        <dd class="shrink-0 tabular-nums">{directive.interval_ms}</dd>
+        <dt class="shrink-0 font-medium">{m.directives_interval_label()}</dt>
+        <dd class="shrink-0 tabular-nums">{directive.interval_ms} ms</dd>
       </div>
     </dl>
     <div class="flex min-h-0 flex-1 flex-col gap-1.5">
@@ -45,7 +45,7 @@
       </p>
       <div class="flex flex-wrap gap-1.5 overflow-y-auto">
         {#each directive.actions as action, index (index)}
-          <Badge variant={action.direction === "press" ? "default" : "secondary"}>
+          <Badge variant={action.direction === "press" ? "default" : "secondary"} class="h-7">
             {index + 1}. {keyLabel(action.key)}
             {action.direction === "press" ? "↓" : "↑"}
           </Badge>
