@@ -42,6 +42,7 @@ const configStateMock = vi.hoisted(
       shortcut_paste_restore?: boolean;
       shortcut_quick_lexicon?: string;
       quick_lexicon_group?: string;
+      strip_trailing_punct?: string;
     } | null;
   } => ({
     value: { shortcut_output: "clipboard", shortcut_paste_restore: false },
@@ -353,6 +354,22 @@ describe("服务页", () => {
     await user.click(screen.getByRole("switch", { name: "Restore clipboard after paste" }));
 
     expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_paste_restore: true });
+  });
+
+  it("句末移除输入失焦后经命令落盘", async () => {
+    const user = userEvent.setup();
+    configStateMock.value = {
+      shortcut_output: "paste",
+      shortcut_paste_restore: false,
+      strip_trailing_punct: "",
+    };
+    render(Page);
+
+    const input = screen.getByLabelText(m.settings_strip_punct_label());
+    await user.type(input, "，。 !");
+    await user.tab();
+
+    expect(updateConfigMock).toHaveBeenCalledWith({ strip_trailing_punct: "，。 !" });
   });
 
   it("挂载即刷新词库快照", async () => {

@@ -152,6 +152,7 @@ describe("根布局启动水合", () => {
     shortcut_paste_restore: false,
     custom_model_dirs: {},
     active_lexicon_groups: [],
+    strip_trailing_punct: "",
     shortcut_voice: "",
     shortcut_quick_lexicon: "",
     shortcut_directive: "",

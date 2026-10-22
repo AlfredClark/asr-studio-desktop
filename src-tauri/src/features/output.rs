@@ -57,6 +57,17 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
             reason: OutputReason::EmptyText,
         });
     }
+    let config = config::load_config(app);
+    // 句末移除：命中配置标点集则剥掉一个句末标点；剥完变空按空文本处理
+    let stripped = strip_trailing_punct(text, &config.strip_trailing_punct);
+    if stripped.trim().is_empty() {
+        return Ok(OutputReport {
+            via: OutputVia::Clipboard,
+            fallback: false,
+            reason: OutputReason::EmptyText,
+        });
+    }
+    let text = stripped;
     if check_focus() == FocusKind::NonEditable {
         log::info!("no editable focus, skipping injection and keeping text in clipboard");
         write_clipboard(app, text)?;
@@ -172,6 +183,17 @@ fn restore_clipboard_if_unchanged(app: &tauri::AppHandle, pasted: &str, previous
     }
     if let Err(err) = write_clipboard(app, previous) {
         log::warn!("failed to restore previous clipboard content: {err:#}");
+    }
+}
+
+/// 剥掉一个句末命中标点：集合为空直接返回原文；纯函数，可单测
+fn strip_trailing_punct<'a>(text: &'a str, set: &str) -> &'a str {
+    if set.is_empty() {
+        return text;
+    }
+    match text.chars().next_back() {
+        Some(last) if set.contains(last) => &text[..text.len() - last.len_utf8()],
+        _ => text,
     }
 }
 
@@ -333,6 +355,17 @@ mod tests {
             serde_json::to_value(OutputReason::NoEditableFocus).expect("serializes"),
             serde_json::json!("no_editable_focus")
         );
+    }
+
+    #[test]
+    fn strip_trailing_punct_removes_one_matched_ending() {
+        assert_eq!(strip_trailing_punct("你好。", "，。！"), "你好");
+        // 只剥一个：连缀标点留其余
+        assert_eq!(strip_trailing_punct("你好？！", "？！"), "你好？");
+        // 未命中与空集合不动原文
+        assert_eq!(strip_trailing_punct("你好", "，。！"), "你好");
+        assert_eq!(strip_trailing_punct("你好。", ""), "你好。");
+        assert_eq!(strip_trailing_punct("", "，。！"), "");
     }
 
     #[test]

@@ -232,6 +232,8 @@ export type ConfigPatch = {
 	custom_model_dirs?: { [key in string]: string } | null,
 	/**  词库生效分组 id 列表 */
 	active_lexicon_groups?: string[] | null,
+	/**  句末移除标点集（写入时归一化：去空格去重） */
+	strip_trailing_punct?: string | null,
 };
 
 /**
@@ -284,6 +286,8 @@ export type Config_Deserialize = {
 	custom_model_dirs?: { [key in string]: string },
 	/**  词库生效分组 id 列表；缺失或脏值回落空数组（仅全局组生效） */
 	active_lexicon_groups?: string[],
+	/**  句末移除标点集：识别输出前剥掉一个句末命中标点；缺失或类型不符回落空串（不处理） */
+	strip_trailing_punct?: string,
 };
 
 /**
@@ -336,6 +340,8 @@ export type Config_Serialize = {
 	custom_model_dirs: { [key in string]: string },
 	/**  词库生效分组 id 列表；缺失或脏值回落空数组（仅全局组生效） */
 	active_lexicon_groups: string[],
+	/**  句末移除标点集：识别输出前剥掉一个句末命中标点；缺失或类型不符回落空串（不处理） */
+	strip_trailing_punct: string,
 };
 
 /**  指令：触发文本命中后回放整套按键事件 */

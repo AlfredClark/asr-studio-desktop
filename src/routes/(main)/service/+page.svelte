@@ -13,6 +13,7 @@
     ResizablePaneGroup,
   } from "#components/shadcn-svelte/resizable";
   import CardRow from "#components/common/card-row.svelte";
+  import { Input } from "#components/shadcn-svelte/input";
   import ShortcutRecordRow from "#components/common/shortcut-record-row.svelte";
   import { Switch } from "#components/shadcn-svelte/switch";
   import RecognitionRecordItem from "#components/common/recognition-record-item.svelte";
@@ -147,6 +148,21 @@
     }
   }
 
+  /** 句末移除标点草稿：输入态本地持有，失焦/回车落盘；`null` 表示跟随后端值 */
+  let stripPunctDraft = $state<string | null>(null);
+
+  /** 句末移除标点经命令落盘后端（后端归一化去空格去重）；失败保留草稿，输入框不回滚 */
+  async function handleStripPunctSave(): Promise<void> {
+    const raw = stripPunctDraft;
+    if (raw == null) return;
+    if (await updateConfig({ strip_trailing_punct: raw })) {
+      stripPunctDraft = null;
+      toast.success(m.settings_strip_punct_updated());
+    } else {
+      toast.error(m.settings_strip_punct_update_failed());
+    }
+  }
+
   onMount(() => {
     void refreshServiceData();
     void refreshLexicon();
@@ -204,6 +220,24 @@
               {serviceState.switching ? m.service_switching() : statusLabel()}
             </Badge>
             <div class="flex shrink-0 items-center gap-2">
+              {#if serviceState.recording}
+                <Button variant="destructive" size="sm" onclick={() => void stopTestRecording()}>
+                  {m.service_record_stop()}
+                </Button>
+              {:else if serviceState.recognizing}
+                <Button variant="outline" size="sm" onclick={() => void cancelTranscription()}>
+                  {m.service_cancel_recognition()}
+                </Button>
+              {:else}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={() => void startTestRecording()}
+                  disabled={!canRecord}
+                >
+                  {m.service_record_start()}
+                </Button>
+              {/if}
               <Button
                 variant="ghost"
                 size="sm"
@@ -231,29 +265,6 @@
                 </Button>
               {/if}
             </div>
-          </div>
-          <p class="shrink-0 text-xs font-medium text-muted-foreground">
-            {m.service_test_title()}
-          </p>
-          <div class="flex shrink-0 items-center gap-2">
-            {#if serviceState.recording}
-              <Button variant="destructive" size="sm" onclick={() => void stopTestRecording()}>
-                {m.service_record_stop()}
-              </Button>
-            {:else if serviceState.recognizing}
-              <Button variant="outline" size="sm" onclick={() => void cancelTranscription()}>
-                {m.service_cancel_recognition()}
-              </Button>
-            {:else}
-              <Button
-                variant="outline"
-                size="sm"
-                onclick={() => void startTestRecording()}
-                disabled={!canRecord}
-              >
-                {m.service_record_start()}
-              </Button>
-            {/if}
           </div>
           <CardRow label={m.service_model_label()} description={m.service_model_description()}>
             {#snippet control()}
@@ -315,6 +326,43 @@
               {/if}
             {/snippet}
           </CardRow>
+          <CardRow label={m.service_output_label()} description={m.service_output_description()}>
+            {#snippet control()}
+              <Select
+                type="single"
+                value={configValue("shortcut_output", "paste")}
+                items={outputItems}
+                onValueChange={(value) => void handleOutputChange(value)}
+              >
+                <SelectTrigger
+                  class="w-(--control-column-width)"
+                  aria-label={m.service_output_label()}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paste">{m.service_output_option_paste()}</SelectItem>
+                  <SelectItem value="clipboard">{m.service_output_option_clipboard()}</SelectItem>
+                  <SelectItem value="ime">{m.service_output_option_ime()}</SelectItem>
+                </SelectContent>
+              </Select>
+            {/snippet}
+          </CardRow>
+          {#if isPasteMode}
+            <CardRow
+              label={m.service_output_restore_label()}
+              description={m.service_output_restore_description()}
+            >
+              {#snippet control()}
+                <Switch
+                  checked={pasteRestore}
+                  onCheckedChange={handleRestoreChange}
+                  disabled={switchingRestore}
+                  aria-label={m.service_output_restore_label()}
+                />
+              {/snippet}
+            </CardRow>
+          {/if}
           <CardRow label={m.settings_voice_label()} description={m.settings_voice_description()}>
             {#snippet control()}
               <ShortcutRecordRow kind="voice" />
@@ -366,43 +414,24 @@
               {/snippet}
             </CardRow>
           {/if}
-          <CardRow label={m.service_output_label()} description={m.service_output_description()}>
+          <CardRow
+            label={m.settings_strip_punct_label()}
+            description={m.settings_strip_punct_description()}
+          >
             {#snippet control()}
-              <Select
-                type="single"
-                value={configValue("shortcut_output", "paste")}
-                items={outputItems}
-                onValueChange={(value) => void handleOutputChange(value)}
-              >
-                <SelectTrigger
-                  class="w-(--control-column-width)"
-                  aria-label={m.service_output_label()}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="paste">{m.service_output_option_paste()}</SelectItem>
-                  <SelectItem value="clipboard">{m.service_output_option_clipboard()}</SelectItem>
-                  <SelectItem value="ime">{m.service_output_option_ime()}</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                value={stripPunctDraft ?? configValue("strip_trailing_punct", "")}
+                placeholder={m.settings_strip_punct_placeholder()}
+                aria-label={m.settings_strip_punct_label()}
+                class="w-(--control-column-width)"
+                oninput={(event) => (stripPunctDraft = event.currentTarget.value)}
+                onblur={() => void handleStripPunctSave()}
+                onkeydown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
             {/snippet}
           </CardRow>
-          {#if isPasteMode}
-            <CardRow
-              label={m.service_output_restore_label()}
-              description={m.service_output_restore_description()}
-            >
-              {#snippet control()}
-                <Switch
-                  checked={pasteRestore}
-                  onCheckedChange={handleRestoreChange}
-                  disabled={switchingRestore}
-                  aria-label={m.service_output_restore_label()}
-                />
-              {/snippet}
-            </CardRow>
-          {/if}
           <!-- 下方留空：将来新增设置直接往下加行 -->
           <div class="min-h-4 flex-1"></div>
         </div>

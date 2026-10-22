@@ -45,6 +45,8 @@ const KEY_SHORTCUT_PASTE_RESTORE: &str = "shortcut_paste_restore";
 const KEY_CUSTOM_MODEL_DIRS: &str = "custom_model_dirs";
 /// 词库生效分组在配置文件中的键名；值为分组 id 数组，缺失或脏值回落空数组（仅全局组生效）
 const KEY_ACTIVE_LEXICON_GROUPS: &str = "active_lexicon_groups";
+/// 句末移除标点集在配置文件中的键名；空串表示不处理，写入时已去空格去重
+const KEY_STRIP_TRAILING_PUNCT: &str = "strip_trailing_punct";
 /// 当前配置结构版本：变更字段语义时递增，并在迁移链中补对应升级步骤
 pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
@@ -193,6 +195,10 @@ pub struct Config {
     #[serde(deserialize_with = "de_active_lexicon_groups")]
     #[specta(type = Vec<String>)]
     pub active_lexicon_groups: Vec<String>,
+    /// 句末移除标点集：识别输出前剥掉一个句末命中标点；缺失或类型不符回落空串（不处理）
+    #[serde(deserialize_with = "de_strip_trailing_punct")]
+    #[specta(type = String)]
+    pub strip_trailing_punct: String,
 }
 
 impl Default for Config {
@@ -214,6 +220,7 @@ impl Default for Config {
             shortcut_paste_restore: false,
             custom_model_dirs: HashMap::new(),
             active_lexicon_groups: Vec::new(),
+            strip_trailing_punct: String::new(),
         }
     }
 }
@@ -262,6 +269,8 @@ pub struct ConfigPatch {
     pub custom_model_dirs: Option<HashMap<String, String>>,
     /// 词库生效分组 id 列表
     pub active_lexicon_groups: Option<Vec<String>>,
+    /// 句末移除标点集（写入时归一化：去空格去重）
+    pub strip_trailing_punct: Option<String>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -401,6 +410,24 @@ where
 {
     let value = Value::deserialize(deserializer)?;
     Ok(value.as_bool().unwrap_or_default())
+}
+
+/// 容错解析句末移除标点集：经 `serde_json::Value` 中转，非字符串一律回落空串（不处理）
+fn de_strip_trailing_punct<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value.as_str().map(str::to_owned).unwrap_or_default())
+}
+
+/// 标点集归一化：去空白、去重（保首次序）；写入侧唯一口径，纯函数可单测
+fn normalize_punct_set(raw: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    raw.chars()
+        .filter(|c| !c.is_whitespace())
+        .filter(|c| seen.insert(*c))
+        .collect()
 }
 
 /// 容错解析用户指定模型目录：经 `serde_json::Value` 中转，非对象一律回落空映射；
@@ -567,6 +594,7 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         shortcut_paste_restore: load_shortcut_paste_restore(app),
         custom_model_dirs: load_custom_model_dirs(app),
         active_lexicon_groups: load_active_lexicon_groups(app),
+        strip_trailing_punct: load_strip_trailing_punct(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -680,6 +708,13 @@ pub fn load_custom_model_dirs(app: &tauri::AppHandle) -> HashMap<String, String>
 /// 转写热路径（`apply_lexicon`）走此单键读取，不拉 13 键全量 `load_config`
 pub fn load_active_lexicon_groups(app: &tauri::AppHandle) -> Vec<String> {
     parse_active_lexicon_groups(read_key(app, KEY_ACTIVE_LEXICON_GROUPS).as_ref())
+}
+
+/// 读取持久化的句末移除标点集；未设置或类型不符时回落空串（不处理）
+fn load_strip_trailing_punct(app: &tauri::AppHandle) -> String {
+    read_key(app, KEY_STRIP_TRAILING_PUNCT)
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_default()
 }
 
 /// 读取持久化的配置结构版本；未设置或类型不符时回落 `0`
@@ -828,6 +863,7 @@ fn reset_patch() -> ConfigPatch {
         shortcut_paste_restore: Some(false),
         custom_model_dirs: Some(HashMap::new()),
         active_lexicon_groups: Some(Vec::new()),
+        strip_trailing_punct: Some(String::new()),
     }
 }
 
@@ -966,6 +1002,12 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
                     .map(|id| Value::from(id.trim()))
                     .collect::<Vec<Value>>(),
             ),
+        ));
+    }
+    if let Some(strip_trailing_punct) = patch.strip_trailing_punct.as_deref() {
+        entries.push((
+            KEY_STRIP_TRAILING_PUNCT,
+            Value::from(normalize_punct_set(strip_trailing_punct)),
         ));
     }
     entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
@@ -1143,6 +1185,7 @@ mod tests {
         assert!(!config.shortcut_paste_restore);
         assert!(config.custom_model_dirs.is_empty());
         assert_eq!(config.active_lexicon_groups.len(), 0);
+        assert_eq!(config.strip_trailing_punct, "");
         assert_eq!(config.schema_version, 0);
     }
 
@@ -1167,15 +1210,37 @@ mod tests {
                 String::from("/models/custom"),
             )]),
             active_lexicon_groups: vec![String::from("work"), String::from("dialect")],
+            strip_trailing_punct: String::from("，。！"),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "schema_version": 2 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "schema_version": 2 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
+    }
+
+    #[test]
+    fn punct_set_normalizes_whitespace_and_duplicates() {
+        assert_eq!(normalize_punct_set("，。！"), "，。！");
+        assert_eq!(normalize_punct_set("，。 ，。、！"), "，。、！");
+        assert_eq!(normalize_punct_set("  "), "");
+        assert_eq!(normalize_punct_set("。。。。"), "。");
+    }
+
+    #[test]
+    fn tolerates_missing_or_invalid_strip_trailing_punct() {
+        for (raw, expected) in [
+            (json!({}), ""),
+            (json!({ "strip_trailing_punct": "，。！" }), "，。！"),
+            (json!({ "strip_trailing_punct": 5 }), ""),
+            (json!({ "strip_trailing_punct": null }), ""),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(config.strip_trailing_punct, expected);
+        }
     }
 
     #[test]
@@ -1662,6 +1727,7 @@ mod tests {
                 String::from("/models/a"),
             )])),
             active_lexicon_groups: Some(vec![String::from("work")]),
+            strip_trailing_punct: Some(String::from("，。")),
         });
         assert_eq!(
             keys_of(&patched),
@@ -1681,6 +1747,7 @@ mod tests {
                 KEY_SHORTCUT_PASTE_RESTORE,
                 KEY_CUSTOM_MODEL_DIRS,
                 KEY_ACTIVE_LEXICON_GROUPS,
+                KEY_STRIP_TRAILING_PUNCT,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -1699,6 +1766,7 @@ mod tests {
         assert_eq!(patched[12].1, json!(true));
         assert_eq!(patched[13].1, json!({ "sense-voice-int8": "/models/a" }));
         assert_eq!(patched[14].1, json!(["work"]));
+        assert_eq!(patched[15].1, json!("，。"));
     }
 
     #[test]
@@ -1720,6 +1788,7 @@ mod tests {
             shortcut_paste_restore: Some(true),
             custom_model_dirs: Some(HashMap::new()),
             active_lexicon_groups: Some(vec![String::from("work")]),
+            strip_trailing_punct: Some(String::from("，。")),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -1742,7 +1811,8 @@ mod tests {
         assert_eq!(entries[12].1, json!(false));
         assert_eq!(entries[13].1, json!({}));
         assert_eq!(entries[14].1, json!([]));
-        assert_eq!(entries[15].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[15].1, json!(""));
+        assert_eq!(entries[16].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -1763,6 +1833,7 @@ mod tests {
             shortcut_paste_restore: false,
             custom_model_dirs: HashMap::new(),
             active_lexicon_groups: Vec::new(),
+            strip_trailing_punct: String::new(),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));

@@ -30,6 +30,7 @@ const configStateMock = vi.hoisted(() => ({
     shortcut_paste_restore: false,
     custom_model_dirs: {},
     active_lexicon_groups: [],
+    strip_trailing_punct: "",
     shortcut_voice: "",
     schema_version: 1,
   },
@@ -81,6 +82,7 @@ beforeEach(() => {
     shortcut_paste_restore: false,
     custom_model_dirs: {},
     active_lexicon_groups: [],
+    strip_trailing_punct: "",
     shortcut_voice: "",
     schema_version: 1,
   };
