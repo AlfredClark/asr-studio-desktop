@@ -203,24 +203,34 @@
             <Badge variant={running ? "default" : "secondary"}>
               {serviceState.switching ? m.service_switching() : statusLabel()}
             </Badge>
-            {#if running}
+            <div class="flex shrink-0 items-center gap-2">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                onclick={() => void stopService()}
-                disabled={serviceState.switching}
+                onclick={() => void refreshDevices()}
+                disabled={serviceState.recording || serviceState.recognizing}
               >
-                {m.service_stop()}
+                {m.service_device_refresh()}
               </Button>
-            {:else}
-              <Button
-                size="sm"
-                onclick={() => void startService()}
-                disabled={transitioning || serviceState.selectedModel == null}
-              >
-                {m.service_start()}
-              </Button>
-            {/if}
+              {#if running}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={() => void stopService()}
+                  disabled={serviceState.switching}
+                >
+                  {m.service_stop()}
+                </Button>
+              {:else}
+                <Button
+                  size="sm"
+                  onclick={() => void startService()}
+                  disabled={transitioning || serviceState.selectedModel == null}
+                >
+                  {m.service_start()}
+                </Button>
+              {/if}
+            </div>
           </div>
           <p class="shrink-0 text-xs font-medium text-muted-foreground">
             {m.service_test_title()}
@@ -305,16 +315,6 @@
               {/if}
             {/snippet}
           </CardRow>
-          <div class="flex shrink-0 justify-end">
-            <Button
-              variant="ghost"
-              size="sm"
-              onclick={() => void refreshDevices()}
-              disabled={serviceState.recording || serviceState.recognizing}
-            >
-              {m.service_device_refresh()}
-            </Button>
-          </div>
           <CardRow label={m.settings_voice_label()} description={m.settings_voice_description()}>
             {#snippet control()}
               <ShortcutRecordRow kind="voice" />

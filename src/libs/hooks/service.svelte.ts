@@ -597,8 +597,11 @@ export async function handleShortcutTrigger(): Promise<void> {
     if (!result) return;
     serviceState.result = result;
     const delivered = await outputResult(result.text);
-    // 回填实际投递通道：降级走剪贴板时记剪贴板，失败保持空
-    if (delivered) result.output = delivered.via;
+    if (delivered) {
+      // 经代理写入才触发响应式更新：`result` 是入库前的原始引用，直接改它不会通知订阅者
+      const stored = serviceState.history.find((item) => item.id === result.id);
+      if (stored) stored.output = delivered.via;
+    }
     return;
   }
   // 热路径：已有选中与状态只同步快照（模型清单走全盘 stat，枚举设备碰硬件）；
