@@ -127,7 +127,7 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
 }
 
 /// 写系统剪贴板；后端直写，不经前端
-fn write_clipboard(app: &tauri::AppHandle, text: &str) -> anyhow::Result<()> {
+pub fn write_clipboard(app: &tauri::AppHandle, text: &str) -> anyhow::Result<()> {
     use anyhow::Context;
     use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -138,7 +138,7 @@ fn write_clipboard(app: &tauri::AppHandle, text: &str) -> anyhow::Result<()> {
 }
 
 /// 读系统剪贴板纯文本；非文本或读取失败返回 `None`（调用方放弃恢复，不阻断输出）
-fn read_clipboard(app: &tauri::AppHandle) -> Option<String> {
+pub fn read_clipboard(app: &tauri::AppHandle) -> Option<String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
 
     match app.clipboard().read_text() {
@@ -196,7 +196,9 @@ thread_local! {
 
 /// 复用线程内句柄执行键盘操作；闭包内禁止嵌套调用（`RefCell` 会 panic）
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn with_enigo<R>(task: impl FnOnce(&mut enigo::Enigo) -> anyhow::Result<R>) -> anyhow::Result<R> {
+pub fn with_enigo<R>(
+    task: impl FnOnce(&mut enigo::Enigo) -> anyhow::Result<R>,
+) -> anyhow::Result<R> {
     use anyhow::Context;
 
     ENIGO.with(|slot| {
@@ -256,6 +258,37 @@ fn paste_from_clipboard() -> anyhow::Result<()> {
         clicked.context("failed to send paste keystroke")?;
         Ok(())
     })
+}
+
+/// 发复制键：抓取当前选中文本的前置动作，复制语义由目标应用完成；
+/// macOS 用 Command（`Meta`），其余桌面端用 Ctrl。
+///
+/// 只发键不等落定：调用方随后轮询剪贴板判定是否确有选中（无变化即静默返回）。
+/// 阻塞调用方线程；调用方在 `spawn_blocking` 内执行，不占异步运行时。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn send_copy_keystroke() -> anyhow::Result<()> {
+    use anyhow::Context;
+    use enigo::{Direction, Key, Keyboard};
+
+    with_enigo(|enigo| {
+        #[cfg(target_os = "macos")]
+        let modifier = Key::Meta;
+        #[cfg(not(target_os = "macos"))]
+        let modifier = Key::Control;
+        enigo
+            .key(modifier, Direction::Press)
+            .context("failed to press copy modifier")?;
+        let clicked = enigo.key(Key::Unicode('c'), Direction::Click);
+        let _ = enigo.key(modifier, Direction::Release);
+        clicked.context("failed to send copy keystroke")?;
+        Ok(())
+    })
+}
+
+/// 发复制键；移动端无此能力，直接返回错误走静默（调用方返回空结果）
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn send_copy_keystroke() -> anyhow::Result<()> {
+    Err(anyhow::anyhow!("copy keystroke is not supported on mobile"))
 }
 
 /// 发粘贴键；移动端无此能力，直接返回错误走降级

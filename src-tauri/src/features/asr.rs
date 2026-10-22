@@ -193,9 +193,10 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
         service.recognizer = Some(recognizer);
     }
     drop(guard);
-    // 启动成功才开始监听语音快捷键：注册存量组合，失败只记日志，
+    // 启动成功才开始监听语音与快捷词库快捷键：注册存量组合，失败只记日志，
     // 前端在启动结算后经 `is_shortcut_registered` 自行提示换组合
     crate::cores::shortcut::set_voice_active(app, true);
+    crate::cores::shortcut::set_quick_lexicon_active(app, true);
     Ok(())
 }
 
@@ -205,16 +206,22 @@ pub async fn start(_app: &tauri::AppHandle, _model_id: &str) -> anyhow::Result<(
     Err(anyhow::anyhow!("asr service is not supported on mobile"))
 }
 
-/// 停止服务：释放识别器占用的内存并解绑语音快捷键；未运行视为成功（幂等）
+/// 停止服务：释放识别器占用的内存并解绑语音与快捷词库快捷键；未运行视为成功（幂等）
 pub fn stop(app: &tauri::AppHandle) {
     *lock_service() = None;
     crate::cores::shortcut::set_voice_active(app, false);
+    crate::cores::shortcut::set_quick_lexicon_active(app, false);
 }
 
 /// 按服务运行态对账语音快捷键注册：配置更新（改键 / 清空 / 重置）后由命令层调用，
 /// 运行中保证存量组合已注册，停止态保证不占用全局按键；注册失败只记日志
 pub fn sync_voice_shortcut(app: &tauri::AppHandle) {
     crate::cores::shortcut::set_voice_active(app, lock_service().is_some());
+}
+
+/// 按服务运行态对账快捷词库快捷键注册：与语音路同生命周期，调用点与之保持一致
+pub fn sync_quick_lexicon_shortcut(app: &tauri::AppHandle) {
+    crate::cores::shortcut::set_quick_lexicon_active(app, lock_service().is_some());
 }
 
 /// 按分类组装识别器配置：文件路径全部派生自模型目录，不手写绝对路径；

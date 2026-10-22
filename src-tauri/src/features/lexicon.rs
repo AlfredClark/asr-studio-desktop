@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::cores::lexicon::{LexiconData, LexiconEntry, LexiconGroup};
 
+use super::output::{read_clipboard, send_copy_keystroke, write_clipboard};
+
 /// 分组移动方向：上移（更靠前）/ 下移（更靠后，仲裁时更优先）
 ///
 /// 全局组恒置顶，不可移动；与其相邻的上移视为原地不动
@@ -817,6 +819,136 @@ pub fn move_entries(
     crate::cores::lexicon::modify(app, |data| move_entries_in(data, ids, target_group_id))
 }
 
+/// 快捷词库的落盘统计：实际写入数 + 跳过数（重复 / 空拼音 / 空 token）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct QuickLexiconSummary {
+    /// 成功写入目标分组的词条数
+    pub added: u32,
+    /// 跳过数（目标组重复、本批重复、拼音为空）
+    pub skipped: u32,
+}
+
+/// 发复制键前的等待：全局快捷键在按下瞬间触发，用户手指大概率还按着组合键；
+/// 立即注入会被残留修饰键污染（目标应用收到 Ctrl+Alt+C 而非 Ctrl+C），先等松开。
+/// 快照必须在延时之后，否则延时期间用户自己的复制会被误判为选中文本。
+const CAPTURE_PRE_DELAY_MS: u64 = 300;
+/// 复制键发出后等待剪贴板落定的轮询步长：目标应用处理复制需要时间，一次睡满会拖慢无选中场景
+const CAPTURE_POLL_MS: u64 = 50;
+/// 轮询上限：10 步共 500ms，超时即视为无选中，静默返回
+const CAPTURE_POLL_ROUNDS: u32 = 10;
+
+/// 抓取当前选中文本：快照剪贴板 → 发复制键 → 轮询等落定 → 与快照比对；
+/// 无选中、剪贴板不可读、发键失败一律返回 `None`（调用方静默返回，不提示）。
+/// 成功后按原样恢复快照（仅快照为文本时；恢复前复核仍是本次内容，用户中途复制即让路）。
+///
+/// 阻塞调用方线程约 800ms（含松开等待与轮询）；调用方在 `spawn_blocking` 内执行，不占异步运行时。
+fn capture_selected_text(app: &tauri::AppHandle) -> Option<String> {
+    std::thread::sleep(std::time::Duration::from_millis(CAPTURE_PRE_DELAY_MS));
+    let previous = read_clipboard(app);
+    if let Err(err) = send_copy_keystroke() {
+        log::debug!("quick lexicon copy keystroke failed, skipping: {err:#}");
+        return None;
+    }
+    for _ in 0..CAPTURE_POLL_ROUNDS {
+        std::thread::sleep(std::time::Duration::from_millis(CAPTURE_POLL_MS));
+        match read_clipboard(app) {
+            Some(current) if !current.trim().is_empty() && Some(&current) != previous.as_ref() => {
+                if let Some(previous) = &previous
+                    && read_clipboard(app).as_deref() == Some(current.as_str())
+                    && let Err(err) = write_clipboard(app, previous)
+                {
+                    log::warn!("failed to restore clipboard after quick lexicon capture: {err:#}");
+                }
+                return Some(current);
+            }
+            _ => {}
+        }
+    }
+    log::debug!("quick lexicon capture timed out, treating as no selection");
+    None
+}
+
+/// 在内存词库上快捷添加：多行直接整批丢弃；单行按空白切分逐词写入；
+/// 目标组判重（词面 + 归一拼音，含本批去重）、空拼音跳过；未知目标组回落全局组。
+/// 纯函数，可单测；调用方在 `modify` 事务内执行
+fn quick_add_text_in(
+    data: &mut LexiconData,
+    text: &str,
+    target_group_id: &str,
+) -> QuickLexiconSummary {
+    let zero = QuickLexiconSummary {
+        added: 0,
+        skipped: 0,
+    };
+    if text.contains(['\n', '\r']) {
+        return zero;
+    }
+    let target = if data.groups.iter().any(|group| group.id == target_group_id) {
+        target_group_id
+    } else {
+        crate::cores::lexicon::GLOBAL_GROUP_ID
+    };
+    let mut seen: std::collections::HashSet<(String, String)> = data
+        .entries
+        .iter()
+        .filter(|entry| entry.group_id == target)
+        .map(|entry| copy_entry_key(&entry.text, &entry.pinyin))
+        .collect();
+    let mut summary = zero;
+    for token in text.split_whitespace() {
+        let syllables = parse_pinyin(&suggest_pinyin(token));
+        if syllables.is_empty() {
+            summary.skipped = summary.skipped.saturating_add(1);
+            continue;
+        }
+        let key = (token.to_owned(), syllables.join(" "));
+        if !seen.insert(key.clone()) {
+            summary.skipped = summary.skipped.saturating_add(1);
+            continue;
+        }
+        data.entries.push(LexiconEntry {
+            id: crate::cores::lexicon::new_entry_id(&data.entries),
+            group_id: target.to_owned(),
+            text: token.to_owned(),
+            pinyin: key.1,
+            weight: 0,
+            enabled: true,
+        });
+        summary.added = summary.added.saturating_add(1);
+    }
+    summary
+}
+
+/// 快捷添加单行文本到目标分组：单事务全有或全无；多行、空文本直接返回零值（静默）
+pub fn quick_add_entries(
+    app: &tauri::AppHandle,
+    text: &str,
+    target_group_id: &str,
+) -> anyhow::Result<QuickLexiconSummary> {
+    if text.trim().is_empty() {
+        return Ok(QuickLexiconSummary {
+            added: 0,
+            skipped: 0,
+        });
+    }
+    crate::cores::lexicon::modify(app, |data| {
+        Ok(quick_add_text_in(data, text, target_group_id))
+    })
+}
+
+/// 快捷词库一键添加：抓取当前选中文本并写入配置的目标分组；
+/// 无选中、多行、全部跳过一律返回零值（调用方静默返回，不提示）
+pub fn quick_add_selection(app: &tauri::AppHandle) -> anyhow::Result<QuickLexiconSummary> {
+    let Some(text) = capture_selected_text(app) else {
+        return Ok(QuickLexiconSummary {
+            added: 0,
+            skipped: 0,
+        });
+    };
+    let target = crate::cores::config::load_config(app).quick_lexicon_group;
+    quick_add_entries(app, &text, &target)
+}
+
 /// 分组导出文件标识：导入时校验，不符直接拒绝
 pub const LEXICON_EXPORT_FORMAT: &str = "asr-studio-lexicon-group";
 /// 分组导出文件版本：仅当前版本可读
@@ -1473,6 +1605,99 @@ mod tests {
             data.entries
                 .iter()
                 .filter(|e| e.group_id == "life" && e.text == "权力")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn quick_add_splits_single_line_and_dedups() {
+        let mut data = work_life_data();
+        let summary = quick_add_text_in(&mut data, "  在   成长  ", "life");
+        assert_eq!(
+            summary,
+            QuickLexiconSummary {
+                added: 1,
+                skipped: 1
+            }
+        );
+        // "在" 已在 life 组，跳过；"成长" 新写入
+        assert!(
+            data.entries
+                .iter()
+                .any(|e| e.group_id == "life" && e.text == "成长")
+        );
+        let added = data
+            .entries
+            .iter()
+            .find(|e| e.group_id == "life" && e.text == "成长")
+            .expect("added entry exists");
+        assert_eq!(added.pinyin, "cheng zhang");
+        assert!(added.enabled);
+    }
+
+    #[test]
+    fn quick_add_drops_multiline_and_empty() {
+        let mut data = work_life_data();
+        assert_eq!(
+            quick_add_text_in(&mut data, "权力\n成长", "life"),
+            QuickLexiconSummary {
+                added: 0,
+                skipped: 0
+            }
+        );
+        assert_eq!(
+            quick_add_text_in(&mut data, "权力\r\n成长", "life"),
+            QuickLexiconSummary {
+                added: 0,
+                skipped: 0
+            }
+        );
+        assert_eq!(
+            quick_add_text_in(&mut data, "   ", "life"),
+            QuickLexiconSummary {
+                added: 0,
+                skipped: 0
+            }
+        );
+        assert_eq!(data.entries.len(), 3);
+    }
+
+    #[test]
+    fn quick_add_skips_non_han_and_falls_back_to_global() {
+        let mut data = work_life_data();
+        // 非汉字无拼音建议，跳过；未知分组回落全局组并写入
+        let summary = quick_add_text_in(&mut data, "123 在", "missing");
+        assert_eq!(
+            summary,
+            QuickLexiconSummary {
+                added: 1,
+                skipped: 1
+            }
+        );
+        assert!(
+            data.entries
+                .iter()
+                .any(|e| e.group_id == "global" && e.text == "在")
+        );
+        assert_eq!(data.entries.len(), 4);
+    }
+
+    #[test]
+    fn quick_add_dedups_within_batch() {
+        let mut data = work_life_data();
+        let summary = quick_add_text_in(&mut data, "成长 成长", "life");
+        assert_eq!(
+            summary,
+            QuickLexiconSummary {
+                added: 1,
+                skipped: 1
+            }
+        );
+        assert_eq!(
+            data.entries
+                .iter()
+                .filter(|e| e.group_id == "life" && e.text == "成长")
                 .count(),
             1
         );

@@ -20,6 +20,8 @@ const saved: Config_Serialize = {
   custom_model_dirs: {},
   active_lexicon_groups: [],
   shortcut_voice: "",
+  shortcut_quick_lexicon: "",
+  quick_lexicon_group: "global",
   schema_version: 1,
 };
 
@@ -127,6 +129,8 @@ describe("updateConfig", () => {
       custom_model_dirs: {},
       active_lexicon_groups: [],
       shortcut_voice: "",
+      shortcut_quick_lexicon: "",
+      quick_lexicon_group: "global",
       schema_version: 1,
     };
     configState.value = previous;
@@ -160,6 +164,8 @@ describe("updateConfig", () => {
       custom_model_dirs: {},
       active_lexicon_groups: [],
       shortcut_voice: "",
+      shortcut_quick_lexicon: "",
+      quick_lexicon_group: "global",
       schema_version: 1,
     };
     configState.value = previous;
@@ -188,6 +194,8 @@ describe("resetConfig", () => {
     custom_model_dirs: {},
     active_lexicon_groups: [],
     shortcut_voice: "",
+    shortcut_quick_lexicon: "",
+    quick_lexicon_group: "global",
     schema_version: 1,
   };
 

@@ -31,6 +31,10 @@ const KEY_CLOSE_BEHAVIOR: &str = "close_behavior";
 const KEY_SHORTCUT_QUICK_OPEN: &str = "shortcut_quick_open";
 /// 语音识别的全局快捷键在配置文件中的键名；空字符串表示禁用
 const KEY_SHORTCUT_VOICE: &str = "shortcut_voice";
+/// 快捷词库的全局快捷键在配置文件中的键名；空字符串表示禁用，仅服务运行时注册
+const KEY_SHORTCUT_QUICK_LEXICON: &str = "shortcut_quick_lexicon";
+/// 快捷词库目标分组在配置文件中的键名；缺失或未知分组回落全局分组
+const KEY_QUICK_LEXICON_GROUP: &str = "quick_lexicon_group";
 /// 快捷键语音识别结果的输出方式在配置文件中的键名
 const KEY_SHORTCUT_OUTPUT: &str = "shortcut_output";
 /// 粘贴后是否恢复原剪贴板在配置文件中的键名；仅 `paste` 模式生效
@@ -158,6 +162,14 @@ pub struct Config {
     #[serde(deserialize_with = "de_shortcut_voice")]
     #[specta(type = String)]
     pub shortcut_voice: String,
+    /// 快捷词库的全局快捷键：缺失或类型不符时回落空字符串（禁用），仅服务运行时注册
+    #[serde(deserialize_with = "de_shortcut_quick_lexicon")]
+    #[specta(type = String)]
+    pub shortcut_quick_lexicon: String,
+    /// 快捷词库目标分组 id：缺失、类型不符或空白时回落全局分组
+    #[serde(deserialize_with = "de_quick_lexicon_group")]
+    #[specta(type = String)]
+    pub quick_lexicon_group: String,
     /// 快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板
     #[serde(deserialize_with = "de_shortcut_output")]
     #[specta(type = ShortcutOutput)]
@@ -189,6 +201,8 @@ impl Default for Config {
             close_behavior: CloseBehavior::default(),
             shortcut_quick_open: String::new(),
             shortcut_voice: String::new(),
+            shortcut_quick_lexicon: String::new(),
+            quick_lexicon_group: default_quick_lexicon_group(),
             shortcut_output: ShortcutOutput::default(),
             shortcut_paste_restore: false,
             custom_model_dirs: HashMap::new(),
@@ -200,6 +214,11 @@ impl Default for Config {
 /// 系统托盘开关的默认值：开箱即见托盘
 const fn default_tray_enabled() -> bool {
     true
+}
+
+/// 快捷词库目标分组的默认值：全局分组（恒存在，无需校验）
+fn default_quick_lexicon_group() -> String {
+    crate::cores::lexicon::GLOBAL_GROUP_ID.to_owned()
 }
 
 /// 局部更新补丁：字段缺省或为 `null` 均表示"不改该键"，非 `null` 表示写入该值
@@ -222,6 +241,10 @@ pub struct ConfigPatch {
     pub shortcut_quick_open: Option<String>,
     /// 语音识别的全局快捷键；空字符串表示禁用
     pub shortcut_voice: Option<String>,
+    /// 快捷词库的全局快捷键；空字符串表示禁用，仅服务运行时注册
+    pub shortcut_quick_lexicon: Option<String>,
+    /// 快捷词库目标分组 id；空白回落全局分组
+    pub quick_lexicon_group: Option<String>,
     /// 快捷键语音识别结果的输出方式
     pub shortcut_output: Option<ShortcutOutput>,
     /// 粘贴后是否恢复原剪贴板
@@ -310,6 +333,32 @@ where
         .map(str::trim)
         .map(str::to_owned)
         .unwrap_or_default())
+}
+
+/// 容错解析快捷词库快捷键：经 `serde_json::Value` 中转，非字符串一律回落空字符串（禁用）
+fn de_shortcut_quick_lexicon<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value
+        .as_str()
+        .map(str::trim)
+        .map(str::to_owned)
+        .unwrap_or_default())
+}
+
+/// 容错解析快捷词库目标分组：空白与非字符串一律回落全局分组
+fn de_quick_lexicon_group<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value
+        .as_str()
+        .map(str::trim)
+        .filter(|group| !group.is_empty())
+        .map_or_else(default_quick_lexicon_group, str::to_owned))
 }
 
 /// 容错解析输出方式：未知标签与非字符串一律回落剪贴板；缺键走字段默认值
@@ -489,6 +538,8 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         close_behavior: load_close_behavior(app),
         shortcut_quick_open: load_shortcut_quick_open(app),
         shortcut_voice: load_shortcut_voice(app),
+        shortcut_quick_lexicon: load_shortcut_quick_lexicon(app),
+        quick_lexicon_group: load_quick_lexicon_group(app),
         shortcut_output: load_shortcut_output(app),
         shortcut_paste_restore: load_shortcut_paste_restore(app),
         custom_model_dirs: load_custom_model_dirs(app),
@@ -549,6 +600,26 @@ fn load_shortcut_voice(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_SHORTCUT_VOICE)
         .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
         .unwrap_or_default()
+}
+
+/// 读取持久化的快捷词库快捷键；未设置或类型不符时回落空字符串（禁用）
+fn load_shortcut_quick_lexicon(app: &tauri::AppHandle) -> String {
+    read_key(app, KEY_SHORTCUT_QUICK_LEXICON)
+        .and_then(|value| value.as_str().map(str::trim).map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// 读取持久化的快捷词库目标分组；未设置、空白或类型不符时回落全局分组
+fn load_quick_lexicon_group(app: &tauri::AppHandle) -> String {
+    read_key(app, KEY_QUICK_LEXICON_GROUP)
+        .and_then(|value| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|group| !group.is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(default_quick_lexicon_group)
 }
 
 /// 读取持久化的输出方式；未设置回落默认（粘贴），类型不符或无法识别回落剪贴板
@@ -720,6 +791,8 @@ fn reset_patch() -> ConfigPatch {
         close_behavior: Some(CloseBehavior::default()),
         shortcut_quick_open: Some(String::new()),
         shortcut_voice: Some(String::new()),
+        shortcut_quick_lexicon: Some(String::new()),
+        quick_lexicon_group: Some(default_quick_lexicon_group()),
         shortcut_output: Some(ShortcutOutput::default()),
         shortcut_paste_restore: Some(false),
         custom_model_dirs: Some(HashMap::new()),
@@ -812,6 +885,23 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
     }
     if let Some(shortcut_voice) = patch.shortcut_voice.as_deref() {
         entries.push((KEY_SHORTCUT_VOICE, Value::from(shortcut_voice.trim())));
+    }
+    if let Some(shortcut_quick_lexicon) = patch.shortcut_quick_lexicon.as_deref() {
+        entries.push((
+            KEY_SHORTCUT_QUICK_LEXICON,
+            Value::from(shortcut_quick_lexicon.trim()),
+        ));
+    }
+    if let Some(quick_lexicon_group) = patch.quick_lexicon_group.as_deref() {
+        let group = quick_lexicon_group.trim();
+        entries.push((
+            KEY_QUICK_LEXICON_GROUP,
+            Value::from(if group.is_empty() {
+                default_quick_lexicon_group()
+            } else {
+                group.to_owned()
+            }),
+        ));
     }
     if let Some(shortcut_paste_restore) = patch.shortcut_paste_restore {
         entries.push((
@@ -1009,6 +1099,8 @@ mod tests {
         assert!(!config.auto_check_update);
         assert_eq!(config.shortcut_quick_open, "");
         assert_eq!(config.shortcut_voice, "");
+        assert_eq!(config.shortcut_quick_lexicon, "");
+        assert_eq!(config.quick_lexicon_group, "global");
         assert_eq!(config.shortcut_output, ShortcutOutput::Paste);
         assert!(!config.shortcut_paste_restore);
         assert!(config.custom_model_dirs.is_empty());
@@ -1027,6 +1119,8 @@ mod tests {
             close_behavior: CloseBehavior::MinimizeToTray,
             shortcut_quick_open: String::from("Ctrl+Shift+O"),
             shortcut_voice: String::from("Ctrl+Alt+V"),
+            shortcut_quick_lexicon: String::from("Ctrl+Alt+Q"),
+            quick_lexicon_group: String::from("g-work"),
             shortcut_output: ShortcutOutput::Paste,
             shortcut_paste_restore: true,
             custom_model_dirs: HashMap::from([(
@@ -1039,7 +1133,7 @@ mod tests {
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "schema_version": 2 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "schema_version": 2 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -1178,6 +1272,43 @@ mod tests {
         ] {
             let config: Config = serde_json::from_value(raw).expect("never fails");
             assert_eq!(config.shortcut_voice, expected);
+        }
+    }
+
+    #[test]
+    fn tolerates_missing_or_invalid_shortcut_quick_lexicon() {
+        for (raw, expected) in [
+            (json!({}), ""),
+            (
+                json!({ "shortcut_quick_lexicon": "Ctrl+Alt+Q" }),
+                "Ctrl+Alt+Q",
+            ),
+            (
+                json!({ "shortcut_quick_lexicon": "  Ctrl+Alt+Q  " }),
+                "Ctrl+Alt+Q",
+            ),
+            (json!({ "shortcut_quick_lexicon": "" }), ""),
+            (json!({ "shortcut_quick_lexicon": 5 }), ""),
+            (json!({ "shortcut_quick_lexicon": null }), ""),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(config.shortcut_quick_lexicon, expected);
+        }
+    }
+
+    #[test]
+    fn quick_lexicon_group_falls_back_to_global() {
+        for (raw, expected) in [
+            (json!({}), "global"),
+            (json!({ "quick_lexicon_group": "g-work" }), "g-work"),
+            (json!({ "quick_lexicon_group": "  g-work  " }), "g-work"),
+            (json!({ "quick_lexicon_group": "" }), "global"),
+            (json!({ "quick_lexicon_group": "   " }), "global"),
+            (json!({ "quick_lexicon_group": 5 }), "global"),
+            (json!({ "quick_lexicon_group": null }), "global"),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(config.quick_lexicon_group, expected);
         }
     }
 
@@ -1372,6 +1503,8 @@ mod tests {
 
         assert_eq!(absent.shortcut_quick_open, None);
         assert_eq!(absent.shortcut_voice, None);
+        assert_eq!(absent.shortcut_quick_lexicon, None);
+        assert_eq!(absent.quick_lexicon_group, None);
         assert_eq!(absent.shortcut_output, None);
         assert_eq!(absent.shortcut_paste_restore, None);
         assert_eq!(absent.custom_model_dirs, None);
@@ -1392,6 +1525,22 @@ mod tests {
         let voice: ConfigPatch = serde_json::from_value(json!({ "shortcut_voice": "Ctrl+Alt+V" }))
             .expect("voice parsed");
         assert_eq!(voice.shortcut_voice, Some(String::from("Ctrl+Alt+V")));
+
+        let quick_lexicon: ConfigPatch =
+            serde_json::from_value(json!({ "shortcut_quick_lexicon": "Ctrl+Alt+Q" }))
+                .expect("quick lexicon parsed");
+        assert_eq!(
+            quick_lexicon.shortcut_quick_lexicon,
+            Some(String::from("Ctrl+Alt+Q"))
+        );
+
+        let quick_group: ConfigPatch =
+            serde_json::from_value(json!({ "quick_lexicon_group": "g-work" }))
+                .expect("quick group parsed");
+        assert_eq!(
+            quick_group.quick_lexicon_group,
+            Some(String::from("g-work"))
+        );
 
         let restore: ConfigPatch =
             serde_json::from_value(json!({ "shortcut_paste_restore": true }))
@@ -1437,6 +1586,8 @@ mod tests {
             close_behavior: Some(CloseBehavior::Exit),
             shortcut_quick_open: Some(String::from("Ctrl+Shift+O")),
             shortcut_voice: Some(String::from("Ctrl+Alt+V")),
+            shortcut_quick_lexicon: Some(String::from("Ctrl+Alt+Q")),
+            quick_lexicon_group: Some(String::from("g-work")),
             shortcut_output: Some(ShortcutOutput::Ime),
             shortcut_paste_restore: Some(true),
             custom_model_dirs: Some(HashMap::from([(
@@ -1457,6 +1608,8 @@ mod tests {
                 KEY_SHORTCUT_QUICK_OPEN,
                 KEY_SHORTCUT_OUTPUT,
                 KEY_SHORTCUT_VOICE,
+                KEY_SHORTCUT_QUICK_LEXICON,
+                KEY_QUICK_LEXICON_GROUP,
                 KEY_SHORTCUT_PASTE_RESTORE,
                 KEY_CUSTOM_MODEL_DIRS,
                 KEY_ACTIVE_LEXICON_GROUPS,
@@ -1472,9 +1625,11 @@ mod tests {
         assert_eq!(patched[6].1, json!("Ctrl+Shift+O"));
         assert_eq!(patched[7].1, json!("ime"));
         assert_eq!(patched[8].1, json!("Ctrl+Alt+V"));
-        assert_eq!(patched[9].1, json!(true));
-        assert_eq!(patched[10].1, json!({ "sense-voice-int8": "/models/a" }));
-        assert_eq!(patched[11].1, json!(["work"]));
+        assert_eq!(patched[9].1, json!("Ctrl+Alt+Q"));
+        assert_eq!(patched[10].1, json!("g-work"));
+        assert_eq!(patched[11].1, json!(true));
+        assert_eq!(patched[12].1, json!({ "sense-voice-int8": "/models/a" }));
+        assert_eq!(patched[13].1, json!(["work"]));
     }
 
     #[test]
@@ -1490,6 +1645,8 @@ mod tests {
             shortcut_quick_open: Some(String::from("Ctrl+Shift+O")),
             shortcut_output: Some(ShortcutOutput::Paste),
             shortcut_voice: Some(String::from("Ctrl+Alt+V")),
+            shortcut_quick_lexicon: Some(String::from("Ctrl+Alt+Q")),
+            quick_lexicon_group: Some(String::from("g-work")),
             shortcut_paste_restore: Some(true),
             custom_model_dirs: Some(HashMap::new()),
             active_lexicon_groups: Some(vec![String::from("work")]),
@@ -1509,10 +1666,12 @@ mod tests {
         assert_eq!(entries[6].1, json!(""));
         assert_eq!(entries[7].1, json!(ShortcutOutput::default().as_str()));
         assert_eq!(entries[8].1, json!(""));
-        assert_eq!(entries[9].1, json!(false));
-        assert_eq!(entries[10].1, json!({}));
-        assert_eq!(entries[11].1, json!([]));
-        assert_eq!(entries[12].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[9].1, json!(""));
+        assert_eq!(entries[10].1, json!("global"));
+        assert_eq!(entries[11].1, json!(false));
+        assert_eq!(entries[12].1, json!({}));
+        assert_eq!(entries[13].1, json!([]));
+        assert_eq!(entries[14].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -1526,6 +1685,8 @@ mod tests {
             close_behavior: CloseBehavior::Prompt,
             shortcut_quick_open: String::new(),
             shortcut_voice: String::new(),
+            shortcut_quick_lexicon: String::new(),
+            quick_lexicon_group: default_quick_lexicon_group(),
             shortcut_output: ShortcutOutput::default(),
             shortcut_paste_restore: false,
             custom_model_dirs: HashMap::new(),

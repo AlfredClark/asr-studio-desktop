@@ -475,9 +475,9 @@ describe("词库页", () => {
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
     await user.click(screen.getByRole("button", { name: /Batch actions/ }));
     await waitFor(() => {
-      expect(screen.getByText("Copy selected to…")).not.toBeNull();
+      expect(screen.getByText("Copy selected to")).not.toBeNull();
     });
-    await user.hover(screen.getByText("Copy selected to…"));
+    await user.hover(screen.getByText("Copy selected to"));
     await waitFor(() => {
       expect(screen.getByText("方言 (1)")).not.toBeNull();
     });
@@ -501,9 +501,9 @@ describe("词库页", () => {
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
     await user.click(screen.getByRole("button", { name: /Batch actions/ }));
     await waitFor(() => {
-      expect(screen.getByText("Move selected to…")).not.toBeNull();
+      expect(screen.getByText("Move selected to")).not.toBeNull();
     });
-    await user.hover(screen.getByText("Move selected to…"));
+    await user.hover(screen.getByText("Move selected to"));
     await waitFor(() => {
       expect(screen.getByText("方言 (1)")).not.toBeNull();
     });

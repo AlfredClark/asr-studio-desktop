@@ -1,7 +1,7 @@
 <script lang="ts">
-  // 快捷键录制行：徽标展示 + 录制按钮 + 清除按钮，两种快捷键（快速显示 / 语音识别）共用。
+  // 快捷键录制行：徽标展示 + 录制按钮 + 清除按钮，三种快捷键（快速显示 / 语音识别 / 快捷词库）共用。
   // 文案与配置键按 `kind` 内聚在此，调用方只传 kind；落盘与注册查询走同一链路。
-  // 语音路注册与服务运行态同生命周期：停止态只落盘不查注册（启动成功后自动接管并核验）。
+  // 语音与快捷词库注册均与服务运行态同生命周期：停止态只落盘不查注册（启动成功后自动接管并核验）。
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
   import PencilIcon from "@lucide/svelte/icons/pencil";
@@ -21,7 +21,7 @@
   import { toast } from "#libs/utils/toast";
 
   /** 行种类：决定配置键与文案 */
-  type Kind = "quick_open" | "voice";
+  type Kind = "quick_open" | "voice" | "quick_lexicon";
 
   let { kind }: { kind: Kind } = $props();
 
@@ -31,8 +31,14 @@
   /** 保存中：禁用录制按钮与清除按钮，避免重复提交 */
   let saving = $state(false);
 
-  /** 配置键：`quick_open` 走快速显示，`voice` 走语音识别 */
-  const configKey = $derived(kind === "voice" ? "shortcut_voice" : "shortcut_quick_open");
+  /** 配置键：`quick_open` 走快速显示，`voice` 走语音识别，`quick_lexicon` 走快捷词库 */
+  const configKey = $derived(
+    kind === "voice"
+      ? "shortcut_voice"
+      : kind === "quick_lexicon"
+        ? "shortcut_quick_lexicon"
+        : "shortcut_quick_open",
+  );
 
   // 后端配置是唯一真值；水合前回落空字符串，渲染占位
   const stored = $derived(configValue(configKey, ""));
@@ -40,7 +46,7 @@
   /** 待机展示的按键分段：`Ctrl+Shift+O` 拆成三段，每段一个徽标 */
   const parts = $derived(stored === "" ? [] : stored.split("+"));
 
-  /** 行文案：两行各一套，互不串扰 */
+  /** 行文案：三行各一套，互不串扰 */
   const texts = $derived(
     kind === "voice"
       ? {
@@ -56,19 +62,33 @@
           updateFailed: m.settings_voice_update_failed(),
           notRegistered: m.settings_voice_not_registered(),
         }
-      : {
-          label: m.settings_quick_open_label(),
-          description: m.settings_quick_open_description(),
-          placeholder: m.settings_quick_open_placeholder(),
-          recording: m.settings_quick_open_recording(),
-          hint: m.settings_quick_open_hint(),
-          record: m.settings_quick_open_record(),
-          clear: m.settings_quick_open_clear(),
-          invalid: m.settings_quick_open_invalid(),
-          updated: m.settings_quick_open_updated(),
-          updateFailed: m.settings_quick_open_update_failed(),
-          notRegistered: m.settings_quick_open_not_registered(),
-        },
+      : kind === "quick_lexicon"
+        ? {
+            label: m.settings_quick_lexicon_label(),
+            description: m.settings_quick_lexicon_description(),
+            placeholder: m.settings_quick_lexicon_placeholder(),
+            recording: m.settings_quick_lexicon_recording(),
+            hint: m.settings_quick_lexicon_hint(),
+            record: m.settings_quick_lexicon_record(),
+            clear: m.settings_quick_lexicon_clear(),
+            invalid: m.settings_quick_lexicon_invalid(),
+            updated: m.settings_quick_lexicon_updated(),
+            updateFailed: m.settings_quick_lexicon_update_failed(),
+            notRegistered: m.settings_quick_lexicon_not_registered(),
+          }
+        : {
+            label: m.settings_quick_open_label(),
+            description: m.settings_quick_open_description(),
+            placeholder: m.settings_quick_open_placeholder(),
+            recording: m.settings_quick_open_recording(),
+            hint: m.settings_quick_open_hint(),
+            record: m.settings_quick_open_record(),
+            clear: m.settings_quick_open_clear(),
+            invalid: m.settings_quick_open_invalid(),
+            updated: m.settings_quick_open_updated(),
+            updateFailed: m.settings_quick_open_update_failed(),
+            notRegistered: m.settings_quick_open_not_registered(),
+          },
   );
 
   /** 录制态才监听全局按键，捕获阶段拦截，避免触发页面其它快捷键 */
@@ -125,14 +145,19 @@
   }
 
   /**
-   * 落盘并即时注册；注册失败保留新值，提示换组合。 语音路停止态只落盘：注册查询恒为假（注册与服务运行态同生命周期），
-   * 查了反而误报，启动成功后由服务状态机统一核验。
+   * 落盘并即时注册；注册失败保留新值，提示换组合。语音与快捷词库停止态只落盘：注册查询恒为假
+   * （注册与服务运行态同生命周期），查了反而误报，启动成功后由服务状态机统一核验。
    */
   async function saveShortcut(value: string): Promise<void> {
     if (saving) return;
     saving = true;
     try {
-      const patch = kind === "voice" ? { shortcut_voice: value } : { shortcut_quick_open: value };
+      const patch =
+        kind === "voice"
+          ? { shortcut_voice: value }
+          : kind === "quick_lexicon"
+            ? { shortcut_quick_lexicon: value }
+            : { shortcut_quick_open: value };
       if (!(await updateConfig(patch))) {
         toast.error(texts.updateFailed);
         return;

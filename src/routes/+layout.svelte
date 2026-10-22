@@ -10,7 +10,7 @@
   import { initAppearance } from "#libs/hooks/appearance.svelte";
   import { configState, configValue, hydrateConfig } from "#libs/hooks/config.svelte";
   import { initDeepLinks } from "#libs/hooks/deep-link.svelte";
-  import { listenShortcutVoice } from "#libs/hooks/service.svelte";
+  import { listenQuickLexicon, listenShortcutVoice } from "#libs/hooks/service.svelte";
   import { maybeAutoCheckForUpdate } from "#libs/hooks/updater.svelte";
   import ConfirmDialog from "#components/common/confirm-dialog.svelte";
   import ErrorBoundary from "#components/common/error-boundary.svelte";
@@ -142,6 +142,14 @@
   $effect(() => {
     void listenShortcutVoice().catch((error: unknown) =>
       reportCommandFailure("[service] shortcut voice listener failed", error),
+    );
+  });
+
+  // 快捷词库触发：会话级单例订阅，按下快捷键时抓取选中文本并写入目标分组。
+  // 生命周期与语音路一致，处理函数内按运行态与防重入守卫，静默语义见处理函数。
+  $effect(() => {
+    void listenQuickLexicon().catch((error: unknown) =>
+      reportCommandFailure("[service] quick lexicon listener failed", error),
     );
   });
 </script>

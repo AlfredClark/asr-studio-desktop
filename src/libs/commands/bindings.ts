@@ -8,13 +8,13 @@ export const commands = {
 	getConfig: () => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("get_config")),
 	/**
 	 *  重置全部已知配置项为默认值，返回写后的完整配置；
-	 *  语音快捷键同样按运行态对账（重置清空后不再占用全局按键）。
+	 *  语音与快捷词库快捷键同样按运行态对账（重置清空后不再占用全局按键）。
 	 */
 	resetConfig: () => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("reset_config")),
 	/**
 	 *  局部更新配置：只写提交的字段，返回写后的完整配置（前端据此回写内存态，无需再读一次）。
 	 *  界面语言亦经此切换——运行时 `rust_i18n` 由 `config::apply_runtime_effects` 统一同步。
-	 *  语音快捷键注册与服务运行态同生命周期：落盘成功后按运行态对账（改键 / 清空即时生效）。
+	 *  语音与快捷词库快捷键注册均与服务运行态同生命周期：落盘成功后按运行态对账（改键 / 清空即时生效）。
 	 */
 	updateConfig: (patch: ConfigPatch) => typedError<Config_Serialize, CommandError>(__TAURI_INVOKE("update_config", { patch })),
 	/**  列出全部模型及其本机状态；前端据此渲染分组与按钮 */
@@ -64,6 +64,12 @@ export const commands = {
 	batchCopyLexiconEntries: (ids: string[], targetGroupId: string) => typedError<LexiconBatchCopySummary, CommandError>(__TAURI_INVOKE("batch_copy_lexicon_entries", { ids, targetGroupId })),
 	/**  批量转移词条到其他分组：单事务先写入目标组再删源，重复跳过但仍删源（去重合并） */
 	batchMoveLexiconEntries: (ids: string[], targetGroupId: string) => typedError<LexiconBatchCopySummary, CommandError>(__TAURI_INVOKE("batch_move_lexicon_entries", { ids, targetGroupId })),
+	/**
+	 *  快捷词库一键添加：抓取当前选中文本并写入配置的目标分组；
+	 *  无选中、多行、全部跳过一律返回零值（前端静默返回，不提示）
+	 *  剪贴板抓取阻塞约 800ms（含松开等待），`spawn_blocking` 内执行，不占异步运行时
+	 */
+	quickAddSelectionToLexicon: () => typedError<QuickLexiconSummary, CommandError>(__TAURI_INVOKE("quick_add_selection_to_lexicon")),
 	/**  为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认 */
 	suggestLexiconPinyin: (text: string) => typedError<string, CommandError>(__TAURI_INVOKE("suggest_lexicon_pinyin", { text })),
 	/**  导出分组到 JSON 文件：返回词条数供前端提示 */
@@ -179,6 +185,10 @@ export type ConfigPatch = {
 	shortcut_quick_open?: string | null,
 	/**  语音识别的全局快捷键；空字符串表示禁用 */
 	shortcut_voice?: string | null,
+	/**  快捷词库的全局快捷键；空字符串表示禁用，仅服务运行时注册 */
+	shortcut_quick_lexicon?: string | null,
+	/**  快捷词库目标分组 id；空白回落全局分组 */
+	quick_lexicon_group?: string | null,
 	/**  快捷键语音识别结果的输出方式 */
 	shortcut_output?: ShortcutOutput | null,
 	/**  粘贴后是否恢复原剪贴板 */
@@ -222,6 +232,10 @@ export type Config_Deserialize = {
 	shortcut_quick_open?: string,
 	/**  语音识别的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败 */
 	shortcut_voice?: string,
+	/**  快捷词库的全局快捷键：缺失或类型不符时回落空字符串（禁用），仅服务运行时注册 */
+	shortcut_quick_lexicon?: string,
+	/**  快捷词库目标分组 id：缺失、类型不符或空白时回落全局分组 */
+	quick_lexicon_group?: string,
 	/**  快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板 */
 	shortcut_output?: ShortcutOutput,
 	/**  粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效 */
@@ -268,6 +282,10 @@ export type Config_Serialize = {
 	shortcut_quick_open: string,
 	/**  语音识别的全局快捷键：缺失或类型不符时回落空字符串（禁用），绝不让整包解析失败 */
 	shortcut_voice: string,
+	/**  快捷词库的全局快捷键：缺失或类型不符时回落空字符串（禁用），仅服务运行时注册 */
+	shortcut_quick_lexicon: string,
+	/**  快捷词库目标分组 id：缺失、类型不符或空白时回落全局分组 */
+	quick_lexicon_group: string,
 	/**  快捷键语音识别结果的输出方式：缺失或无法识别时回落写入剪贴板 */
 	shortcut_output: ShortcutOutput,
 	/**  粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效 */
@@ -442,6 +460,14 @@ export type OutputVia =
 "clipboard" | 
 /**  模拟复制粘贴：写剪贴板后发粘贴键 */
 "paste";
+
+/**  快捷词库的落盘统计：实际写入数 + 跳过数（重复 / 空拼音 / 空 token） */
+export type QuickLexiconSummary = {
+	/**  成功写入目标分组的词条数 */
+	added: number,
+	/**  跳过数（目标组重复、本批重复、拼音为空） */
+	skipped: number,
+};
 
 /**  结束录制的回执：前端据此展示文件名与时长，再调转写命令 */
 export type RecordResult = {

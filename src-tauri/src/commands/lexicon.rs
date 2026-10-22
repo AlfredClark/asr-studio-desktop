@@ -154,6 +154,22 @@ pub fn batch_move_lexicon_entries(
     Ok(lexicon::move_entries(&app, &ids, &target_group_id)?)
 }
 
+/// 快捷词库一键添加：抓取当前选中文本并写入配置的目标分组；
+/// 无选中、多行、全部跳过一律返回零值（前端静默返回，不提示）
+/// 剪贴板抓取阻塞约 800ms（含松开等待），`spawn_blocking` 内执行，不占异步运行时
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn quick_add_selection_to_lexicon(
+    app: tauri::AppHandle,
+) -> CommandResult<lexicon::QuickLexiconSummary> {
+    Ok(
+        tauri::async_runtime::spawn_blocking(move || lexicon::quick_add_selection(&app))
+            .await
+            .map_err(|err| anyhow::anyhow!("quick lexicon task failed: {err}"))??,
+    )
+}
+
 /// 为词面建议拼音：逐字取最常用读音，多音字落盘前请手动确认
 #[tauri::command]
 #[specta::specta]

@@ -5,6 +5,7 @@ import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
 import { configValue } from "#libs/hooks/config.svelte";
+import { groupLabel, lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
 
@@ -324,6 +325,54 @@ async function stopAndTranscribe(): Promise<TestResult | null> {
     return entry;
   } finally {
     serviceState.recognizing = false;
+  }
+}
+
+/** 快捷词库触发事件名（与 Rust 侧同名字面量会合，改名需两端同步） */
+const SHORTCUT_QUICK_LEXICON_TRIGGER_EVENT = "quick-lexicon-trigger";
+
+/** 快捷词库触发处理中：防重复提交（抓取阻塞约 500ms） */
+let quickLexiconBusy = false;
+
+let quickLexiconListening = false;
+
+/** 订阅快捷词库触发（全局单例，根布局挂载一次）；非 Tauri 环境无事件可订，失败仅上报不抛错。 */
+export async function listenQuickLexicon(): Promise<void> {
+  if (quickLexiconListening) return;
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    await listen(SHORTCUT_QUICK_LEXICON_TRIGGER_EVENT, () => {
+      void handleQuickLexiconTrigger();
+    });
+    quickLexiconListening = true;
+  } catch (error) {
+    reportCommandFailure("[service] quick lexicon listener unavailable", error);
+  }
+}
+
+/**
+ * 快捷词库触发处理：抓取当前选中文本并写入配置的目标分组，全程不显示本窗口。 服务未运行时直接忽略（注册与运行态同生命周期，防停启竞态）； 无选中 / 多行
+ * / 全部跳过静默返回，有写入才刷新词库并提示。
+ */
+export async function handleQuickLexiconTrigger(): Promise<void> {
+  if (quickLexiconBusy || serviceState.status?.state !== "running") return;
+  quickLexiconBusy = true;
+  try {
+    const result = await commands.quickAddSelectionToLexicon().result();
+    if (result.status === "error") {
+      reportCommandFailure("[service] quick lexicon failed", result.error);
+      return;
+    }
+    if (result.data.added === 0) return;
+    await refreshLexicon();
+    const stored = configValue("quick_lexicon_group", "global");
+    const group =
+      lexiconState.value.groups.find((item) => item.id === stored) ??
+      lexiconState.value.groups.find((item) => item.is_global);
+    const name = group == null ? stored : groupLabel(group);
+    toast.success(m.lexicon_quick_added({ count: result.data.added, name }));
+  } finally {
+    quickLexiconBusy = false;
   }
 }
 

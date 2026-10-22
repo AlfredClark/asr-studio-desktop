@@ -33,7 +33,14 @@ const stopTestRecordingMock = vi.hoisted(() => vi.fn());
 const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 const updateConfigMock = vi.hoisted(() => vi.fn());
 const configStateMock = vi.hoisted(
-  (): { value: { shortcut_output: string; shortcut_paste_restore?: boolean } | null } => ({
+  (): {
+    value: {
+      shortcut_output: string;
+      shortcut_paste_restore?: boolean;
+      shortcut_quick_lexicon?: string;
+      quick_lexicon_group?: string;
+    } | null;
+  } => ({
     value: { shortcut_output: "clipboard", shortcut_paste_restore: false },
   }),
 );
@@ -100,6 +107,25 @@ vi.mock("#libs/hooks/service.svelte", async (importOriginal) => {
 
 vi.mock("#libs/utils/toast", () => ({ toast: toastMocks }));
 
+const lexiconStateMock = vi.hoisted(() => ({
+  value: {
+    version: 1,
+    groups: [
+      { id: "global", name: "", is_global: true },
+      { id: "g-work", name: "工作", is_global: false },
+    ],
+    entries: [],
+    active_group_ids: [] as string[],
+  },
+}));
+const refreshLexiconMock = vi.hoisted(() => vi.fn());
+vi.mock("#libs/hooks/lexicon.svelte", () => ({
+  groupLabel: (group: { is_global: boolean; name: string }) =>
+    group.is_global ? "Global lexicon" : group.name,
+  lexiconState: lexiconStateMock,
+  refreshLexicon: refreshLexiconMock,
+}));
+
 vi.mock("#libs/hooks/config.svelte", () => ({
   configState: configStateMock,
   configValue: configValueMock,
@@ -121,6 +147,7 @@ beforeEach(() => {
   serviceStateMock.history = [];
   configStateMock.value = { shortcut_output: "clipboard", shortcut_paste_restore: false };
   updateConfigMock.mockResolvedValue(true);
+  refreshLexiconMock.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -299,5 +326,52 @@ describe("服务页", () => {
     await user.click(screen.getByRole("switch", { name: "Restore clipboard after paste" }));
 
     expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_paste_restore: true });
+  });
+
+  it("挂载即刷新词库快照", async () => {
+    render(Page);
+
+    await waitFor(() => {
+      expect(refreshLexiconMock).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("快捷词库行常驻，未设快捷键时隐藏词库选择", () => {
+    render(Page);
+
+    expect(screen.getByText("Quick lexicon")).not.toBeNull();
+    expect(screen.queryByText("Lexicon group")).toBeNull();
+  });
+
+  it("已设快捷键时展示词库选择，已删分组回滚全局", () => {
+    configStateMock.value = {
+      shortcut_output: "clipboard",
+      shortcut_paste_restore: false,
+      shortcut_quick_lexicon: "Ctrl+Alt+Q",
+      quick_lexicon_group: "g-deleted",
+    };
+    render(Page);
+
+    expect(screen.getByText("Lexicon group")).not.toBeNull();
+    expect(screen.getByText("Global lexicon")).not.toBeNull();
+  });
+
+  it("词库选择切换经命令落盘", async () => {
+    const user = userEvent.setup();
+    configStateMock.value = {
+      shortcut_output: "clipboard",
+      shortcut_paste_restore: false,
+      shortcut_quick_lexicon: "Ctrl+Alt+Q",
+      quick_lexicon_group: "global",
+    };
+    render(Page);
+
+    await user.click(screen.getByRole("button", { name: "Lexicon group" }));
+    await waitFor(() => {
+      expect(document.querySelector('[data-value="g-work"]')).not.toBeNull();
+    });
+    await user.click(document.querySelector('[data-value="g-work"]') as HTMLElement);
+
+    expect(updateConfigMock).toHaveBeenCalledWith({ quick_lexicon_group: "g-work" });
   });
 });

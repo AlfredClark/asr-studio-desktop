@@ -3,6 +3,7 @@ import {
   DEFAULT_DEVICE_ID,
   TRANSCRIBE_BUSY_MESSAGE,
   deviceLabel,
+  handleQuickLexiconTrigger,
   handleShortcutTrigger,
   isTranscribeBusyFailure,
   refreshServiceData,
@@ -15,6 +16,7 @@ import {
   stopTestRecording,
 } from "#libs/hooks/service.svelte";
 import type { AudioDevice, ModelEntry } from "#libs/commands/types";
+import type { LexiconGroup } from "#libs/commands/types";
 import { configState, type AppConfig } from "#libs/hooks/config.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
 import { summarizeHistory } from "#libs/hooks/service.svelte";
@@ -31,7 +33,28 @@ vi.mock("#libs/commands", () => ({
     transcribeFile: vi.fn(),
     outputText: vi.fn(),
     isShortcutRegistered: vi.fn(),
+    quickAddSelectionToLexicon: vi.fn(),
   },
+}));
+
+const lexiconStateMock = vi.hoisted(
+  (): {
+    value: {
+      version: number;
+      groups: LexiconGroup[];
+      entries: never[];
+      active_group_ids: string[];
+    };
+  } => ({
+    value: { version: 1, groups: [], entries: [], active_group_ids: [] },
+  }),
+);
+const refreshLexiconMock = vi.hoisted(() => vi.fn());
+vi.mock("#libs/hooks/lexicon.svelte", () => ({
+  groupLabel: (group: { is_global: boolean; name: string }) =>
+    group.is_global ? "Global lexicon" : group.name,
+  lexiconState: lexiconStateMock,
+  refreshLexicon: refreshLexiconMock,
 }));
 
 vi.mock("#libs/utils/toast", () => ({
@@ -140,6 +163,10 @@ beforeEach(() => {
     }) as never,
   );
   mocked.isShortcutRegistered.mockReturnValue(fakeCommand({ status: "ok", data: true }) as never);
+  mocked.quickAddSelectionToLexicon.mockReturnValue(
+    fakeCommand({ status: "ok", data: { added: 0, skipped: 0 } }) as never,
+  );
+  refreshLexiconMock.mockResolvedValue(true);
   configState.value = null;
 });
 
@@ -514,5 +541,78 @@ describe("识别服务状态", () => {
 
     expect(gotoMock).not.toHaveBeenCalled();
     expect(mocked.startRecording).not.toHaveBeenCalled();
+  });
+});
+
+describe("快捷词库触发", () => {
+  function runningService(): void {
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+  }
+
+  function workLexicon(): void {
+    lexiconStateMock.value = {
+      version: 1,
+      groups: [
+        { id: "global", name: "", is_global: true },
+        { id: "g-work", name: "工作", is_global: false },
+      ],
+      entries: [],
+      active_group_ids: ["g-work"],
+    };
+    configState.value = { quick_lexicon_group: "g-work" } as AppConfig;
+  }
+
+  it("运行中有写入时刷新并提示", async () => {
+    runningService();
+    workLexicon();
+    mocked.quickAddSelectionToLexicon.mockReturnValue(
+      fakeCommand({ status: "ok", data: { added: 2, skipped: 1 } }) as never,
+    );
+
+    await handleQuickLexiconTrigger();
+
+    expect(mocked.quickAddSelectionToLexicon).toHaveBeenCalledOnce();
+    expect(refreshLexiconMock).toHaveBeenCalledOnce();
+    expect(mockedToast.success).toHaveBeenCalledWith(
+      m.lexicon_quick_added({ count: 2, name: "工作" }),
+    );
+  });
+
+  it("零写入时静默返回", async () => {
+    runningService();
+    workLexicon();
+
+    await handleQuickLexiconTrigger();
+
+    expect(mocked.quickAddSelectionToLexicon).toHaveBeenCalledOnce();
+    expect(refreshLexiconMock).not.toHaveBeenCalled();
+    expect(mockedToast.success).not.toHaveBeenCalled();
+    expect(mockedToast.error).not.toHaveBeenCalled();
+  });
+
+  it("命令失败只上报不提示", async () => {
+    runningService();
+    workLexicon();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocked.quickAddSelectionToLexicon.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+
+    await handleQuickLexiconTrigger();
+
+    expect(refreshLexiconMock).not.toHaveBeenCalled();
+    expect(mockedToast.success).not.toHaveBeenCalled();
+    expect(mockedToast.error).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("服务未运行时直接忽略", async () => {
+    serviceState.status = { state: "stopped", modelId: null, loadMs: null };
+
+    await handleQuickLexiconTrigger();
+
+    expect(mocked.quickAddSelectionToLexicon).not.toHaveBeenCalled();
   });
 });

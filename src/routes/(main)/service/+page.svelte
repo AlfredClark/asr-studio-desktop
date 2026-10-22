@@ -26,6 +26,7 @@
   import { configValue, updateConfig } from "#libs/hooks/config.svelte";
   import type { ShortcutOutput } from "#libs/commands/types";
   import { toast } from "#libs/utils/toast";
+  import { groupLabel, lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
   import {
     deviceLabel,
     refreshServiceData,
@@ -133,8 +134,28 @@
     }
   }
 
+  /** 快捷词库已设快捷键：非空才展示目标分组选择 */
+  const quickLexiconSet = $derived(configValue("shortcut_quick_lexicon", "") !== "");
+
+  /** 快捷词库目标分组：存量分组被删后回滚全局分组 */
+  const quickLexiconGroup = $derived.by(() => {
+    const stored = configValue("quick_lexicon_group", "global");
+    return lexiconState.value.groups.some((group) => group.id === stored) ? stored : "global";
+  });
+
+  /** 目标分组经命令落盘后端；失败不乐观更新，下拉自动回滚 */
+  async function handleQuickLexiconGroupChange(value: string): Promise<void> {
+    const target = lexiconState.value.groups.some((group) => group.id === value) ? value : "global";
+    if (await updateConfig({ quick_lexicon_group: target })) {
+      toast.success(m.settings_quick_lexicon_group_updated());
+    } else {
+      toast.error(m.settings_quick_lexicon_group_failed());
+    }
+  }
+
   onMount(() => {
     void refreshServiceData();
+    void refreshLexicon();
   });
 </script>
 
@@ -303,6 +324,44 @@
               <ShortcutRecordRow kind="voice" />
             {/snippet}
           </CardRow>
+          <CardRow
+            label={m.settings_quick_lexicon_label()}
+            description={m.settings_quick_lexicon_description()}
+          >
+            {#snippet control()}
+              <ShortcutRecordRow kind="quick_lexicon" />
+            {/snippet}
+          </CardRow>
+          {#if quickLexiconSet}
+            <CardRow
+              label={m.settings_quick_lexicon_group_label()}
+              description={m.settings_quick_lexicon_group_description()}
+            >
+              {#snippet control()}
+                <Select
+                  type="single"
+                  value={quickLexiconGroup}
+                  items={lexiconState.value.groups.map((group) => ({
+                    value: group.id,
+                    label: groupLabel(group),
+                  }))}
+                  onValueChange={(value) => void handleQuickLexiconGroupChange(value)}
+                >
+                  <SelectTrigger
+                    class="w-(--control-column-width)"
+                    aria-label={m.settings_quick_lexicon_group_label()}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {#each lexiconState.value.groups as group (group.id)}
+                      <SelectItem value={group.id}>{groupLabel(group)}</SelectItem>
+                    {/each}
+                  </SelectContent>
+                </Select>
+              {/snippet}
+            </CardRow>
+          {/if}
           <CardRow label={m.service_output_label()} description={m.service_output_description()}>
             {#snippet control()}
               <Select
