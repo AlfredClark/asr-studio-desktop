@@ -114,6 +114,37 @@ export function deviceLabel(device: AudioDevice): string {
   return device.id === DEFAULT_DEVICE_ID ? m.service_device_system_default() : device.name;
 }
 
+/** 选中模型持久化键：改名即视为放弃老用户存量，新增键统一 `app.` 前缀 */
+export const SELECTED_MODEL_STORAGE_KEY = "app.service-selected-model";
+/** 选中设备持久化键：改名即视为放弃老用户存量，新增键统一 `app.` 前缀 */
+export const SELECTED_DEVICE_STORAGE_KEY = "app.service-selected-device";
+
+/** 读存量选中：缺失、空串、存储不可用一律回落 `null`，调用方走默认选中逻辑 */
+export function loadStoredSelection(key: string): string | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const stored = localStorage.getItem(key)?.trim();
+    return stored ? stored : null;
+  } catch {
+    // 隐私模式等存储不可用时按无存量处理，不阻塞水合
+    return null;
+  }
+}
+
+/** 写存量选中：落盘失败仍保留内存值，保证本次会话可用 */
+function persistSelection(key: string, id: string | null): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    if (id == null) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, id);
+    }
+  } catch {
+    // 落盘失败仅影响下次启动的默认值，本次会话不受影响
+  }
+}
+
 /** 同步后端状态快照到内存；失败仅上报（调用方决定是否提示） */
 async function syncStatus(): Promise<void> {
   await commands
@@ -141,7 +172,11 @@ export async function refreshServiceData(): Promise<void> {
     .listModels()
     .success((entries) => {
       serviceState.models = entries.filter((entry) => entry.status === "ready");
-      if (
+      // 存量优先：存量仍在就绪列表才沿用，否则回落首个就绪模型
+      const stored = loadStoredSelection(SELECTED_MODEL_STORAGE_KEY);
+      if (stored != null && serviceState.models.some((entry) => entry.id === stored)) {
+        serviceState.selectedModel = stored;
+      } else if (
         serviceState.selectedModel == null ||
         !serviceState.models.some((entry) => entry.id === serviceState.selectedModel)
       ) {
@@ -158,6 +193,12 @@ export async function refreshServiceData(): Promise<void> {
       // 热插拔经下方 `refreshDevices` 手动重取，此处保留首刷
       if (serviceState.devices.length > 0) return;
       serviceState.devices = devices;
+      // 存量优先：存量仍在设备列表才沿用，否则走默认选中逻辑
+      const stored = loadStoredSelection(SELECTED_DEVICE_STORAGE_KEY);
+      if (stored != null && devices.some((device) => device.id === stored)) {
+        serviceState.selectedDevice = stored;
+        return;
+      }
       if (
         serviceState.selectedDevice == null ||
         !devices.some((device) => device.id === serviceState.selectedDevice)
@@ -193,6 +234,7 @@ export async function refreshDevices(): Promise<void> {
           devices.find((device) => device.is_default)?.id ??
           devices[0]?.id ??
           null;
+        persistSelection(SELECTED_DEVICE_STORAGE_KEY, serviceState.selectedDevice);
       }
     })
     .failed((failure) => {
@@ -243,6 +285,7 @@ export async function selectModel(id: string): Promise<void> {
   if (serviceState.switching) return;
   const previous = serviceState.selectedModel;
   serviceState.selectedModel = id;
+  persistSelection(SELECTED_MODEL_STORAGE_KEY, id);
   if (serviceState.status?.state !== "running") return;
   serviceState.switching = true;
   try {
@@ -255,6 +298,7 @@ export async function selectModel(id: string): Promise<void> {
       .failed((failure) => {
         // 切模型失败回滚选中：状态以实际运行为准，不留“选了但没跑起来”的假象
         serviceState.selectedModel = previous;
+        persistSelection(SELECTED_MODEL_STORAGE_KEY, previous);
         toast.error(m.service_start_failed());
         reportCommandFailure("[service] switch failed", failure);
       });
@@ -302,6 +346,7 @@ async function warnIfShortcutsInactive(): Promise<void> {
 export function selectDevice(id: string): void {
   if (serviceState.recording) return;
   serviceState.selectedDevice = id;
+  persistSelection(SELECTED_DEVICE_STORAGE_KEY, id);
 }
 
 /** 开始测试录制：服务必须运行中，重复点击直接忽略 */

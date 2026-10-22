@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_DEVICE_ID,
+  SELECTED_DEVICE_STORAGE_KEY,
+  SELECTED_MODEL_STORAGE_KEY,
   TRANSCRIBE_BUSY_MESSAGE,
   TRANSCRIBE_CANCELLED_MESSAGE,
   deviceLabel,
@@ -9,6 +11,7 @@ import {
   handleShortcutTrigger,
   isTranscribeBusyFailure,
   isTranscribeCancelledFailure,
+  loadStoredSelection,
   refreshServiceData,
   selectDevice,
   selectModel,
@@ -742,5 +745,87 @@ describe("指令触发", () => {
     expect(mocked.startRecording).not.toHaveBeenCalled();
     expect(mocked.transcribeFileRaw).not.toHaveBeenCalled();
     expect(mocked.replayDirective).not.toHaveBeenCalled();
+  });
+});
+
+describe("选中持久化", () => {
+  /** Node 环境桩 localStorage：缺省空库，可选抛错模拟隐私模式 */
+  function stubStorage(
+    initial: Record<string, string> = {},
+    failing = false,
+  ): {
+    setItem: ReturnType<typeof vi.fn>;
+    removeItem: ReturnType<typeof vi.fn>;
+  } {
+    const store = new Map(Object.entries(initial));
+    const setItem = vi.fn((key: string, value: string) => {
+      if (failing) throw new Error("denied");
+      store.set(key, value);
+    });
+    const removeItem = vi.fn((key: string) => {
+      store.delete(key);
+    });
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn((key: string) => store.get(key) ?? null),
+      setItem,
+      removeItem,
+    });
+    return { setItem, removeItem };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("无存储时回落空", () => {
+    expect(loadStoredSelection(SELECTED_MODEL_STORAGE_KEY)).toBeNull();
+    expect(loadStoredSelection(SELECTED_DEVICE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("空白与抛错回落空", () => {
+    stubStorage({ [SELECTED_MODEL_STORAGE_KEY]: "  " });
+    expect(loadStoredSelection(SELECTED_MODEL_STORAGE_KEY)).toBeNull();
+    vi.unstubAllGlobals();
+    stubStorage({}, true);
+    expect(loadStoredSelection(SELECTED_MODEL_STORAGE_KEY)).toBeNull();
+  });
+
+  it("水合采用有效存量，无效存量回落首选项", async () => {
+    stubStorage({ [SELECTED_MODEL_STORAGE_KEY]: model.id });
+    await refreshServiceData();
+    expect(serviceState.selectedModel).toBe(model.id);
+    vi.unstubAllGlobals();
+
+    stubStorage({ [SELECTED_MODEL_STORAGE_KEY]: "deleted-model" });
+    await refreshServiceData();
+    expect(serviceState.selectedModel).toBe(model.id);
+  });
+
+  it("水合采用有效存量设备", async () => {
+    stubStorage({ [SELECTED_DEVICE_STORAGE_KEY]: device.id });
+    await refreshServiceData();
+    expect(serviceState.selectedDevice).toBe(device.id);
+  });
+
+  it("选模型与选设备即时落盘", async () => {
+    const { setItem } = stubStorage();
+    await refreshServiceData();
+    await selectModel(model.id);
+    expect(setItem).toHaveBeenCalledWith(SELECTED_MODEL_STORAGE_KEY, model.id);
+    selectDevice(device.id);
+    expect(setItem).toHaveBeenCalledWith(SELECTED_DEVICE_STORAGE_KEY, device.id);
+  });
+
+  it("切模型失败回滚落盘", async () => {
+    const { setItem } = stubStorage();
+    runningStatus();
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.selectedModel = model.id;
+    mocked.startService.mockReturnValue(
+      fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
+    );
+    await selectModel("other-model");
+    expect(serviceState.selectedModel).toBe(model.id);
+    expect(setItem).toHaveBeenLastCalledWith(SELECTED_MODEL_STORAGE_KEY, model.id);
   });
 });
