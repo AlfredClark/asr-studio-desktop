@@ -266,6 +266,7 @@ pub struct ReplayReport {
 /// 键标识到 enigo 按键的映射：与前端按键注册表一一对应；未知或本平台不支持返回 `None`。
 ///
 /// enigo 的 `Key` 变体按平台裁剪：字母 / 数字 / `OEM*` 标点只在 Windows 存在，
+/// `PrintScr` 等只在 Windows 与 Unix（非 macOS）存在，
 /// 非 Windows 经 `Unicode` 注入（与粘贴通道同口径，修饰键组合有效）；
 /// 修饰键就近归并（`LWin/RWin → Meta`，`RMenu → Alt`），无归并目标（如 `Apps`）直接不支持。
 /// 纯函数，可单测（单测跑在本机平台，只断言本平台口径）
@@ -298,7 +299,6 @@ fn enigo_key_common(id: &str) -> Option<enigo::Key> {
         "F10" => K::F10,
         "F11" => K::F11,
         "F12" => K::F12,
-        "PrintScr" => K::PrintScr,
         "Backspace" => K::Backspace,
         "Tab" => K::Tab,
         "CapsLock" => K::CapsLock,
@@ -340,11 +340,12 @@ fn enigo_key_common(id: &str) -> Option<enigo::Key> {
     })
 }
 
-/// Windows 全量直映（含字母数字与 `OEM` 标点）
+/// Windows 全量直映（含字母数字与 `OEM` 标点，以及 `PrintScr` 等 Windows 专有键）
 #[cfg(target_os = "windows")]
 fn enigo_key_platform(id: &str) -> Option<enigo::Key> {
     use enigo::Key as K;
     Some(match id {
+        "PrintScr" => K::PrintScr,
         "Num0" => K::Num0,
         "Num1" => K::Num1,
         "Num2" => K::Num2,
@@ -405,11 +406,12 @@ fn enigo_key_platform(id: &str) -> Option<enigo::Key> {
 }
 
 /// Unix（非 macOS）：字母数字标点走 `Unicode`（小写键位 + 录制的 Shift 还原大小写）；
-/// 修饰键归并；无归并目标返回 `None`
+/// 修饰键归并；`PrintScr` 等直映；无归并目标返回 `None`
 #[cfg(all(unix, not(target_os = "macos")))]
 fn enigo_key_platform(id: &str) -> Option<enigo::Key> {
     use enigo::Key as K;
     Some(match id {
+        "PrintScr" => K::PrintScr,
         "Insert" => K::Insert,
         "Numlock" => K::Numlock,
         "Pause" => K::Pause,
@@ -469,7 +471,7 @@ fn enigo_key_platform(id: &str) -> Option<enigo::Key> {
 }
 
 /// macOS：字母数字标点走 `Unicode`；修饰键归并；其余返回 `None`
-/// （macOS 的 `Unicode` + 修饰键组合未经真机验证，触发回放以 Linux / Windows 为准）
+/// （`PrintScr` / `Insert` 等在 macOS 无 enigo 变体；macOS 的 `Unicode` + 修饰键组合未经真机验证，触发回放以 Linux / Windows 为准）
 #[cfg(target_os = "macos")]
 fn enigo_key_platform(id: &str) -> Option<enigo::Key> {
     use enigo::Key as K;
@@ -703,13 +705,10 @@ mod tests {
         for id in [
             "Escape",
             "F1",
-            "PrintScr",
             "OEM3",
             "Num1",
             "OEMMinus",
             "Backspace",
-            "Insert",
-            "Numlock",
             "Divide",
             "Tab",
             "Q",
@@ -736,13 +735,25 @@ mod tests {
             "LeftArrow",
             "Numpad0",
             "Decimal",
-            "ScrollLock",
-            "Pause",
             "RControl",
             "Super",
         ] {
             assert!(enigo_key(id).is_some(), "missing mapping for {id}");
         }
+        // `PrintScr` / `Insert` / `Numlock` / `Pause` 只在 Windows 与 Unix（非 macOS）存在
+        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+        for id in ["PrintScr", "Insert", "Numlock", "Pause"] {
+            assert!(enigo_key(id).is_some(), "missing mapping for {id}");
+        }
+        #[cfg(target_os = "macos")]
+        for id in ["PrintScr", "Insert", "Numlock", "Pause"] {
+            assert!(enigo_key(id).is_none(), "macOS should not map {id}");
+        }
+        // `ScrollLock` 只在 Unix（非 macOS）存在
+        #[cfg(all(unix, not(target_os = "macos")))]
+        assert!(enigo_key("ScrollLock").is_some());
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        assert!(enigo_key("ScrollLock").is_none());
         assert!(enigo_key("Nope").is_none());
         // `Apps`（菜单键）无 unix 映射，预检直接拒绝；Windows 直映
         #[cfg(not(target_os = "windows"))]

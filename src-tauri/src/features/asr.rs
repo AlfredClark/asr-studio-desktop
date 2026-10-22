@@ -393,14 +393,13 @@ fn busy_or_stopped_error() -> anyhow::Error {
     }
 }
 
-/// 去掉 Windows 规范化路径的 `\\?\` 前缀（含 `\\?\UNC\` 网络路径）；
-/// 非 Windows 原样返回。纯函数，可单测。
-fn strip_verbatim_prefix(path: &std::path::Path) -> std::path::PathBuf {
-    let text = path.to_string_lossy();
+/// 去掉 Windows 规范化路径的 `\\?\` 前缀（含 `\\?\UNC\` 网络路径）；无前缀原样返回。
+/// `within_dir_windows` 与非 Windows 的 `is_within_dir` 共用。纯函数，可单测。
+fn strip_verbatim_prefix_str(text: &str) -> String {
     text.strip_prefix(r"\\?\UNC\")
-        .map(|rest| std::path::PathBuf::from(format!(r"\\{rest}")))
-        .or_else(|| text.strip_prefix(r"\\?\").map(std::path::PathBuf::from))
-        .unwrap_or_else(|| path.to_path_buf())
+        .map(|rest| format!(r"\\{rest}"))
+        .or_else(|| text.strip_prefix(r"\\?\").map(str::to_owned))
+        .unwrap_or_else(|| text.to_owned())
 }
 
 /// Windows 归属判定：统一分隔符、去 `\\?\` 前缀后忽略大小写比较，
@@ -410,11 +409,7 @@ fn strip_verbatim_prefix(path: &std::path::Path) -> std::path::PathBuf {
 fn within_dir_windows(file: &std::path::Path, root: &std::path::Path) -> bool {
     fn normalize(text: &str) -> String {
         let unified = text.replace('/', "\\");
-        let stripped = unified
-            .strip_prefix(r"\\?\UNC\")
-            .map(|rest| format!(r"\\{rest}"))
-            .or_else(|| unified.strip_prefix(r"\\?\").map(str::to_owned))
-            .unwrap_or(unified);
+        let stripped = strip_verbatim_prefix_str(&unified);
         stripped.trim_end_matches('\\').to_lowercase()
     }
     let file = normalize(&file.to_string_lossy());
@@ -434,8 +429,8 @@ fn is_within_dir(file: &std::path::Path, root: &std::path::Path) -> bool {
     }
     #[cfg(not(windows))]
     {
-        let file = strip_verbatim_prefix(file);
-        let root = strip_verbatim_prefix(root);
+        let file = std::path::PathBuf::from(strip_verbatim_prefix_str(&file.to_string_lossy()));
+        let root = std::path::PathBuf::from(strip_verbatim_prefix_str(&root.to_string_lossy()));
         file.starts_with(root)
     }
 }
@@ -659,17 +654,14 @@ mod tests {
     #[test]
     fn verbatim_prefix_strips_disk_and_unc() {
         assert_eq!(
-            strip_verbatim_prefix(std::path::Path::new(r"\\?\C:\AppData\records\a.wav")),
-            std::path::PathBuf::from(r"C:\AppData\records\a.wav")
+            strip_verbatim_prefix_str(r"\\?\C:\AppData\records\a.wav"),
+            r"C:\AppData\records\a.wav"
         );
         assert_eq!(
-            strip_verbatim_prefix(std::path::Path::new(r"\\?\UNC\pc\share\a.wav")),
-            std::path::PathBuf::from(r"\\pc\share\a.wav")
+            strip_verbatim_prefix_str(r"\\?\UNC\pc\share\a.wav"),
+            r"\\pc\share\a.wav"
         );
-        assert_eq!(
-            strip_verbatim_prefix(std::path::Path::new("/tmp/a.wav")),
-            std::path::PathBuf::from("/tmp/a.wav")
-        );
+        assert_eq!(strip_verbatim_prefix_str("/tmp/a.wav"), "/tmp/a.wav");
     }
 
     #[test]
