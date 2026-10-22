@@ -945,7 +945,7 @@ pub fn quick_add_selection(app: &tauri::AppHandle) -> anyhow::Result<QuickLexico
             skipped: 0,
         });
     };
-    let target = crate::cores::config::load_config(app).quick_lexicon_group;
+    let target = crate::cores::config::load_quick_lexicon_group(app);
     quick_add_entries(app, &text, &target)
 }
 

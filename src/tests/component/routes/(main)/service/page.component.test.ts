@@ -30,6 +30,8 @@ const startServiceMock = vi.hoisted(() => vi.fn());
 const stopServiceMock = vi.hoisted(() => vi.fn());
 const startTestRecordingMock = vi.hoisted(() => vi.fn());
 const stopTestRecordingMock = vi.hoisted(() => vi.fn());
+const cancelTranscriptionMock = vi.hoisted(() => vi.fn());
+const refreshDevicesMock = vi.hoisted(() => vi.fn());
 const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 const updateConfigMock = vi.hoisted(() => vi.fn());
 const configStateMock = vi.hoisted(
@@ -102,6 +104,8 @@ vi.mock("#libs/hooks/service.svelte", async (importOriginal) => {
     stopService: stopServiceMock,
     startTestRecording: startTestRecordingMock,
     stopTestRecording: stopTestRecordingMock,
+    cancelTranscription: cancelTranscriptionMock,
+    refreshDevices: refreshDevicesMock,
   };
 });
 
@@ -253,13 +257,16 @@ describe("服务页", () => {
     expect(stopTestRecordingMock).toHaveBeenCalledOnce();
   });
 
-  it("识别中按钮禁用并提示", () => {
+  it("识别中按钮变取消识别，点按调取消命令", async () => {
+    const user = userEvent.setup();
     serviceStateMock.status = { state: "running", modelId: modelEntry.id, loadMs: 800 };
     serviceStateMock.recognizing = true;
     render(Page);
 
-    const button = screen.getByRole("button", { name: "Recognizing…" });
-    expect(button.hasAttribute("disabled")).toBe(true);
+    const button = screen.getByRole("button", { name: "Cancel recognition" });
+    expect(button.hasAttribute("disabled")).toBe(false);
+    await user.click(button);
+    expect(cancelTranscriptionMock).toHaveBeenCalledOnce();
   });
 
   it("旧结果回显已由历史列表承接，不再单独展示", () => {

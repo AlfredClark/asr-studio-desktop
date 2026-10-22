@@ -200,9 +200,13 @@ pub fn list_input_devices() -> Vec<AudioDevice> {
 }
 
 /// 开始录制：设备不存在或已在录制则报错；采样进内存，结束时一次性落盘
+///
+/// 单守卫内检查并占位：两路并发 `start_recording` 不会同时通过检查（TOCTOU 已堵）；
+/// 设备枚举与流构建持锁执行，第二路阻塞等待后见到占位直接拒绝，不会重复建流。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn start_recording(device_id: &str) -> anyhow::Result<()> {
-    if lock_recording().is_some() {
+    let mut guard = lock_recording();
+    if guard.is_some() {
         anyhow::bail!("already recording");
     }
     let host = cpal::default_host();
@@ -228,7 +232,7 @@ pub fn start_recording(device_id: &str) -> anyhow::Result<()> {
     stream
         .play()
         .context("failed to start audio input stream")?;
-    *lock_recording() = Some(RecordingSession {
+    *guard = Some(RecordingSession {
         _stream: stream,
         samples,
         channels,
@@ -236,6 +240,7 @@ pub fn start_recording(device_id: &str) -> anyhow::Result<()> {
         started_at: started,
         truncated,
     });
+    drop(guard);
     Ok(())
 }
 

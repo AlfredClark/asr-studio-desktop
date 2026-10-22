@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_DEVICE_ID,
   TRANSCRIBE_BUSY_MESSAGE,
+  TRANSCRIBE_CANCELLED_MESSAGE,
   deviceLabel,
   handleDirectiveTrigger,
   handleQuickLexiconTrigger,
   handleShortcutTrigger,
   isTranscribeBusyFailure,
+  isTranscribeCancelledFailure,
   refreshServiceData,
   selectDevice,
   selectModel,
@@ -33,6 +35,7 @@ vi.mock("#libs/commands", () => ({
     stopRecording: vi.fn(),
     transcribeFile: vi.fn(),
     transcribeFileRaw: vi.fn(),
+    cancelTranscription: vi.fn(),
     outputText: vi.fn(),
     isShortcutRegistered: vi.fn(),
     quickAddSelectionToLexicon: vi.fn(),
@@ -432,6 +435,13 @@ describe("识别服务状态", () => {
     expect(isTranscribeBusyFailure(`wrap: ${TRANSCRIBE_BUSY_MESSAGE}`)).toBe(true);
     expect(isTranscribeBusyFailure("service is not running")).toBe(false);
     expect(isTranscribeBusyFailure(null)).toBe(false);
+  });
+
+  it("取消判定只认取消字面量", () => {
+    expect(isTranscribeCancelledFailure(TRANSCRIBE_CANCELLED_MESSAGE)).toBe(true);
+    expect(isTranscribeCancelledFailure(`wrap: ${TRANSCRIBE_CANCELLED_MESSAGE}`)).toBe(true);
+    expect(isTranscribeCancelledFailure(TRANSCRIBE_BUSY_MESSAGE)).toBe(false);
+    expect(isTranscribeCancelledFailure(null)).toBe(false);
   });
 
   it("会话历史超限截尾，最新在前", async () => {

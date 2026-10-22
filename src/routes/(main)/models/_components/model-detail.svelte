@@ -76,6 +76,10 @@
   const progress = $derived(modelsState.progress[entry.id]);
   // 下载中：后端事件驱动，前端不做本地推断
   const busy = $derived(entry.status === "downloading" || progress !== undefined);
+  // 他模在途：后端一次只跑一个下载，本模型按钮禁用，避免并发直接被拒
+  const otherDownloading = $derived(
+    Object.keys(modelsState.progress).some((id) => id !== entry.id),
+  );
 
   /** 是否命中用户指定目录：隐藏删除与下载，按钮矩阵据此分支 */
   const isCustom = $derived(entry.custom_dir != null);
@@ -379,7 +383,11 @@
             {m.models_open_dir()}
           </Button>
         {:else}
-          <Button size="sm" onclick={() => void downloadModel(entry.id)}>
+          <Button
+            size="sm"
+            disabled={otherDownloading}
+            onclick={() => void downloadModel(entry.id)}
+          >
             {m.models_download()}
           </Button>
         {/if}
@@ -434,7 +442,7 @@
           </Button>
         {/if}
       {:else}
-        <Button size="sm" onclick={() => void downloadModel(entry.id)}>
+        <Button size="sm" disabled={otherDownloading} onclick={() => void downloadModel(entry.id)}>
           {m.models_download()}
         </Button>
         <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>

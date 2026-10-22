@@ -554,27 +554,37 @@ pub fn replay_directive(app: &tauri::AppHandle, id: &str) -> anyhow::Result<Repl
     let wait = std::time::Duration::from_millis(u64::from(directive.interval_ms));
     let mut executed = 0_u32;
     let mut held: Vec<enigo::Key> = Vec::new();
-    let result = super::output::with_enigo(|enigo| {
-        use enigo::{Direction, Keyboard};
-        for action in &directive.actions {
-            std::thread::sleep(wait);
-            let key = enigo_key(&action.key).ok_or_else(|| anyhow::anyhow!("unknown key"))?;
-            let direction = match action.direction {
-                ActionDirection::Press => Direction::Press,
-                ActionDirection::Release => Direction::Release,
-            };
+    // 逐键进出句柄：等待在借用之外，不长持 `RefCell` 借用，避免阻塞同期输出任务；
+    // 单键失败即停，残留按下走下方补放
+    let mut result: anyhow::Result<()> = Ok(());
+    for action in &directive.actions {
+        std::thread::sleep(wait);
+        let Some(key) = enigo_key(&action.key) else {
+            result = Err(anyhow::anyhow!("unknown key"));
+            break;
+        };
+        let direction = match action.direction {
+            ActionDirection::Press => enigo::Direction::Press,
+            ActionDirection::Release => enigo::Direction::Release,
+        };
+        let step: anyhow::Result<()> = super::output::with_enigo(|enigo| {
+            use enigo::Keyboard;
             enigo
                 .key(key, direction)
                 .map_err(|err| anyhow::anyhow!("failed to replay key: {err:#}"))?;
-            match direction {
-                Direction::Press => held.push(key),
-                Direction::Release => held.retain(|held_key| *held_key != key),
-                Direction::Click => {}
-            }
-            executed = executed.saturating_add(1);
+            Ok(())
+        });
+        if let Err(err) = step {
+            result = Err(err);
+            break;
         }
-        Ok(())
-    });
+        match direction {
+            enigo::Direction::Press => held.push(key),
+            enigo::Direction::Release => held.retain(|held_key| *held_key != key),
+            enigo::Direction::Click => {}
+        }
+        executed = executed.saturating_add(1);
+    }
     if result.is_err() && !held.is_empty() {
         // 补放残留按下：外层借用已结束，可重进句柄；补放失败只记日志，不翻转结论
         let release: anyhow::Result<()> = super::output::with_enigo(|enigo| {

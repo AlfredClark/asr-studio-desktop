@@ -128,7 +128,7 @@ export async function downloadAndInstall(): Promise<void> {
 
 /** 重启以完成更新；桌面端命令永不结算（移动端返回错误），调用方不要 `await` */
 let restarting = false;
-/** 仅测试用：重置重启互斥（模块变量无法经 `updaterState` 复位） */
+/** 仅测试用：重置重启互斥。生产包内保留但无副作用（单个布尔复位， 仅测试文件引用；保留以避免测试与生产出现两套重启口径）。 */
 export function __resetRestartForTests(): void {
   restarting = false;
 }

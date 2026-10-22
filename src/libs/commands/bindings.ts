@@ -31,7 +31,10 @@ export const commands = {
 	openModelsRoot: () => typedError<null, CommandError>(__TAURI_INVOKE("open_models_root")),
 	/**  在系统文件管理器中打开单个模型目录（不存在即建） */
 	openModelDir: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("open_model_dir", { id })),
-	/**  删除模型目录；下载中拒绝 */
+	/**
+	 *  删除模型目录；下载中拒绝；服务正用该模型时拒绝（先停服务再删）；
+	 *  用户指定目录的模型拒绝删除（仅校验与使用），先取消指定再删应用目录
+	 */
 	deleteModel: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_model", { id })),
 	/**
 	 *  指定 / 取消指定某模型的用户目录：`path` 为 `None` 时清除映射、回归应用管理；
@@ -111,6 +114,8 @@ export const commands = {
 	transcribeFile: (path: string) => typedError<TranscribeResult, CommandError>(__TAURI_INVOKE("transcribe_file", { path })),
 	/**  转写音频文件（原始文本版，供指令触发匹配用）：跳过词库后处理 */
 	transcribeFileRaw: (path: string) => typedError<TranscribeResult, CommandError>(__TAURI_INVOKE("transcribe_file_raw", { path })),
+	/**  取消当前转写：幂等，无运行中转写也视为成功；运行中转写 200ms 内以取消结算 */
+	cancelTranscription: () => typedError<null, CommandError>(__TAURI_INVOKE("cancel_transcription")),
 	/**  按配置输出识别文本：返回实际投递通道与是否降级，调用方据此提示 */
 	outputText: (text: string) => typedError<OutputReport, CommandError>(__TAURI_INVOKE("output_text", { text })),
 	/**  查询某组合是否由本应用注册；空值与非法串一律返回 `false` */

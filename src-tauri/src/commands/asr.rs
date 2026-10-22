@@ -74,6 +74,14 @@ pub async fn transcribe_file_raw(
     Ok(asr::transcribe_file_raw(&app, &path).await?)
 }
 
+/// 取消当前转写：幂等，无运行中转写也视为成功；运行中转写 200ms 内以取消结算
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_transcription() -> CommandResult<()> {
+    asr::request_cancel_transcription();
+    Ok(())
+}
+
 /// 按配置输出识别文本：返回实际投递通道与是否降级，调用方据此提示
 #[tauri::command]
 #[specta::specta]

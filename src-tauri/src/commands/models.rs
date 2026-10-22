@@ -59,11 +59,18 @@ pub fn open_model_dir(app: tauri::AppHandle, id: String) -> CommandResult<()> {
     Ok(models::open_model_dir(&app, &id)?)
 }
 
-/// 删除模型目录；下载中拒绝
+/// 删除模型目录；下载中拒绝；服务正用该模型时拒绝（先停服务再删）；
+/// 用户指定目录的模型拒绝删除（仅校验与使用），先取消指定再删应用目录
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
 pub fn delete_model(app: tauri::AppHandle, id: String) -> CommandResult<()> {
+    use crate::features::asr::ServiceState;
+
+    let running = crate::features::asr::status();
+    if running.state == ServiceState::Running && running.model_id.as_deref() == Some(id.as_str()) {
+        return Err(anyhow::anyhow!("model is in use, stop the service first").into());
+    }
     Ok(models::delete_model(&app, &id)?)
 }
 
