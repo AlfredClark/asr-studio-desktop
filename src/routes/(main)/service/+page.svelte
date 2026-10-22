@@ -25,6 +25,7 @@
   import { m } from "#libs/i18n/paraglide/messages";
   import { configValue, updateConfig } from "#libs/hooks/config.svelte";
   import type { ShortcutOutput } from "#libs/commands/types";
+  import type { RecognitionRecord } from "#libs/hooks/service.svelte";
   import { toast } from "#libs/utils/toast";
   import { groupLabel, lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
   import {
@@ -71,6 +72,20 @@
       minute: "2-digit",
       second: "2-digit",
     });
+  }
+
+  /** 投递通道文案：快捷键输出的实际去向；未输出（测试按钮/指令回放）显示占位 */
+  function outputLabel(output: RecognitionRecord["output"]): string {
+    switch (output) {
+      case "paste":
+        return m.service_output_option_paste();
+      case "clipboard":
+        return m.service_output_option_clipboard();
+      case "ime":
+        return m.service_output_option_ime();
+      default:
+        return m.service_history_no_output();
+    }
   }
 
   /** 状态徽标文案：四态一一对应，未水合按停止渲染 */
@@ -192,21 +207,25 @@
                 {@const open = expanded.has(record.id)}
                 <button
                   type="button"
-                  class="rounded-lg bg-muted/50 px-2.5 py-2 text-left hover:bg-muted"
+                  class="flex items-start gap-2 rounded-lg bg-muted/50 px-2.5 py-2 text-left hover:bg-muted"
                   aria-expanded={open}
                   onclick={() => toggleRecord(record.id)}
                 >
-                  <p class={open ? "text-sm whitespace-pre-wrap" : "line-clamp-2 text-sm"}>
-                    {record.text}
-                  </p>
-                  <p class="mt-1 text-xs text-muted-foreground tabular-nums">
-                    {recordTime(record.at)} · {m.service_result_audio()}
-                    {record.audioSec.toFixed(1)}s · {m.service_result_time()}
-                    {(record.inferMs / 1000).toFixed(1)}s ·
+                  <div class="min-w-0 flex-1">
+                    <p class={open ? "text-sm whitespace-pre-wrap" : "line-clamp-2 text-sm"}>
+                      {record.text}
+                    </p>
+                    <p class="mt-1 text-xs text-muted-foreground tabular-nums">
+                      {recordTime(record.at)} · {m.service_result_audio()}
+                      {record.audioSec.toFixed(1)}s · {m.service_result_time()}
+                      {(record.inferMs / 1000).toFixed(1)}s · {outputLabel(record.output)}
+                    </p>
+                  </div>
+                  <Badge variant="secondary" class="shrink-0">
                     {record.kind === "directive"
                       ? m.service_history_kind_directive()
                       : m.service_history_kind_text()}
-                  </p>
+                  </Badge>
                 </button>
               {/each}
             </div>

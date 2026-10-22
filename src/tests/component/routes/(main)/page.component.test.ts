@@ -58,6 +58,7 @@ const serviceStateMock = vi.hoisted(
       fileName: string;
       at: number;
       kind: "voice";
+      output: "paste" | "clipboard" | "ime" | null;
     }[];
   } => ({
     status: null,
@@ -262,6 +263,7 @@ describe("首页工作台", () => {
         fileName: "a.wav",
         at: 1,
         kind: "voice",
+        output: "paste",
       },
     ];
     render(Page);

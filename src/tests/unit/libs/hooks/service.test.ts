@@ -460,6 +460,7 @@ describe("识别服务状态", () => {
       id: index + 1,
       at: index,
       kind: "voice" as const,
+      output: null,
     }));
 
     await startTestRecording();
@@ -475,7 +476,16 @@ describe("识别服务状态", () => {
 
   it("历史统计：条数、字符总数与推理耗时均值", () => {
     const stats = summarizeHistory([
-      { text: "你好", audioSec: 2, inferMs: 1000, fileName: "a.wav", id: 1, at: 1, kind: "voice" },
+      {
+        text: "你好",
+        audioSec: 2,
+        inferMs: 1000,
+        fileName: "a.wav",
+        id: 1,
+        at: 1,
+        kind: "voice",
+        output: null,
+      },
       {
         text: "世界！",
         audioSec: 3,
@@ -484,6 +494,7 @@ describe("识别服务状态", () => {
         id: 2,
         at: 2,
         kind: "directive",
+        output: null,
       },
     ]);
 
@@ -540,6 +551,8 @@ describe("识别服务状态", () => {
     expect(mocked.outputText).toHaveBeenCalledWith("你好");
     expect(mockedToast.warning).not.toHaveBeenCalled();
     expect(serviceState.history[0]).toMatchObject({ text: "你好", kind: "voice" });
+    // 实际投递通道回填历史：默认 mock 走剪贴板无降级
+    expect(serviceState.history[0]).toMatchObject({ output: "clipboard" });
   });
 
   it("快捷键降级输出时提示用户", async () => {
@@ -557,6 +570,8 @@ describe("识别服务状态", () => {
     await handleShortcutTrigger();
 
     expect(mockedToast.warning).toHaveBeenCalledWith(m.service_output_fallback());
+    // 降级后实际通道为剪贴板，回填历史而非配置值
+    expect(serviceState.history[0]).toMatchObject({ output: "clipboard" });
   });
 
   it("无可输入焦点时提示已存入剪贴板", async () => {
