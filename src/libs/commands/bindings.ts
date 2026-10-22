@@ -450,6 +450,8 @@ export type ModelEntry = {
 	tarball_bytes: number,
 	/**  必需文件字节数之和（展示用；手工模型为清单参考值），精度口径同上 */
 	required_bytes: number,
+	/**  本地实占字节数（磁盘实测之和；目录缺失记 0），精度口径同上 */
+	local_bytes: number,
 	/**  本机状态 */
 	status: ModelStatus,
 	/**  模型目录绝对路径（`Missing` 时为 `None`，用户指定目录缺失同样为 `None`） */

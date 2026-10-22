@@ -41,6 +41,7 @@ const entry: ModelEntry = {
   display_name: "SenseVoice int8",
   tarball_bytes: 1_047_870_769,
   required_bytes: 239_549_735,
+  local_bytes: 0,
   status: "missing",
   local_path: null,
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",

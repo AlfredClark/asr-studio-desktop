@@ -47,6 +47,7 @@ const senseEntry: ModelEntry = {
   display_name: "SenseVoice int8",
   tarball_bytes: 1_047_870_769,
   required_bytes: 239_549_735,
+  local_bytes: 0,
   status: "missing",
   local_path: null,
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
@@ -60,6 +61,7 @@ const qwenEntry: ModelEntry = {
   display_name: "Qwen3-ASR 0.6B int8",
   tarball_bytes: 878_702_423,
   required_bytes: 986_012_257,
+  local_bytes: 400_000_000,
   status: "partial",
   local_path: "/models/qwen3-asr/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
@@ -73,6 +75,7 @@ const nanoEntry: ModelEntry = {
   display_name: "FunASR Nano int8",
   tarball_bytes: 841_730_611,
   required_bytes: 1_009_071_962,
+  local_bytes: 1_009_071_962,
   status: "ready",
   local_path: "/models/funasr-nano/sherpa-onnx-funasr-nano-int8-2025-12-30",
   page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
@@ -174,7 +177,7 @@ describe("模型页", () => {
     });
     // 名称、体积、状态拼在同一行按钮名内
     expect(screen.getByRole("button", { name: /SenseVoice int8.*1\.0 GB/ })).not.toBeNull();
-    expect(screen.getByRole("button", { name: /Qwen3-ASR.*878\.7 MB/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Qwen3-ASR.*400\.0 MB/ })).not.toBeNull();
   });
 
   it("在途下载胶囊可见，点击切到对应模型", async () => {
@@ -224,6 +227,7 @@ describe("模型页", () => {
         display_name: "SenseVoice int8 · 粤语增强",
         tarball_bytes: 165_783_878,
         required_bytes: 237_431_441,
+        local_bytes: 0,
         status: "missing",
         local_path: null,
         page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
@@ -254,6 +258,7 @@ describe("模型页", () => {
         display_name: "FunASR Nano fp16",
         tarball_bytes: 1_030_076_153,
         required_bytes: 1_602_230_282,
+        local_bytes: 0,
         status: "missing",
         local_path: null,
         page_url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
@@ -284,6 +289,7 @@ describe("模型页", () => {
         display_name: "Qwen3-ASR 1.7B int8",
         tarball_bytes: 0,
         required_bytes: 2_402_059_781,
+        local_bytes: 0,
         status: "missing",
         local_path: null,
         manual: true,
@@ -316,6 +322,7 @@ describe("模型页", () => {
         display_name: "SenseVoice int8",
         tarball_bytes: 163_002_883,
         required_bytes: 239_549_735,
+        local_bytes: 0,
         status: "missing",
         local_path: null,
         manual: false,

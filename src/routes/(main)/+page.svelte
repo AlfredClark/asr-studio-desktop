@@ -16,6 +16,7 @@
   } from "#components/shadcn-svelte/select";
   import { m } from "#libs/i18n/paraglide/messages";
   import type { ShortcutOutput } from "#libs/commands/types";
+  import { formatBytes } from "#libs/utils/format";
   import { toast } from "#libs/utils/toast";
   import { configValue, updateConfig } from "#libs/hooks/config.svelte";
   import { modelsState, refreshModels } from "#libs/hooks/models.svelte";
@@ -43,10 +44,28 @@
   const running = $derived(serviceState.status?.state === "running");
   const switching = $derived(serviceState.switching || serviceState.status?.state === "starting");
 
-  /** 词库计数与生效组数（全局组恒生效，只计用户组） */
-  const lexiconGroups = $derived(lexiconState.value.groups.length);
-  const lexiconEntries = $derived(lexiconState.value.entries.length);
-  const lexiconActive = $derived(configValue("active_lexicon_groups", []).length);
+  /** 词库分组/词条计数：全局组恒生效，只计用户组；未知分组词条视为未生效 */
+  const lexiconGroups = $derived(lexiconState.value.groups);
+  const lexiconGroupTotal = $derived(lexiconGroups.length);
+  const lexiconActiveIds = $derived(configValue("active_lexicon_groups", []));
+  const lexiconGroupActive = $derived(
+    lexiconGroups.filter((group) => group.is_global || lexiconActiveIds.includes(group.id)).length,
+  );
+  const lexiconEntries = $derived(lexiconState.value.entries);
+  const lexiconEntryTotal = $derived(lexiconEntries.length);
+  const lexiconEntryActive = $derived(
+    lexiconEntries.filter((entry) => {
+      if (!entry.enabled) return false;
+      const group = lexiconGroups.find((item) => item.id === entry.group_id);
+      if (!group) return false;
+      return group.is_global || lexiconActiveIds.includes(group.id);
+    }).length,
+  );
+
+  /** 模型本地总占用：已落盘条目实测之和（含未就绪残留） */
+  const modelsDiskBytes = $derived(
+    modelsState.entries.reduce((sum, entry) => sum + entry.local_bytes, 0),
+  );
 
   /** 指令计数与启用数 */
   const directiveTotal = $derived(directiveState.value.length);
@@ -249,13 +268,20 @@
             actionLabel={m.home_models_action()}
             onAction={() => void goto(resolve("/models"))}
           >
-            <p class="text-sm tabular-nums">
-              {#if readyModels.length > 0}
-                {m.home_models_ready({ count: readyModels.length })}
-              {:else}
-                {m.home_models_none()}
+            <div class="flex flex-col gap-1">
+              <p class="text-sm tabular-nums">
+                {#if readyModels.length > 0}
+                  {m.home_models_ready({ count: readyModels.length })}
+                {:else}
+                  {m.home_models_none()}
+                {/if}
+              </p>
+              {#if modelsDiskBytes > 0}
+                <p class="text-xs text-muted-foreground tabular-nums">
+                  {m.home_models_disk({ size: formatBytes(modelsDiskBytes) })}
+                </p>
               {/if}
-            </p>
+            </div>
           </HomeStatusCard>
           <HomeStatusCard
             title={m.nav_lexicon()}
@@ -264,10 +290,18 @@
           >
             <div class="flex flex-col gap-1">
               <p class="text-sm tabular-nums">
-                {m.home_lexicon_summary({ entries: lexiconEntries, groups: lexiconGroups })}
+                {m.home_lexicon_groups({
+                  total: lexiconGroupTotal,
+                  active: lexiconGroupActive,
+                  inactive: lexiconGroupTotal - lexiconGroupActive,
+                })}
               </p>
-              <p class="text-xs text-muted-foreground tabular-nums">
-                {m.home_lexicon_active({ count: lexiconActive })}
+              <p class="text-sm tabular-nums">
+                {m.home_lexicon_entries({
+                  total: lexiconEntryTotal,
+                  active: lexiconEntryActive,
+                  inactive: lexiconEntryTotal - lexiconEntryActive,
+                })}
               </p>
             </div>
           </HomeStatusCard>

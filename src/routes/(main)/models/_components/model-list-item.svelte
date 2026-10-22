@@ -4,6 +4,7 @@
   import { Button } from "#components/shadcn-svelte/button";
   import { cn } from "#libs/utils/shadcn-svelte";
   import type { ModelEntry } from "#libs/commands/types";
+  import { m } from "#libs/i18n/paraglide/messages";
   import { modelsState } from "#libs/hooks/models.svelte";
   import { formatBytes, modelStatusLabel } from "./model-status";
 
@@ -26,7 +27,13 @@
 >
   <span class="min-w-0 flex-1 truncate text-left">{entry.display_name}</span>
   <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
-    {formatBytes(entry.tarball_bytes)}
+    {#if entry.local_bytes > 0}
+      {formatBytes(entry.local_bytes)}
+    {:else if entry.tarball_bytes > 0}
+      {formatBytes(entry.tarball_bytes)}
+    {:else}
+      {m.models_manual_size()}
+    {/if}
   </span>
   <span class="shrink-0 text-xs text-muted-foreground">
     {modelStatusLabel(entry.status, downloading)}
