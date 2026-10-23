@@ -21,6 +21,7 @@
   import {
     DEFAULT_LEXICON_FILTER,
     DEFAULT_LEXICON_SORT,
+    LEXICON_BATCH_ADD_LIMIT,
     batchCopyLexiconEntries,
     batchDeleteLexiconEntries,
     batchMoveLexiconEntries,
@@ -198,6 +199,12 @@
     }
   }
 
+  /** 当前查看分组的展示名：清空确认框点名分组用 */
+  const currentGroupLabel = $derived.by(() => {
+    const target = lexiconState.value.groups.find((group) => group.id === groupId);
+    return target == null ? "" : groupLabel(target);
+  });
+
   /** 打开批量添加弹窗：输入清空，目标锁定当前查看分组 */
   function openBatchAdd(): void {
     batchTargetGroupId = groupId;
@@ -353,6 +360,9 @@
             {/each}
           </SelectContent>
         </Select>
+        <Button variant="outline" size="sm" onclick={openBatchAdd}>
+          {m.lexicon_batch_add_limited({ limit: LEXICON_BATCH_ADD_LIMIT })}
+        </Button>
         <Button size="sm" onclick={openCreateEntry}>
           {m.lexicon_new_entry()}
         </Button>
@@ -381,12 +391,6 @@
               onSelect={() => selectAllVisible()}
             >
               {m.lexicon_select_all()}
-            </DropdownMenuPrimitive.Item>
-            <DropdownMenuPrimitive.Item
-              class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-              onSelect={() => openBatchAdd()}
-            >
-              {m.lexicon_batch_add()}
             </DropdownMenuPrimitive.Item>
             <DropdownMenuPrimitive.Item
               class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
@@ -429,9 +433,15 @@
             <Switch
               checked={entry.enabled}
               onCheckedChange={(checked) => void updateLexiconEntry(entry.id, { enabled: checked })}
-              aria-label={m.lexicon_entry_enabled()}
+              aria-label={`${entry.text} - ${m.lexicon_entry_enabled()}`}
             />
-            <Button variant="ghost" size="sm" onclick={() => openEditEntry(entry)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onclick={() => openEditEntry(entry)}
+              aria-label={`${entry.text} - ${m.lexicon_edit()}`}
+              title={`${entry.text} - ${m.lexicon_edit()}`}
+            >
               {m.lexicon_edit()}
             </Button>
             <Button
@@ -441,6 +451,8 @@
                 deletingEntryId = entry.id;
                 confirmDeleteEntry = true;
               }}
+              aria-label={`${entry.text} - ${m.lexicon_delete()}`}
+              title={`${entry.text} - ${m.lexicon_delete()}`}
             >
               {m.lexicon_delete()}
             </Button>
@@ -475,9 +487,12 @@
 <ConfirmDialog
   bind:open={confirmClearAll}
   title={m.lexicon_clear_entries_confirm_title()}
-  description={m.lexicon_clear_entries_confirm_description({ count: baseEntries.length })}
+  description={m.lexicon_clear_all_consequence({
+    group: currentGroupLabel,
+    count: baseEntries.length,
+  })}
   cancelLabel={m.lexicon_cancel()}
-  confirmLabel={m.lexicon_delete()}
+  confirmLabel={m.lexicon_delete_all_entries({ count: baseEntries.length })}
   variant="destructive"
   onConfirm={() => {
     confirmClearAll = false;

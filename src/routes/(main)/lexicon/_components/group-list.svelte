@@ -6,8 +6,7 @@
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
   import { Input } from "#components/shadcn-svelte/input";
-  import PlayIcon from "@lucide/svelte/icons/play";
-  import CheckIcon from "@lucide/svelte/icons/check";
+  import { Switch } from "#components/shadcn-svelte/switch";
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
   import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
@@ -131,25 +130,14 @@
                 </span>
                 {#if group.is_global}
                   <Badge>{m.lexicon_always_on()}</Badge>
-                {:else if isActive(group.id)}
-                  <Badge>{m.lexicon_enabled()}</Badge>
                 {/if}
               </Button>
               {#if !group.is_global}
-                <Button
-                  variant={isActive(group.id) ? "secondary" : "ghost"}
-                  size="icon-sm"
-                  onclick={() => void setLexiconGroupEnabled(group.id, !isActive(group.id))}
-                  aria-pressed={isActive(group.id)}
-                  aria-label={isActive(group.id) ? m.lexicon_disable() : m.lexicon_enable()}
-                  title={isActive(group.id) ? m.lexicon_disable() : m.lexicon_enable()}
-                >
-                  {#if isActive(group.id)}
-                    <CheckIcon />
-                  {:else}
-                    <PlayIcon />
-                  {/if}
-                </Button>
+                <Switch
+                  checked={isActive(group.id)}
+                  onCheckedChange={() => void setLexiconGroupEnabled(group.id, !isActive(group.id))}
+                  aria-label={`${groupLabel(group)} - ${isActive(group.id) ? m.lexicon_disable() : m.lexicon_enable()}`}
+                />
                 <Button
                   variant="ghost"
                   size="icon-sm"

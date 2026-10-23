@@ -13,21 +13,16 @@
   import GroupList from "./_components/group-list.svelte";
   import EntryTable from "./_components/entry-table.svelte";
 
-  /** 查看中的分组 id：空则跟随首个生效分组（无则全局）；分组被删后自动回落 */
+  /** 查看中的分组 id：空则默认全局组；被删的分组自动回落 */
   let selectedGroupId = $state<string | null>(null);
 
-  /** 实际展示的分组 id：查看态存在即用，否则跟随首个生效分组，无则全局 */
+  /** 实际展示的分组 id：查看态存在即用，否则默认全局组 */
   const effectiveGroupId = $derived.by(() => {
     const groups = lexiconState.value.groups;
-    const activeIds = lexiconState.value.active_group_ids;
     if (selectedGroupId != null && groups.some((group) => group.id === selectedGroupId)) {
       return selectedGroupId;
     }
-    return (
-      groups.find((group) => !group.is_global && activeIds.includes(group.id))?.id ??
-      groups.find((group) => group.is_global)?.id ??
-      ""
-    );
+    return groups.find((group) => group.is_global)?.id ?? "";
   });
 
   /** 首次水合中；完成前展示加载态而非空态，避免误导 */

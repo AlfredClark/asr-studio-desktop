@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { LexiconEntry, LexiconGroup } from "#libs/commands/types";
+import { m } from "#libs/i18n/paraglide/messages";
 import Page from "../../../../../routes/(main)/lexicon/+page.svelte";
 
 // bits-ui 组件在 jsdom 下缺失的浏览器 API，就地补齐（同模型页测试）。
@@ -144,26 +145,40 @@ async function renderReady(): Promise<void> {
   });
 }
 
+/** 切到工作组：多数用例在工作组词条上操作 */
+async function selectWorkGroup(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  const row = screen.getByText("工作").closest("div.rounded-lg") as HTMLElement;
+  await user.click(within(row).getByRole("button", { name: /工作/ }));
+}
+
 describe("词库页", () => {
-  it("挂载即刷新，渲染分组与生效组词条", async () => {
+  it("挂载即刷新，默认选中全局组", async () => {
+    const user = userEvent.setup();
     await renderReady();
 
     await waitFor(() => {
       expect(refreshLexiconMock).toHaveBeenCalledOnce();
     });
-    // 全局组按语言渲染 + 常驻“始终启用”，工作组（生效）显示“已启用”徽标
+    // 全局组按语言渲染 + 常驻“始终启用”；工作组（生效）用开关表示启用，不再挂徽标
     expect(screen.getByText("Global lexicon")).not.toBeNull();
     expect(screen.getByText("Always on")).not.toBeNull();
     expect(screen.getByText("工作")).not.toBeNull();
-    expect(screen.getByText("Enabled")).not.toBeNull();
-    // 全局组无启用开关；未生效的方言组有“启用”按钮
+    expect(screen.queryByText("Enabled")).toBeNull();
+    const workRow = screen.getByText("工作").closest("div.rounded-lg") as HTMLElement;
+    expect(within(workRow).getByRole("switch")).not.toBeNull();
+    // 全局组无启用开关；未生效的方言组有开关
     const globalRow = screen.getByText("Global lexicon").closest("div.rounded-lg") as HTMLElement;
     expect(within(globalRow).queryByRole("button", { name: "Enable" })).toBeNull();
     expect(within(globalRow).queryByRole("button", { name: "Disable" })).toBeNull();
-    // 右侧只列所选分组（= 生效的工作组）的词条，全局词条在全局分组下查看
+    // 默认展示全局组词条
+    expect(screen.getByText("权力")).not.toBeNull();
+    expect(screen.queryByText("在")).toBeNull();
+    expect(screen.queryByText("成长")).toBeNull();
+    expect(screen.queryByText("覅")).toBeNull();
+    // 切到工作组后展示其词条
+    await user.click(within(workRow).getByRole("button", { name: /工作/ }));
     expect(screen.getByText("在")).not.toBeNull();
     expect(screen.getByText("成长")).not.toBeNull();
-    expect(screen.queryByText("覅")).toBeNull();
     expect(screen.queryByText("权力")).toBeNull();
   });
 
@@ -206,7 +221,7 @@ describe("词库页", () => {
 
     // 方言组行内的“启用”开关
     const row = screen.getByText("方言").closest("div.rounded-lg") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: "Enable" }));
+    await user.click(within(row).getByRole("switch"));
 
     expect(setGroupsMock).toHaveBeenCalledWith("g-dialect", true);
   });
@@ -217,7 +232,7 @@ describe("词库页", () => {
 
     // 工作组行内的“禁用”开关
     const row = screen.getByText("工作").closest("div.rounded-lg") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: "Disable" }));
+    await user.click(within(row).getByRole("switch"));
 
     expect(setGroupsMock).toHaveBeenCalledWith("g-work", false);
   });
@@ -250,6 +265,7 @@ describe("词库页", () => {
   it("词条开关切换调更新命令", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
     await user.click(within(row).getByRole("switch"));
@@ -260,9 +276,10 @@ describe("词库页", () => {
   it("删除词条走二次确认", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: "Delete" }));
+    await user.click(within(row).getByRole("button", { name: /Delete$/ }));
     const dialog = screen.getByRole("alertdialog");
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
@@ -360,12 +377,19 @@ describe("词库页", () => {
   });
 
   it("选中分组行带当前位置标记", async () => {
+    const user = userEvent.setup();
     await renderReady();
 
-    const active = screen.getByRole("button", { name: /工作/ });
-    expect(active.getAttribute("aria-current")).toBe("true");
+    // 默认选中全局组
+    const global = screen.getByRole("button", { name: /Global lexicon/ });
+    expect(global.getAttribute("aria-current")).toBe("true");
     const inactive = screen.getByRole("button", { name: /方言/ });
     expect(inactive.hasAttribute("aria-current")).toBe(false);
+    // 切到工作组后标记跟随
+    await selectWorkGroup(user);
+    const work = screen.getByRole("button", { name: /工作/ });
+    expect(work.getAttribute("aria-current")).toBe("true");
+    expect(global.hasAttribute("aria-current")).toBe(false);
   });
 
   it("新建时输入词面自动填充拼音，手改后不再覆盖", async () => {
@@ -397,6 +421,7 @@ describe("词库页", () => {
   it("空拼音保存时自动填充建议", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     await user.click(screen.getByRole("button", { name: "New entry" }));
     await user.type(screen.getByLabelText(/Word/), "权力");
@@ -417,6 +442,7 @@ describe("词库页", () => {
   it("勾选后批量启用调命令", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
@@ -436,6 +462,7 @@ describe("词库页", () => {
   it("勾选后批量禁用调命令", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
@@ -451,6 +478,7 @@ describe("词库页", () => {
   it("批量删除走二次确认并传选中 id", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
@@ -470,6 +498,7 @@ describe("词库页", () => {
   it("批量复制经二级菜单选目标分组并保持选中", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
@@ -496,6 +525,7 @@ describe("词库页", () => {
   it("批量转移经二级菜单选目标分组并清空选中", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     const row = screen.getByText("成长").closest("div.rounded-lg") as HTMLElement;
     await user.click(within(row).getByRole("checkbox", { name: "成长" }));
@@ -542,6 +572,7 @@ describe("词库页", () => {
       active_group_ids: ["g-work"],
     };
     await renderReady();
+    await selectWorkGroup(user);
 
     await user.click(screen.getByRole("combobox", { name: "Filter" }));
     await waitFor(() => {
@@ -590,6 +621,7 @@ describe("词库页", () => {
       active_group_ids: ["g-work"],
     };
     await renderReady();
+    await selectWorkGroup(user);
 
     await user.click(screen.getByRole("combobox", { name: "Sort" }));
     await waitFor(() => {
@@ -607,6 +639,7 @@ describe("词库页", () => {
   it("选择菜单选中全部可见词条", async () => {
     const user = userEvent.setup();
     await renderReady();
+    await selectWorkGroup(user);
 
     await user.click(screen.getByRole("button", { name: "Selection" }));
     await waitFor(() => {
@@ -623,7 +656,8 @@ describe("词库页", () => {
     const user = userEvent.setup();
     await renderReady();
 
-    // 无需事先选中：直接打开选择菜单清空整组
+    // 先切到工作组再清空整组
+    await selectWorkGroup(user);
     await user.click(screen.getByRole("button", { name: "Selection" }));
     await waitFor(() => {
       expect(screen.getByText("Clear all entries")).not.toBeNull();
@@ -632,20 +666,19 @@ describe("词库页", () => {
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText("Clear all entries?")).not.toBeNull();
-    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: m.lexicon_delete_all_entries({ count: 2 }) }),
+    );
 
     expect(batchDeleteMock).toHaveBeenCalledWith(["w-w1", "w-w2"]);
   });
 
-  it("选择菜单打开批量添加弹窗", async () => {
+  it("批量添加按钮打开批量添加弹窗", async () => {
     const user = userEvent.setup();
     await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Selection" }));
-    await waitFor(() => {
-      expect(screen.getByText("Add entries in bulk")).not.toBeNull();
-    });
-    await user.click(screen.getByText("Add entries in bulk"));
+    await selectWorkGroup(user);
+    await user.click(screen.getByRole("button", { name: /Batch add/ }));
 
     await waitFor(() => {
       expect(screen.getByText(/Separate entries with spaces/)).not.toBeNull();
@@ -660,11 +693,8 @@ describe("词库页", () => {
     );
     await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "Selection" }));
-    await waitFor(() => {
-      expect(screen.getByText("Add entries in bulk")).not.toBeNull();
-    });
-    await user.click(screen.getByText("Add entries in bulk"));
+    await selectWorkGroup(user);
+    await user.click(screen.getByRole("button", { name: /Batch add/ }));
 
     // 成长已在工作组存在（同词同音跳过），测试为新词
     await user.type(screen.getByLabelText("Entry list"), "成长 测试");
@@ -687,16 +717,14 @@ describe("词库页", () => {
     await renderReady();
 
     await user.click(screen.getByRole("button", { name: "New entry" }));
-    await user.type(screen.getByLabelText(/Word/), "在");
-    // 等自动拼音回填后手工改成存量读音，构造词音双命中
+    await user.type(screen.getByLabelText(/Word/), "权力");
+    // 等自动拼音回填：全局组已存在同词同音，构成重复
     await waitFor(
       () => {
         expect((screen.getByLabelText(/Pinyin/) as HTMLInputElement).value).toBe("quan li");
       },
       { timeout: 3000 },
     );
-    await user.clear(screen.getByLabelText(/Pinyin/));
-    await user.type(screen.getByLabelText(/Pinyin/), "zai");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(createEntryMock).not.toHaveBeenCalled();

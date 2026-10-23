@@ -117,7 +117,7 @@
 </script>
 
 <Dialog bind:open>
-  <DialogContent aria-label={m.lexicon_batch_add()} class="sm:max-w-xl">
+  <DialogContent aria-label={m.lexicon_batch_add()} class="sm:max-w-2xl">
     <DialogHeader>
       <DialogTitle>{m.lexicon_batch_add()}</DialogTitle>
       <DialogDescription>{m.lexicon_batch_add_hint()}</DialogDescription>
@@ -137,10 +137,12 @@
         />
       </label>
       {#if batchCapped.length > 0 && !batchReady}
-        <p class="text-sm text-muted-foreground">{m.lexicon_batch_add_resolving()}</p>
+        <p class="text-sm text-muted-foreground" aria-live="polite">
+          {m.lexicon_batch_add_resolving()}
+        </p>
       {/if}
       {#if batchReady}
-        <p class="text-sm text-muted-foreground">
+        <p class="text-sm text-muted-foreground" aria-live="polite">
           {m.lexicon_batch_add_preview({ count: batchNewCount, skipped: batchSkipCount })}
         </p>
       {/if}
