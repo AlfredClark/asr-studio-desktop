@@ -6,6 +6,7 @@
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { Badge } from "#components/shadcn-svelte/badge";
+  import { Button } from "#components/shadcn-svelte/button";
   import { Card, CardContent, CardHeader, CardTitle } from "#components/shadcn-svelte/card";
   import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import {
@@ -30,7 +31,7 @@
     startService,
     stopService,
   } from "#libs/hooks/service.svelte";
-  import { lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
+  import { groupLabel, lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
   import { directiveState, refreshDirectives } from "#libs/hooks/directives.svelte";
   import HomeOnboardingStep from "./_components/home-onboarding-step.svelte";
   import HomeStatusCard from "./_components/home-status-card.svelte";
@@ -59,6 +60,27 @@
   const directiveTotal = $derived(directiveState.value.length);
   const directiveEnabled = $derived(
     directiveState.value.filter((directive) => directive.enabled).length,
+  );
+
+  /** 选中模型展示名：与服务卡下拉同源，无选中回落空 */
+  const selectedModelName = $derived(
+    serviceState.models.find((entry) => entry.id === serviceState.selectedModel)?.display_name ??
+      "",
+  );
+
+  /** 生效中的分组名（前 2 个，超了记数）：与词库页同口径 */
+  const activeGroupNames = $derived.by(() => {
+    const names = lexiconState.value.groups
+      .filter((group) => lexiconState.value.active_group_ids.includes(group.id))
+      .map((group) => groupLabel(group))
+      .filter((name) => name !== "");
+    const shown = names.slice(0, 2).join(", ");
+    return names.length > 2 ? `${shown} +${names.length - 2}` : shown;
+  });
+
+  /** 首个已启用指令名：无启用不渲染第二行 */
+  const firstEnabledDirective = $derived(
+    directiveState.value.find((directive) => directive.enabled)?.name ?? "",
   );
 
   /** 会话识别记录：不截断，卡内滚动查看 */
@@ -163,7 +185,10 @@
       </Card>
     </div>
   {:else}
-    <div class="flex h-full flex-col gap-4 overflow-hidden p-4" data-testid="home-workspace">
+    <div
+      class="mx-auto flex h-full w-full max-w-5xl flex-col gap-4 overflow-hidden p-4"
+      data-testid="home-workspace"
+    >
       <div class="grid shrink-0 grid-cols-1 gap-4">
         <HomeStatusCard
           title={m.nav_service()}
@@ -264,6 +289,11 @@
               {m.home_models_none()}
             {/if}
           </p>
+          {#if selectedModelName !== ""}
+            <p class="truncate text-sm text-muted-foreground">
+              {m.home_models_selected({ name: selectedModelName })}
+            </p>
+          {/if}
         </HomeStatusCard>
         <HomeStatusCard
           title={m.nav_lexicon()}
@@ -274,6 +304,11 @@
             {m.home_lexicon_groups({ total: lexiconGroupTotal })} ·
             {m.home_lexicon_entries({ total: lexiconEntryTotal })}
           </p>
+          {#if activeGroupNames !== ""}
+            <p class="truncate text-sm text-muted-foreground">
+              {m.home_lexicon_active({ names: activeGroupNames })}
+            </p>
+          {/if}
         </HomeStatusCard>
         <HomeStatusCard
           title={m.nav_directives()}
@@ -283,6 +318,9 @@
           <p class="text-sm tabular-nums">
             {m.home_directives_summary({ enabled: directiveEnabled, total: directiveTotal })}
           </p>
+          {#if firstEnabledDirective !== ""}
+            <p class="truncate text-sm text-muted-foreground">{firstEnabledDirective}</p>
+          {/if}
         </HomeStatusCard>
       </div>
       <Card class="min-h-0 flex-1">
@@ -296,7 +334,13 @@
         </CardHeader>
         <CardContent class="flex min-h-0 flex-1 flex-col">
           {#if records.length === 0}
-            <p class="text-sm text-muted-foreground">{m.home_recent_empty()}</p>
+            <div class="flex flex-col items-start gap-2">
+              <p class="text-sm text-muted-foreground">{m.home_recent_empty()}</p>
+              <p class="text-xs text-muted-foreground">{m.home_recent_session()}</p>
+              <Button size="sm" variant="outline" onclick={() => void goto(resolve("/service"))}>
+                {m.home_step3_action()}
+              </Button>
+            </div>
           {:else}
             <ScrollArea class="min-h-0 flex-1">
               <ul class="flex flex-col gap-1.5 pr-1">

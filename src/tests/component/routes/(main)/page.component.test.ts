@@ -96,10 +96,14 @@ vi.mock("#libs/hooks/service.svelte", async (importOriginal) => {
     selectDevice: selectDeviceMock,
   };
 });
-vi.mock("#libs/hooks/lexicon.svelte", () => ({
-  lexiconState: lexiconStateMock,
-  refreshLexicon: refreshLexiconMock,
-}));
+vi.mock("#libs/hooks/lexicon.svelte", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#libs/hooks/lexicon.svelte")>();
+  return {
+    ...actual,
+    lexiconState: lexiconStateMock,
+    refreshLexicon: refreshLexiconMock,
+  };
+});
 vi.mock("#libs/hooks/directives.svelte", () => ({
   directiveState: directiveStateMock,
   refreshDirectives: refreshDirectivesMock,
@@ -178,6 +182,7 @@ describe("首页工作台", () => {
   });
 
   it("就绪后显示四状态卡与计数", async () => {
+    const user = userEvent.setup();
     modelsStateMock.entries = [readyEntry];
     serviceStateMock.models = [readyEntry];
     serviceStateMock.selectedModel = readyEntry.id;
@@ -205,7 +210,7 @@ describe("首页工作台", () => {
           enabled: false,
         },
       ],
-      active_group_ids: [],
+      active_group_ids: ["g-work"],
     };
     directiveStateMock.value = [directive("d-1", true), directive("d-2", false)];
     render(Page);
@@ -220,7 +225,14 @@ describe("首页工作台", () => {
     expect(
       within(workspace).getByText(m.home_directives_summary({ enabled: 1, total: 2 })),
     ).not.toBeNull();
+    // 新增第二行：生效分组名、首个启用指令名、选中模型名（下拉选中值同名出现两次）
+    expect(within(workspace).getByText(/工作/)).not.toBeNull();
+    expect(within(workspace).getByText("d-1")).not.toBeNull();
+    expect(within(workspace).getAllByText(new RegExp(readyEntry.display_name))).toHaveLength(2);
     expect(within(workspace).getByText(m.home_recent_empty())).not.toBeNull();
+    expect(within(workspace).getByText(m.home_recent_session())).not.toBeNull();
+    await user.click(within(workspace).getByRole("button", { name: m.home_step3_action() }));
+    expect(gotoMock).toHaveBeenCalledWith("/service");
   });
 
   it("停止态点启动调服务启动", async () => {
@@ -252,7 +264,9 @@ describe("首页工作台", () => {
     serviceStateMock.status = { state: "running", modelId: readyEntry.id, loadMs: 800 };
     render(Page);
     const workspace = await screen.findByTestId("home-workspace");
-    expect(within(workspace).getByText(readyEntry.display_name)).not.toBeNull();
+    expect(within(workspace).getAllByText(readyEntry.display_name).length).toBeGreaterThanOrEqual(
+      1,
+    );
     await user.click(within(workspace).getByRole("button", { name: m.service_stop() }));
     expect(stopServiceMock).toHaveBeenCalledOnce();
   });
@@ -298,7 +312,10 @@ describe("首页工作台", () => {
     expect(
       within(workspace).getByRole("combobox", { name: m.service_output_label() }),
     ).not.toBeNull();
-    expect(within(workspace).getByText(readyEntry.display_name)).not.toBeNull();
+    // 下拉选中值与模型卡第二行同名
+    expect(within(workspace).getAllByText(readyEntry.display_name).length).toBeGreaterThanOrEqual(
+      1,
+    );
   });
 
   it("输出下拉切换调更新配置", async () => {
