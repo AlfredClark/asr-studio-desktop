@@ -30,7 +30,7 @@ web
 - **平台与分发**：仅桌面三平台（Windows / macOS / Linux），打包目标 deb / AppImage / rpm / app / dmg / msi / nsis；自动更新对接 GitHub Releases `latest.json`。
 - **开发工作流**：`pnpm`（Node ≥ 24、pnpm@12.14.0）+ 锁定 Rust 工具链；日常入口 `pnpm tauri:dev` / `pnpm format` / `pnpm validate`；提交走 Conventional Commits（英文、小写），手动提交；CI（`ci.yml`）与发布（`release.yml`）已就位。
 - **初始化流程**：改名、换协议、换更新密钥、换图标、文档收尾、验收矩阵已按初始化方案执行，见初始化提交。
-- **评估面**：README（en）+ `docs/README_zh-CN.md`、`docs/ARCHITECTURE.md` / `docs/WORKFLOW.md`，以及运行中的应用本身（`/` 工作台、`/models`、`/settings`、`/about`）。
+- **评估面**：`README.md`（简体中文）+ `docs/README_en.md`、`docs/ARCHITECTURE.md` / `docs/WORKFLOW.md`，以及运行中的应用本身（`/` 工作台、`/service`、`/models`、`/lexicon`、`/directives`、`/settings`、`/about`）。
 - **页面分工**（已确认）：`/` 工作台承载录音与结果；`/models` 承载模型获取；`/settings` 承载通用、外观与推送偏好；`/about` 承载信息 / 诊断 / 更新；四页改动后必须仍然真实可用。
 
 ## Capabilities and Constraints
@@ -58,12 +58,12 @@ web
 
 - 名称：仓库 / 包名 `asr-studio-desktop`，展示名 `ASR Studio`。
 - 标识：波形图标（`src-tauri/app-icon.svg` 与内联 `app-icon.svelte` 同源几何），页脚只留版权行（`© {year} Alfred Clark. All rights reserved`）。
-- 声音与语气：技术、精确、直接；README 英文为主 + 简体中文镜像（`docs/README_zh-CN.md`），文档中的术语与代码标识符保留英文。
+- 声音与语气：技术、精确、直接；README 简体中文为主 + 英文镜像（`docs/README_en.md`），文档中的术语与代码标识符保留英文。
 - 字体：Geist Variable 为默认界面字体（可被用户系统字体偏好覆盖）。
 
 ## Evidence on Hand
 
-- `README.md` + `docs/README_zh-CN.md`：功能清单、快速开始、页面一览、配置说明。
+- `README.md` + `docs/README_en.md`：功能清单、快速开始、页面一览、配置说明。
 - `docs/ARCHITECTURE.md`（结构、分层、设计不变量）与 `docs/WORKFLOW.md`（命令契约、i18n、CI、验证矩阵）。
 - 初始化方案与验收矩阵（已执行，见初始化提交）。
 - 可用模型以实际集成为准，本文不列具体名。

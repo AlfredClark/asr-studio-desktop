@@ -74,7 +74,7 @@ asr-studio-desktop/
 │   ├── build.rs                    # tauri-build 构建脚本
 │   ├── tauri.conf.json             # 窗口 / CSP / 打包目标 / updater 配置
 │   └── Cargo.toml                  # 后端依赖与 crate 元信息
-├── docs/                           # ARCHITECTURE.md（本文件）、WORKFLOW.md（命令与流程）、README_zh-CN.md
+├── docs/                           # ARCHITECTURE.md（本文件）、WORKFLOW.md（命令与流程）、README_en.md（英文版）
 ├── static/                         # 原样拷贝到产物根目录的资源（favicon.png）
 ├── .github/workflows/              # ci.yml（质量门禁）、release.yml（打包发布）
 ├── Cargo.toml                      # 虚拟工作区 + 全局 lints / profile
