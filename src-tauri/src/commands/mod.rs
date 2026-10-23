@@ -52,6 +52,7 @@ macro_rules! collect_commands {
             $crate::commands::directives::update_directive,
             $crate::commands::directives::delete_directive,
             $crate::commands::directives::move_directive,
+            $crate::commands::directives::move_directive_to,
             $crate::commands::directives::replay_directive,
             $crate::commands::lexicon::suggest_lexicon_pinyin,
             $crate::commands::lexicon::export_lexicon_group,

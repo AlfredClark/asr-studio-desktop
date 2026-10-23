@@ -1,13 +1,12 @@
 <script lang="ts">
-  // 指令列表项：选中态按钮 + 启用徽标 + 图标操作（启用切换 / 编辑 / 更多）。
-  // 更多菜单沿用词库分组的 DropdownMenu 写法（上移 / 下移 / 删除，触顶触底禁用）。
+  // 指令列表项：选中态按钮 + 启用徽标 + 开关 / 编辑 / 拖拽手柄 / 删除，全常驻。
+  // 排序走拖拽（手柄 mousedown 后行可拖）；键盘聚焦手柄按上下键单步移动。
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
-  import PlayIcon from "@lucide/svelte/icons/play";
-  import CheckIcon from "@lucide/svelte/icons/check";
+  import { Switch } from "#components/shadcn-svelte/switch";
+  import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
   import PencilIcon from "@lucide/svelte/icons/pencil";
-  import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
-  import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
+  import TrashIcon from "@lucide/svelte/icons/trash-2";
   import { cn } from "#libs/utils/shadcn-svelte";
   import type { Directive } from "#libs/commands/types";
   import { m } from "#libs/i18n/paraglide/messages";
@@ -15,27 +14,29 @@
   let {
     directive,
     selected,
-    isFirst,
-    isLast,
     onSelect,
     onToggle,
     onEdit,
     onMove,
     onDelete,
+    onGripReady,
+    onGripCancel,
   }: {
     directive: Directive;
     selected: boolean;
-    isFirst: boolean;
-    isLast: boolean;
     onSelect: () => void;
     onToggle: () => void;
     onEdit: () => void;
     onMove: (direction: "up" | "down") => void;
     onDelete: () => void;
+    /** 手柄按下：通知页武装本行拖拽（`draggable` 由页按行开关） */
+    onGripReady: () => void;
+    /** 手柄松开（未拖拽）：解除武装，避免整行可拖 */
+    onGripCancel: () => void;
   } = $props();
 </script>
 
-<div class="rounded-lg px-1 py-1">
+<div class="group rounded-lg px-1 py-1">
   <div class="flex items-center gap-1">
     <Button
       variant={selected ? "secondary" : "ghost"}
@@ -45,26 +46,35 @@
     >
       <span class="min-w-0 flex-1 truncate text-left text-sm">
         {directive.name}
-        <span class="text-muted-foreground"> · {directive.trigger_text}</span>
-        <span class="text-muted-foreground tabular-nums"> ({directive.actions.length})</span>
       </span>
       {#if directive.enabled}
         <Badge>{m.directives_enabled()}</Badge>
       {/if}
     </Button>
-    <Button
-      variant={directive.enabled ? "secondary" : "ghost"}
-      size="icon-sm"
-      onclick={onToggle}
-      aria-pressed={directive.enabled}
+    <Switch
+      checked={directive.enabled}
+      onCheckedChange={onToggle}
       aria-label={directive.enabled ? m.directives_disable() : m.directives_enable()}
-      title={directive.enabled ? m.directives_disable() : m.directives_enable()}
+    />
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      class="cursor-grab active:cursor-grabbing"
+      onmousedown={onGripReady}
+      onmouseup={onGripCancel}
+      onkeydown={(event) => {
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          onMove("up");
+        } else if (event.key === "ArrowDown") {
+          event.preventDefault();
+          onMove("down");
+        }
+      }}
+      aria-label={m.directives_reorder()}
+      title={m.directives_reorder()}
     >
-      {#if directive.enabled}
-        <CheckIcon />
-      {:else}
-        <PlayIcon />
-      {/if}
+      <GripVerticalIcon />
     </Button>
     <Button
       variant="ghost"
@@ -75,46 +85,14 @@
     >
       <PencilIcon />
     </Button>
-    <DropdownMenuPrimitive.Root>
-      <DropdownMenuPrimitive.Trigger>
-        {#snippet child({ props })}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            {...props}
-            aria-label={m.directives_more_actions()}
-            title={m.directives_more_actions()}
-          >
-            <EllipsisIcon />
-          </Button>
-        {/snippet}
-      </DropdownMenuPrimitive.Trigger>
-      <DropdownMenuPrimitive.Content
-        align="end"
-        sideOffset={4}
-        class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
-      >
-        <DropdownMenuPrimitive.Item
-          class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-          disabled={isFirst}
-          onSelect={() => onMove("up")}
-        >
-          {m.directives_move_up()}
-        </DropdownMenuPrimitive.Item>
-        <DropdownMenuPrimitive.Item
-          class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-          disabled={isLast}
-          onSelect={() => onMove("down")}
-        >
-          {m.directives_move_down()}
-        </DropdownMenuPrimitive.Item>
-        <DropdownMenuPrimitive.Item
-          class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-          onSelect={onDelete}
-        >
-          {m.directives_delete()}
-        </DropdownMenuPrimitive.Item>
-      </DropdownMenuPrimitive.Content>
-    </DropdownMenuPrimitive.Root>
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      onclick={onDelete}
+      aria-label={m.directives_delete()}
+      title={m.directives_delete()}
+    >
+      <TrashIcon />
+    </Button>
   </div>
 </div>

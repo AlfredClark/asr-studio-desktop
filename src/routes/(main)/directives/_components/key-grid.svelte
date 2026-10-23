@@ -20,6 +20,8 @@
     currentKey = null,
     interactive = false,
     onRecord,
+    onPressStart,
+    onPressEnd,
   }: {
     /** 填充高亮的键集合（父组件按需重建实例以触发更新） */
     heldKeys: Set<string>;
@@ -31,6 +33,10 @@
     interactive?: boolean;
     /** 点击键帽回调，仅交互模式调用 */
     onRecord?: (key: string) => void;
+    /** 按下键帽回调（按住录制用），仅交互模式调用 */
+    onPressStart?: (key: string) => void;
+    /** 松开键帽回调（按住录制用），仅交互模式调用 */
+    onPressEnd?: (key: string) => void;
   } = $props();
 
   /** 当前平台（小写）：仅交互模式拉取，用于禁用本平台不支持的键 */
@@ -85,6 +91,20 @@
     )}
     {style}
     onclick={() => handleCap(cap)}
+    onmousedown={() => {
+      if (interactive) onPressStart?.(cap.id);
+    }}
+    onmouseup={() => {
+      if (interactive) onPressEnd?.(cap.id);
+    }}
+    onkeydown={(event) => {
+      if (!interactive || event.repeat) return;
+      if (event.key === "Enter" || event.key === " ") onPressStart?.(cap.id);
+    }}
+    onkeyup={(event) => {
+      if (!interactive) return;
+      if (event.key === "Enter" || event.key === " ") onPressEnd?.(cap.id);
+    }}
     disabled={!interactive || unsupported}
     aria-pressed={pressed}
     aria-label={keyLabel(cap.id)}

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { Directive } from "#libs/commands/types";
 import Page from "../../../../../routes/(main)/directives/+page.svelte";
@@ -29,6 +29,7 @@ const createMock = vi.hoisted(() => vi.fn());
 const updateMock = vi.hoisted(() => vi.fn());
 const deleteMock = vi.hoisted(() => vi.fn());
 const moveMock = vi.hoisted(() => vi.fn());
+const moveToMock = vi.hoisted(() => vi.fn());
 const enableMock = vi.hoisted(() => vi.fn());
 const suggestMock = vi.hoisted(() => vi.fn());
 const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
@@ -61,6 +62,7 @@ vi.mock("#libs/hooks/directives.svelte", async (importOriginal) => {
     updateDirective: updateMock,
     deleteDirective: deleteMock,
     moveDirective: moveMock,
+    moveDirectiveTo: moveToMock,
     setDirectiveEnabled: enableMock,
     suggestDirectivePinyin: suggestMock,
   };
@@ -79,6 +81,7 @@ beforeEach(() => {
   updateMock.mockResolvedValue(true);
   deleteMock.mockResolvedValue(true);
   moveMock.mockResolvedValue(true);
+  moveToMock.mockResolvedValue(true);
   enableMock.mockResolvedValue(true);
   suggestMock.mockResolvedValue("fu zhi");
 });
@@ -126,11 +129,62 @@ describe("指令页", () => {
     expect(screen.getAllByText("打开计算器").length).toBeGreaterThan(0);
   });
 
+  it("演示暂停后可手动步进且首尾循环", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "Pause preview" }));
+
+    // 4 个事件 + 空态共 5 态：从任意位置出发，前进 5 次必回原点
+    const order = ["0 of 4", "1 of 4", "2 of 4", "3 of 4", "4 of 4"];
+    const stepText = (): string => screen.getByText(/\d of 4/).textContent ?? "";
+    const start = stepText();
+    expect(order).toContain(start);
+    const forward = screen.getByRole("button", { name: "Step forward" });
+    for (let i = 0; i < 5; i += 1) await user.click(forward);
+    expect(stepText()).toBe(start);
+    // 再进一步：走到循环下一态
+    await user.click(forward);
+    expect(stepText()).toBe(order[(order.indexOf(start) + 1) % order.length]);
+
+    // 后退同样回绕：回到起点
+    const back = screen.getByRole("button", { name: "Step back" });
+    await user.click(back);
+    expect(stepText()).toBe(start);
+  });
+
+  it("拖拽手柄排序透传目标序号", async () => {
+    await renderReady();
+
+    const grips = screen.getAllByRole("button", { name: "Drag to reorder" });
+    // 手柄按下武装首行：包装器变为可拖拽
+    fireEvent.mouseDown(grips[0]);
+    const firstRow = grips[0].closest("div.relative") as HTMLElement;
+    expect(firstRow.getAttribute("draggable")).toBe("true");
+
+    // 拖首行到次行下半：目标序号 = 1 + 1 - 1（源在上扣除移除位移）
+    fireEvent.dragStart(firstRow);
+    const secondRow = grips[1].closest("div.relative") as HTMLElement;
+    fireEvent.dragOver(secondRow);
+    fireEvent.drop(secondRow);
+
+    expect(moveToMock).toHaveBeenCalledWith("d-1", 1);
+  });
+
+  it("手柄键盘方向键单步移动", async () => {
+    await renderReady();
+
+    const grips = screen.getAllByRole("button", { name: "Drag to reorder" });
+    fireEvent.keyDown(grips[0], { key: "ArrowDown" });
+
+    expect(moveMock).toHaveBeenCalledWith("d-1", "down");
+  });
+
   it("启用切换透传", async () => {
     const user = userEvent.setup();
     await renderReady();
 
-    const toggles = screen.getAllByRole("button", { name: "Disable" });
+    const toggles = screen.getAllByRole("switch", { name: "Disable" });
     await user.click(toggles[0]);
 
     expect(enableMock).toHaveBeenCalledWith("d-1", false);
@@ -140,30 +194,72 @@ describe("指令页", () => {
     const user = userEvent.setup();
     await renderReady();
 
-    const menus = screen.getAllByRole("button", { name: "More actions" });
-    await user.click(menus[0]);
-    await waitFor(() => {
-      expect(screen.getByText("Delete")).not.toBeNull();
-    });
-    await user.click(screen.getByText("Delete"));
+    const deletes = screen.getAllByRole("button", { name: "Delete" });
+    await user.click(deletes[0]);
 
     const dialog = screen.getByRole("alertdialog");
     expect(dialog).not.toBeNull();
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     expect(deleteMock).toHaveBeenCalledWith("d-1");
   });
 
-  it("新建弹窗录制按键并清空复位", async () => {
+  /** 新建弹窗走到按键步：填触发词后下一步 */
+  async function gotoKeysStep(
+    user: ReturnType<typeof userEvent.setup>,
+  ): Promise<ReturnType<typeof within>> {
+    await user.click(screen.getByRole("button", { name: "New directive" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Next" })).not.toBeNull();
+    });
+    const dialog = screen.getByRole("dialog");
+    const dialogScope = within(dialog);
+    await user.type(dialogScope.getByLabelText("Name"), "复制");
+    await user.type(dialogScope.getByLabelText("Trigger text"), "复制");
+    await user.click(dialogScope.getByRole("button", { name: "Next" }));
+    await waitFor(() => {
+      expect(dialogScope.getByText("Action sequence (0)")).not.toBeNull();
+    });
+    return dialogScope;
+  }
+
+  it("第一步空字段下一步拦截并内联报错", async () => {
     const user = userEvent.setup();
     await renderReady();
 
     await user.click(screen.getByRole("button", { name: "New directive" }));
     await waitFor(() => {
-      expect(screen.getByText("Action sequence (0)")).not.toBeNull();
+      expect(screen.getByRole("button", { name: "Next" })).not.toBeNull();
     });
-    const dialog = screen.getByRole("dialog");
-    const dialogScope = within(dialog);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(screen.getByText("Name is required")).not.toBeNull();
+    expect(screen.getByText("Trigger text is required")).not.toBeNull();
+    // 未进入按键步
+    expect(screen.queryByText("Action sequence (0)")).toBeNull();
+  });
+
+  it("按住模式 mousedown 按下 mouseup 松开", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+    const dialogScope = await gotoKeysStep(user);
+
+    const ctrl = dialogScope.getAllByRole("button", { name: "Ctrl" })[0];
+    expect(ctrl.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.mouseDown(ctrl);
+    expect(ctrl.getAttribute("aria-pressed")).toBe("true");
+    expect(dialogScope.getByText("1. Ctrl ↓")).not.toBeNull();
+    fireEvent.mouseUp(ctrl);
+    expect(ctrl.getAttribute("aria-pressed")).toBe("false");
+    expect(dialogScope.getByText("2. Ctrl ↑")).not.toBeNull();
+  });
+
+  it("点按模式交替按下松开并清空复位", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+    const dialogScope = await gotoKeysStep(user);
+
+    await user.click(dialogScope.getByRole("button", { name: "Tap to toggle" }));
 
     const ctrl = dialogScope.getAllByRole("button", { name: "Ctrl" })[0];
     expect(ctrl.getAttribute("aria-pressed")).toBe("false");
@@ -179,21 +275,31 @@ describe("指令页", () => {
     expect(ctrl.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("单颗事件可独立移除", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+    const dialogScope = await gotoKeysStep(user);
+
+    await user.click(dialogScope.getByRole("button", { name: "Tap to toggle" }));
+    await user.click(dialogScope.getAllByRole("button", { name: "Ctrl" })[0]);
+    await user.click(dialogScope.getByRole("button", { name: "C" }));
+    expect(dialogScope.getByText("2. C ↓")).not.toBeNull();
+
+    await user.click(dialogScope.getAllByRole("button", { name: "Remove this event" })[0]);
+    expect(dialogScope.queryByText("1. Ctrl ↓")).toBeNull();
+    expect(dialogScope.getByText("1. C ↓")).not.toBeNull();
+  });
+
   it("未闭合时自动闭合按钮按序补松开", async () => {
     const user = userEvent.setup();
     await renderReady();
-
-    await user.click(screen.getByRole("button", { name: "New directive" }));
-    await waitFor(() => {
-      expect(screen.getByText("Action sequence (0)")).not.toBeNull();
-    });
-    const dialog = screen.getByRole("dialog");
-    const dialogScope = within(dialog);
+    const dialogScope = await gotoKeysStep(user);
 
     // 空序列不展示自动闭合
     expect(dialogScope.queryByRole("button", { name: "Auto release" })).toBeNull();
 
-    // 录 Ctrl + C：两键按住未放
+    // 切点按模式录 Ctrl + C：两键按住未放
+    await user.click(dialogScope.getByRole("button", { name: "Tap to toggle" }));
     await user.click(dialogScope.getAllByRole("button", { name: "Ctrl" })[0]);
     await user.click(dialogScope.getByRole("button", { name: "C" }));
     expect(dialogScope.getByText("2. C ↓")).not.toBeNull();
@@ -209,17 +315,18 @@ describe("指令页", () => {
   it("保存新建透传全部字段", async () => {
     const user = userEvent.setup();
     await renderReady();
+    const dialogScope = await gotoKeysStep(user);
 
-    await user.click(screen.getByRole("button", { name: "New directive" }));
+    // 点按模式录一对按放，经确认步保存
+    await user.click(dialogScope.getByRole("button", { name: "Tap to toggle" }));
+    const ctrls = dialogScope.getAllByRole("button", { name: "Ctrl" });
+    await user.click(ctrls[0]);
+    await user.click(ctrls[0]);
+    await user.click(dialogScope.getByRole("button", { name: "Next" }));
     await waitFor(() => {
-      expect(screen.getByText("Action sequence (0)")).not.toBeNull();
+      expect(dialogScope.getByRole("button", { name: "Save" })).not.toBeNull();
     });
-    await user.type(screen.getByLabelText("Name"), "复制");
-    await user.type(screen.getByLabelText("Trigger text"), "复制");
-    const ctrls = screen.getAllByRole("button", { name: "Ctrl" });
-    await user.click(ctrls[0]);
-    await user.click(ctrls[0]);
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(dialogScope.getByRole("button", { name: "Save" }));
 
     expect(createMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -239,18 +346,19 @@ describe("指令页", () => {
 
     await user.click(screen.getByRole("button", { name: "New directive" }));
     await waitFor(() => {
-      expect(screen.getByText("Action sequence (0)")).not.toBeNull();
+      expect(screen.getByRole("button", { name: "Next" })).not.toBeNull();
     });
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByLabelText("Name"), "重复");
     await user.type(within(dialog).getByLabelText("Trigger text"), "打开记事本");
-    const ctrls = within(dialog).getAllByRole("button", { name: "Ctrl" });
-    await user.click(ctrls[0]);
-    await user.click(ctrls[0]);
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await user.click(within(dialog).getByRole("button", { name: "Next" }));
 
+    // 内联判重，未进入按键步
+    await waitFor(() => {
+      expect(within(dialog).getByText("This trigger text already exists")).not.toBeNull();
+    });
+    expect(within(dialog).queryByText("Action sequence (0)")).toBeNull();
     expect(createMock).not.toHaveBeenCalled();
-    expect(toastMocks.info).toHaveBeenCalled();
   });
 
   it("触发拼音重复时拦截保存", async () => {
@@ -260,17 +368,16 @@ describe("指令页", () => {
 
     await user.click(screen.getByRole("button", { name: "New directive" }));
     await waitFor(() => {
-      expect(screen.getByText("Action sequence (0)")).not.toBeNull();
+      expect(screen.getByRole("button", { name: "Next" })).not.toBeNull();
     });
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByLabelText("Name"), "重复拼音");
     await user.type(within(dialog).getByLabelText("Trigger text"), "全新词");
-    const ctrls = within(dialog).getAllByRole("button", { name: "Ctrl" });
-    await user.click(ctrls[0]);
-    await user.click(ctrls[0]);
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await user.click(within(dialog).getByRole("button", { name: "Next" }));
 
+    await waitFor(() => {
+      expect(within(dialog).getByText("This trigger text already exists")).not.toBeNull();
+    });
     expect(createMock).not.toHaveBeenCalled();
-    expect(toastMocks.info).toHaveBeenCalled();
   });
 });

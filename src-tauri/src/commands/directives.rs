@@ -102,3 +102,11 @@ pub fn move_directive(
 ) -> CommandResult<()> {
     Ok(directives::move_directive(&app, &id, direction)?)
 }
+
+/// 移动指令到指定序号：拖拽排序用；越界钳制
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::needless_pass_by_value)]
+pub fn move_directive_to(app: tauri::AppHandle, id: String, index: u32) -> CommandResult<()> {
+    Ok(directives::move_directive_to(&app, &id, index)?)
+}

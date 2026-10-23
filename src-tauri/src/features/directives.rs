@@ -238,6 +238,28 @@ const fn move_target(len: usize, pos: usize, direction: MoveDirection) -> Option
     }
 }
 
+/// 定点换位核心：移除 `from` 后插入 `to`（越界钳制，原地不动直接返回）；纯函数，可单测
+fn relocate<T>(items: &mut Vec<T>, from: usize, to: usize) {
+    if from >= items.len() || from == to {
+        return;
+    }
+    let item = items.remove(from);
+    let clamped = to.min(items.len());
+    items.insert(clamped, item);
+}
+
+/// 移动指令到指定序号：拖拽排序用；越界钳制，原地不动直接返回
+pub fn move_directive_to(app: &tauri::AppHandle, id: &str, index: u32) -> anyhow::Result<()> {
+    crate::cores::directives::modify(app, |data| {
+        let Some(pos) = data.directives.iter().position(|item| item.id == id) else {
+            anyhow::bail!("unknown directive");
+        };
+        relocate(&mut data.directives, pos, index as usize);
+        Ok(())
+    })?;
+    Ok(())
+}
+
 /// 移动指令：列表内换位；触顶 / 触底原地不动
 pub fn move_directive(
     app: &tauri::AppHandle,
@@ -688,6 +710,21 @@ mod tests {
         assert_eq!(move_target(3, 2, Down), None);
         assert_eq!(move_target(3, 1, Up), Some(0));
         assert_eq!(move_target(1, 0, Down), None);
+    }
+
+    #[test]
+    fn relocate_moves_to_index() {
+        let mut items = vec!["a", "b", "c", "d"];
+        relocate(&mut items, 0, 2);
+        assert_eq!(items, ["b", "c", "a", "d"]);
+        relocate(&mut items, 3, 0);
+        assert_eq!(items, ["d", "b", "c", "a"]);
+        relocate(&mut items, 1, 1);
+        assert_eq!(items, ["d", "b", "c", "a"]);
+        relocate(&mut items, 0, 99);
+        assert_eq!(items, ["b", "c", "a", "d"]);
+        relocate(&mut items, 99, 0);
+        assert_eq!(items, ["b", "c", "a", "d"]);
     }
 
     #[test]

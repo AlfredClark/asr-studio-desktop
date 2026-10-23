@@ -119,6 +119,11 @@ export async function moveDirective(id: string, direction: "up" | "down"): Promi
   return settle(await commands.moveDirective(id, direction).result(), "move directive");
 }
 
+/** 移动指令到指定序号：拖拽排序用；越界后端钳制 */
+export async function moveDirectiveTo(id: string, index: number): Promise<boolean> {
+  return settle(await commands.moveDirectiveTo(id, index).result(), "move directive");
+}
+
 /** 设置指令启用状态 */
 export async function setDirectiveEnabled(id: string, enabled: boolean): Promise<boolean> {
   return updateDirective(id, { enabled });

@@ -87,6 +87,8 @@ export const commands = {
 	deleteDirective: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_directive", { id })),
 	/**  移动指令：列表内换位；触顶 / 触底原地不动 */
 	moveDirective: (id: string, direction: MoveDirection) => typedError<null, CommandError>(__TAURI_INVOKE("move_directive", { id, direction })),
+	/**  移动指令到指定序号：拖拽排序用；越界钳制 */
+	moveDirectiveTo: (id: string, index: number) => typedError<null, CommandError>(__TAURI_INVOKE("move_directive_to", { id, index })),
 	/**
 	 *  回放指令的按键序列：每个事件前等待落盘间隔；调用方静默处理未命中，
 	 *  失败（未知 id / 停用 / 校验失败）走错误上报
