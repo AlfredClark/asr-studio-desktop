@@ -313,6 +313,7 @@
   "directives_interval_hint": "Wait before each key event during replay",
   "directives_enabled_label": "Enabled",
   "directives_editor_hint": "Replay key presses in order when the trigger text matches; click caps to record press/release, the sequence can only be cleared",
+  "directives_key_unsupported": "This key is not supported on the current platform",
   "directives_new_title": "New directive",
   "directives_edit_title": "Edit directive",
   "directives_delete_confirm_title": "Delete directive?",

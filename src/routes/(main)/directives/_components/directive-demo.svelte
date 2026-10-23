@@ -1,9 +1,11 @@
 <script lang="ts">
   // 指令效果演示：只读键盘，按动作序列与触发间隔循环播放。
   // 播完停 3 秒再重播；选中切换或卸载自动取消。`prefers-reduced-motion` 下静态展示。
+  // 版型自适应：量容器宽与键盘自然尺寸做双向等比缩放，缩放不占布局，
+  // 外层按缩放后高度预留空间，窗口 resize（含最大化）与分栏拖拽都经 `bind:clientWidth` 跟进。
   import { SvelteSet } from "svelte/reactivity";
   import type { DirectiveAction } from "#libs/commands/types";
-  import { foldHeldKeys } from "#libs/directives/key-registry";
+  import { fitScale, foldHeldKeys } from "#libs/directives/key-registry";
   import KeyGrid from "./key-grid.svelte";
 
   /** 演示用的动作序列与触发间隔（毫秒） */
@@ -20,6 +22,16 @@
   let currentKey = $state<string | null>(null);
   /** 本轮触发过的键：逐事件累积，轮内保留描边，下一轮开始清空 */
   let visitedKeys = new SvelteSet<string>();
+
+  /** 容器宽与键盘自然尺寸：双向等比缩放 */
+  let containerWidth = $state(0);
+  let naturalWidth = $state(0);
+  let naturalHeight = $state(0);
+
+  /** 内边距（`p-1`）：键帽描边环向外扩 2px，留 4px 呼吸空间避免被裁剪 */
+  const PAD = 4;
+
+  const scale = $derived(fitScale(containerWidth - PAD * 2, naturalWidth));
 
   /** 是否允许自动播放：减弱动态效果偏好下静态展示 */
   function motionAllowed(): boolean {
@@ -68,6 +80,20 @@
   });
 </script>
 
-<div class="overflow-x-auto" data-testid="directive-demo" aria-hidden="true">
-  <KeyGrid {heldKeys} markedKeys={visitedKeys} {currentKey} />
+<div
+  class="overflow-hidden p-1"
+  data-testid="directive-demo"
+  aria-hidden="true"
+  bind:clientWidth={containerWidth}
+>
+  <div style:height={naturalHeight > 0 ? `${naturalHeight * scale}px` : null}>
+    <div
+      class="w-max origin-top-left"
+      style:transform={`scale(${scale})`}
+      bind:clientWidth={naturalWidth}
+      bind:clientHeight={naturalHeight}
+    >
+      <KeyGrid {heldKeys} markedKeys={visitedKeys} {currentKey} />
+    </div>
+  </div>
 </div>

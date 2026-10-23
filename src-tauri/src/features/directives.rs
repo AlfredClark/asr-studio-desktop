@@ -268,7 +268,8 @@ pub struct ReplayReport {
 /// enigo 的 `Key` 变体按平台裁剪：字母 / 数字 / `OEM*` 标点只在 Windows 存在，
 /// `PrintScr` 等只在 Windows 与 Unix（非 macOS）存在，
 /// 非 Windows 经 `Unicode` 注入（与粘贴通道同口径，修饰键组合有效）；
-/// 修饰键就近归并（`LWin/RWin → Meta`，`RMenu → Alt`），无归并目标（如 `Apps`）直接不支持。
+/// 修饰键就近归并（`LWin/RWin → Meta`，`RMenu → Alt`），无归并目标（如 `Apps`）直接不支持；
+/// 小键盘回车（enigo 无专有变体）归并到主回车，`ScrollLock` 在 Windows 下归并到 `Scroll`。
 /// 纯函数，可单测（单测跑在本机平台，只断言本平台口径）
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn enigo_key(id: &str) -> Option<enigo::Key> {
@@ -302,7 +303,8 @@ fn enigo_key_common(id: &str) -> Option<enigo::Key> {
         "Backspace" => K::Backspace,
         "Tab" => K::Tab,
         "CapsLock" => K::CapsLock,
-        "Return" => K::Return,
+        // 小键盘回车：enigo 无专有变体，与主回车同效，全平台可回放
+        "Return" | "NumpadEnter" => K::Return,
         "Space" => K::Space,
         "Delete" => K::Delete,
         "Home" => K::Home,
@@ -396,6 +398,8 @@ fn enigo_key_platform(id: &str) -> Option<enigo::Key> {
         "Insert" => K::Insert,
         "Numlock" => K::Numlock,
         "Pause" => K::Pause,
+        // `ScrollLock`：enigo 在 Windows 下只有 `Scroll` 变体，归并至此
+        "ScrollLock" => K::Scroll,
         "LMenu" => K::LMenu,
         "LWin" => K::LWin,
         "RWin" => K::RWin,
@@ -720,6 +724,7 @@ mod tests {
             "A",
             "OEM1",
             "Return",
+            "NumpadEnter",
             "Numpad4",
             "LShift",
             "OEMComma",
@@ -749,10 +754,10 @@ mod tests {
         for id in ["PrintScr", "Insert", "Numlock", "Pause"] {
             assert!(enigo_key(id).is_none(), "macOS should not map {id}");
         }
-        // `ScrollLock` 只在 Unix（非 macOS）存在
-        #[cfg(all(unix, not(target_os = "macos")))]
+        // `ScrollLock`：Unix（非 macOS）直映，Windows 归并到 `Scroll`，macOS 无映射
+        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
         assert!(enigo_key("ScrollLock").is_some());
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        #[cfg(target_os = "macos")]
         assert!(enigo_key("ScrollLock").is_none());
         assert!(enigo_key("Nope").is_none());
         // `Apps`（菜单键）无 unix 映射，预检直接拒绝；Windows 直映

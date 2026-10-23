@@ -313,6 +313,7 @@
   "directives_interval_hint": "触发回放时每个按键事件前的等待",
   "directives_enabled_label": "启用",
   "directives_editor_hint": "触发文本命中后按序回放按键；点击键帽录制按下/松开，序列只可清空不可编辑",
+  "directives_key_unsupported": "当前平台不支持该按键",
   "directives_new_title": "新建指令",
   "directives_edit_title": "编辑指令",
   "directives_delete_confirm_title": "删除指令？",
