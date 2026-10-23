@@ -1,6 +1,6 @@
 [package]
 name = "asr-studio-desktop"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Alfred Clark"]
 description = "Local ASR desktop application."

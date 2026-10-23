@@ -42,30 +42,36 @@ asr-studio-desktop/
 │   │   ├── +layout.ts              # ssr = false（SPA 模式）；配置水合不在 load()（invoke 接不进 event.fetch），见 +layout.svelte 挂载期后台水合
 │   │   ├── (main)/                 # 分组路由（括号不进 URL）：常规页面分组，独享布局容器
 │   │   │   ├── +layout.svelte      # 分组布局：LayoutContainer 包裹，特殊页另起分组即可绕开布局
-│   │   │   ├── +page.svelte        # 占位首页：布局骨架验证起点，业务在此开发
+│   │   │   ├── +page.svelte        # 工作台首页：无就绪模型时三步引导，否则状态卡 + 最近识别
+│   │   │   ├── _components/        # 分组共享：首页状态卡与引导步骤（home-status-card / home-onboarding-step）
 │   │   │   ├── about/              # 关于页（应用 / 项目 / 平台分组 + 更新面板；页面组件在 `_components/`）
+│   │   │   ├── directives/         # 指令页（左列表右详情 + 触发词 / 按键 / 确认三步编辑器；104 布局注册表见 `libs/directives/`；页面组件在 `_components/`）
+│   │   │   ├── lexicon/            # 词库页（左分组右词条 + 批量操作；页面组件在 `_components/`）
+│   │   │   ├── models/             # 模型页（下载 / 校验 / 删除；页面组件在 `_components/`）
+│   │   │   ├── service/            # 服务页（启停 / 录制测试 / 输出设置；页面组件在 `_components/`）
 │   │   │   └── settings/           # 完整设置页（通用 + 外观两分组；页面组件在 `_components/`）
 │   │   └── layout.css              # Tailwind v4 入口与 shadcn-svelte 主题令牌（含 .dark 暗色变体与 --app-font-* 外观变量）
 │   │   └── themes.css              # 配色主题令牌（鲜艳系 7 色 + 暗色美学 3 色的浅色 + :root.dark 暗色块，neutral 回落 layout.css）
 │   ├── components/
-│   │   ├── common/                 # 跨页共享的手写组件（error-boundary.svelte 全局渲染兜底，card-section/row.svelte 通用卡片分组与行，confirm-dialog.svelte 通用确认弹窗）
+│   │   ├── common/                 # 跨页共享的手写组件（error-boundary.svelte 全局渲染兜底，card-section/row.svelte 通用卡片分组与行，confirm-dialog.svelte 通用确认弹窗，recognition-record-item.svelte 识别记录行，shortcut-record-row.svelte 快捷键录制行）
 │   │   ├── layout/                 # 布局子系统：layout-container.svelte 容器 + tabs（标题栏/标签栏/内容/底边）、sidebar（侧边栏 + 标题栏/内容/底边）与 dashboard（可收起左侧导航 + 标题栏/内容/底边）实现，新增布局需在 libs/hooks/appearance.svelte.ts 中映射
 │   │   │   └── parts/              # 布局配套部件（title-bar / nav-tabs-bar / side-nav-bar / dashboard-nav-bar / copyright）
 │   │   └── shadcn-svelte/          # CLI 生成的 UI 组件（nova / neutral / lucide），新增走 CLI 添加，勿手动重组
 │   ├── tests/                      # 前端测试集中目录，按源路径镜像：unit/ 纯逻辑（node）+ component/ 组件（jsdom）
 │   └── libs/
 │       ├── commands/               # tauri-specta 契约链（bindings.ts 生成物 + 链式 API 封装）
+│       ├── directives/             # 按键注册表（key-registry.ts：104 布局 / 跨行摆位 / 平台可用性，前端注册表范例）
 │       ├── i18n/                   # Paraglide：messages/ 文案、project.inlang/ 配置、paraglide/ 生成物、locale.svelte.ts 语言响应式桥
 │       ├── navigation/             # 导航等应用级注册表（nav-tabs.ts：路径 / 图标 / 顺序，顶部标签栏与侧边栏导航同源）
-│       ├── utils/                  # 前端通用工具（shadcn-svelte.ts 的 cn()、window-controls.ts、toast.ts、opener.ts）
-│       └── hooks/                  # 前端共享状态（统一经 #libs/hooks 引用），如 appearance.svelte.ts（布局注册表 + 字体偏好）、config.svelte.ts（后端配置内存态）、updater.svelte.ts（更新状态）、is-mobile.svelte.ts（响应式断点）、deep-link.svelte.ts（三路深链入口）、dashboard.svelte.ts（仪表盘侧栏折叠偏好）
+│       ├── utils/                  # 前端通用工具（shadcn-svelte.ts 的 cn()、format.ts 字节格式化、shortcut.ts 快捷键录制、window-controls.ts、toast.ts、opener.ts）
+│       └── hooks/                  # 前端共享状态（统一经 #libs/hooks 引用）：appearance.svelte.ts（布局注册表 + 字体偏好）、config.svelte.ts（后端配置内存态）、directives.svelte.ts（指令表）、lexicon.svelte.ts（词库）、service.svelte.ts（服务与录制）、models.svelte.ts（模型）、updater.svelte.ts（更新状态）、is-mobile.svelte.ts（响应式断点）、deep-link.svelte.ts（三路深链入口）、dashboard.svelte.ts（仪表盘侧栏折叠偏好）
 ├── src-tauri/                      # 后端：Rust（edition 2024）
 │   ├── src/
 │   │   ├── main.rs                 # 二进制入口，仅转发到 lib::run()
 │   │   ├── lib.rs                  # 串联插件注册 → 命令处理器 → 核心初始化
 │   │   ├── commands/               # 命令封装层：薄封装 + collect_commands! 注册
 │   │   ├── cores/                  # 通用能力与跨层共享类型（types / locale / config / deep_link / specta / system / tray / updater / shortcut；不得依赖 features）
-│   │   ├── features/               # 具体业务功能（asr / models / audio / output；可用 Tauri 运行时，只能依赖 cores）
+│   │   ├── features/               # 具体业务功能（asr / audio / directives / focus / lexicon / models / output；可用 Tauri 运行时，只能依赖 cores）
 │   │   └── plugins/                # 各 Tauri 插件的初始化（log / store / opener / updater / autostart / window-state / system-fonts / single-instance / deep-link / clipboard）
 │   ├── locales/                    # rust-i18n 后端文案（按功能分文件，一文件一命名空间：当前 tray.yml 的 tray.*，单文件可内含多 locale 的 en/zh-CN 双写）
 │   ├── app-icon.svg                # 应用图标源（推荐正方形透明底 SVG，标称尺寸任意；PNG 备选 ≥1024；`pnpm tauri:icon` 的输入，换图标时替换本文件）

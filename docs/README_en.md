@@ -10,8 +10,10 @@ A local speech-recognition desktop app built on Tauri v2 + SvelteKit 2 + Svelte 
 - **Recording & transcription**: input device selection, start/stop recording, audio file transcription, cancellation and timeout settlement.
 - **Model management**: on-demand download / cancel / verify / delete, custom model directory, on-disk usage stats.
 - **Lexicon**: group and entry management, batch enable / copy / move / delete, group import/export, pinyin suggestions, quick-add from selected text.
-- **Directives**: replay a key sequence (press/release balance-checked) when trigger text matches, with a 104-key recording keyboard; keys unsupported on the current platform are rejected before replay.
+- **Directives**: replay a key sequence (press/release balance-checked) when trigger text matches; 104-key recording keyboard (hold-to-record / tap-to-toggle), stepped editor, drag-to-reorder and effect preview; keys unsupported on the current platform cannot be recorded and are rejected before replay.
 - **Result output**: IME injection / clipboard / simulated-paste channels switched by config with automatic fallback; a focus pre-check writes straight to the clipboard when no editable focus exists.
+  - Note: the IME injection channel is only verified on real Windows machines.
+  - Note: on Windows, a service hotkey using only Alt+[letter] may fail to output via IME injection due to a Windows limitation; prefer Ctrl / Shift combinations or switch output channels.
 - **Global shortcuts**: voice, quick-lexicon, and directive channels, reconciled against the running service state.
 - **Desktop integration**: system tray, frameless custom title bar, autostart, window-state restore, single-instance focus + deep links (`asr-studio://`).
 - **Auto updates**: wired to the GitHub Releases `latest.json`, with check, download-and-install, and restart.
