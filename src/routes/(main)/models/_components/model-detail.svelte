@@ -1,7 +1,7 @@
 <script lang="ts">
   // 模型详情：标题 + 徽标 + 外链、简介、结构化元信息（体积 / 位置可复制），上方滚动，操作按钮沉底。
-  // 操作按状态收敛：下载中禁用互斥操作；missing 只有下载；partial 可删残留；ready 主行动去服务页。
-  // 删除走二次确认弹窗；前往下载页经网关。目录树默认只展顶层，非就绪节点才挂徽标。
+  // 操作槽位固定：打开目录与重新校验常显，下载仅普通未就绪未指定时显示，末位按指定/状态显示取消指定或删除。
+  // 下载中仅保留取消；删除走二次确认弹窗；前往下载页经网关。目录树默认只展顶层，非就绪节点才挂徽标。
   import { SvelteSet } from "svelte/reactivity";
   import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import ConfirmDialog from "#components/common/confirm-dialog.svelte";
@@ -81,8 +81,17 @@
     Object.keys(modelsState.progress).some((id) => id !== entry.id),
   );
 
-  /** 是否命中用户指定目录：隐藏删除与下载，按钮矩阵据此分支 */
+  /** 是否命中用户指定目录：隐藏删除与下载，末位按钮据此分支 */
   const isCustom = $derived(entry.custom_dir != null);
+
+  /** 下载按钮显隐：普通模型非就绪且未指定目录时显示，手动模型永不显示 */
+  const showDownload = $derived(!entry.manual && !isCustom && entry.status !== "ready");
+
+  /** 取消指定：已指定目录时末位显示 */
+  const showClear = $derived(isCustom);
+
+  /** 删除：未指定目录且非缺失态时末位显示，缺失态无文件可删 */
+  const showDelete = $derived(!isCustom && entry.status !== "missing");
 
   /** 路径行展示值：指定目录优先（缺失态 `local_path` 为空时仍有处可看） */
   const shownPath = $derived(entry.custom_dir ?? entry.local_path);
@@ -356,7 +365,10 @@
         <Button variant="outline" size="sm" onclick={() => void cancelDownload(entry.id)}>
           {m.models_cancel()}
         </Button>
-      {:else if entry.status === "ready"}
+      {:else}
+        <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
+          {m.models_open_dir()}
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -365,32 +377,7 @@
         >
           {m.models_verify()}
         </Button>
-        <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
-          {m.models_open_dir()}
-        </Button>
-        <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>
-          {isCustom ? m.models_change_custom_dir() : m.models_set_custom_dir()}
-        </Button>
-        {#if isCustom}
-          <Button variant="outline" size="sm" onclick={() => void handleClearCustomDir()}>
-            {m.models_clear_custom_dir()}
-          </Button>
-        {:else}
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={deleting}
-            onclick={() => (confirmOpen = true)}
-          >
-            {m.models_delete()}
-          </Button>
-        {/if}
-      {:else if entry.status === "partial"}
-        {#if entry.manual || isCustom}
-          <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
-            {m.models_open_dir()}
-          </Button>
-        {:else}
+        {#if showDownload}
           <Button
             size="sm"
             disabled={otherDownloading}
@@ -399,27 +386,14 @@
             {m.models_download()}
           </Button>
         {/if}
-        <Button
-          variant="outline"
-          size="sm"
-          title={m.models_verify_hint()}
-          onclick={() => void verifyModel(entry.id)}
-        >
-          {m.models_verify()}
-        </Button>
-        {#if !entry.manual && !isCustom}
-          <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
-            {m.models_open_dir()}
-          </Button>
-        {/if}
         <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>
           {isCustom ? m.models_change_custom_dir() : m.models_set_custom_dir()}
         </Button>
-        {#if isCustom}
+        {#if showClear}
           <Button variant="outline" size="sm" onclick={() => void handleClearCustomDir()}>
             {m.models_clear_custom_dir()}
           </Button>
-        {:else}
+        {:else if showDelete}
           <Button
             variant="destructive"
             size="sm"
@@ -429,33 +403,6 @@
             {m.models_delete()}
           </Button>
         {/if}
-      {:else if entry.manual || isCustom}
-        <Button variant="outline" size="sm" onclick={() => void openModelDir(entry.id)}>
-          {m.models_open_dir()}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          title={m.models_verify_hint()}
-          onclick={() => void verifyModel(entry.id)}
-        >
-          {m.models_verify()}
-        </Button>
-        {#if isCustom}
-          <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>
-            {m.models_change_custom_dir()}
-          </Button>
-          <Button variant="outline" size="sm" onclick={() => void handleClearCustomDir()}>
-            {m.models_clear_custom_dir()}
-          </Button>
-        {/if}
-      {:else}
-        <Button size="sm" disabled={otherDownloading} onclick={() => void downloadModel(entry.id)}>
-          {m.models_download()}
-        </Button>
-        <Button variant="outline" size="sm" onclick={() => void handlePickCustomDir()}>
-          {m.models_set_custom_dir()}
-        </Button>
       {/if}
     </div>
   </div>

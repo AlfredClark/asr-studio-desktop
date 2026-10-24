@@ -417,7 +417,7 @@ describe("模型页", () => {
     });
   });
 
-  it("缺失态只有下载入口，不给打开目录", async () => {
+  it("缺失态固定前二为打开目录与重新校验", async () => {
     const user = userEvent.setup();
     render(Page);
 
@@ -426,8 +426,15 @@ describe("模型页", () => {
     });
     await user.click(listRow("SenseVoice int8"));
 
+    expect(detail().getByRole("button", { name: "Open folder" })).not.toBeNull();
+    expect(detail().getByRole("button", { name: "Re-verify" })).not.toBeNull();
     expect(detail().getByRole("button", { name: "Download" })).not.toBeNull();
-    expect(detail().queryByRole("button", { name: "Open folder" })).toBeNull();
+    expect(detail().queryByRole("button", { name: "Delete" })).toBeNull();
+    const names = detail()
+      .getAllByRole("button")
+      .map((button: HTMLElement) => button.textContent?.trim() ?? "");
+    expect(names.indexOf("Open folder")).toBeLessThan(names.indexOf("Re-verify"));
+    expect(names.indexOf("Re-verify")).toBeLessThan(names.indexOf("Download"));
   });
 
   it("目录树只给非就绪行挂徽标，组头一次说清待补全", async () => {
