@@ -5,6 +5,11 @@ import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
 import type { Directive, DirectiveAction } from "#libs/commands/types";
 import { normalizeLexiconPinyin, suggestLexiconPinyin } from "#libs/hooks/lexicon.svelte";
+import {
+  correctionSetForDirective,
+  foldPinyinText,
+  type PinyinCorrectionSetting,
+} from "#libs/pinyin-correction";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
 
@@ -157,17 +162,31 @@ export function isTriggerDuplicate(
   );
 }
 
-/** 按拼音匹配指令：归一化后精确相等，或 raw 文本 trim 后与触发文本相等；仅启用项参与 */
+/**
+ * 按拼音匹配指令：归一化后精确相等，或 raw 文本 trim 后与触发文本相等；仅启用项参与。
+ * 纠正设置生效时（总开关开、指令应用开、有选中规则），两侧拼音先同折叠再比对。
+ */
 export function findDirectiveByPinyin(
   directives: Directive[],
   spokenPinyin: string,
   rawText: string,
+  correction: PinyinCorrectionSetting | null = null,
 ): Directive | null {
-  const spoken = normalizeDirectivePinyin(spokenPinyin);
+  const normalizedSpoken = normalizeDirectivePinyin(spokenPinyin);
+  const folded = correction == null ? null : correctionSetForDirective(correction);
+  const spoken =
+    folded == null || folded.size === 0
+      ? normalizedSpoken
+      : foldPinyinText(normalizedSpoken, folded);
   const trimmed = rawText.trim();
   for (const directive of directives) {
     if (!directive.enabled) continue;
-    if (spoken !== "" && directive.trigger_pinyin === spoken) return directive;
+    const normalizedTrigger = normalizeDirectivePinyin(directive.trigger_pinyin);
+    const trigger =
+      folded == null || folded.size === 0
+        ? normalizedTrigger
+        : foldPinyinText(normalizedTrigger, folded);
+    if (spoken !== "" && trigger !== "" && trigger === spoken) return directive;
     if (trimmed !== "" && directive.trigger_text === trimmed) return directive;
   }
   return null;

@@ -236,6 +236,14 @@ export type ConfigPatch = {
 	active_lexicon_groups?: string[] | null,
 	/**  句末移除标点集（写入时归一化：去空格去重） */
 	strip_trailing_punct?: string | null,
+	/**  拼音纠正总开关 */
+	pinyin_correction_enabled?: boolean | null,
+	/**  拼音纠正选中规则 id 列表（写入时清洗：去空、只留已知、去重） */
+	pinyin_correction_rules?: string[] | null,
+	/**  拼音纠正是否应用于识别 */
+	pinyin_correction_apply_recognition?: boolean | null,
+	/**  拼音纠正是否应用于指令 */
+	pinyin_correction_apply_directive?: boolean | null,
 };
 
 /**
@@ -290,6 +298,14 @@ export type Config_Deserialize = {
 	active_lexicon_groups?: string[],
 	/**  句末移除标点集：识别输出前剥掉一个句末命中标点；缺失或类型不符回落空串（不处理） */
 	strip_trailing_punct?: string,
+	/**  拼音纠正总开关：缺失或类型不符时回落 `false`（关闭） */
+	pinyin_correction_enabled?: boolean,
+	/**  拼音纠正选中规则 id 列表；缺失或脏值回落空数组（全不纠正） */
+	pinyin_correction_rules?: string[],
+	/**  拼音纠正是否应用于识别：缺失或类型不符时回落 `true` */
+	pinyin_correction_apply_recognition?: boolean,
+	/**  拼音纠正是否应用于指令：缺失或类型不符时回落 `true` */
+	pinyin_correction_apply_directive?: boolean,
 };
 
 /**
@@ -344,6 +360,14 @@ export type Config_Serialize = {
 	active_lexicon_groups: string[],
 	/**  句末移除标点集：识别输出前剥掉一个句末命中标点；缺失或类型不符回落空串（不处理） */
 	strip_trailing_punct: string,
+	/**  拼音纠正总开关：缺失或类型不符时回落 `false`（关闭） */
+	pinyin_correction_enabled: boolean,
+	/**  拼音纠正选中规则 id 列表；缺失或脏值回落空数组（全不纠正） */
+	pinyin_correction_rules: string[],
+	/**  拼音纠正是否应用于识别：缺失或类型不符时回落 `true` */
+	pinyin_correction_apply_recognition: boolean,
+	/**  拼音纠正是否应用于指令：缺失或类型不符时回落 `true` */
+	pinyin_correction_apply_directive: boolean,
 };
 
 /**  指令：触发文本命中后回放整套按键事件 */

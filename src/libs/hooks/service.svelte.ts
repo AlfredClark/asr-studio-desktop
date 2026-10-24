@@ -518,7 +518,12 @@ export async function handleDirectiveTrigger(): Promise<void> {
       if (result == null) return;
       await refreshDirectives();
       const spoken = normalizeDirectivePinyin(await suggestDirectivePinyin(result.text));
-      const matched = findDirectiveByPinyin(directiveState.value, spoken, result.text);
+      const matched = findDirectiveByPinyin(directiveState.value, spoken, result.text, {
+        enabled: configValue("pinyin_correction_enabled", false),
+        rules: configValue("pinyin_correction_rules", []),
+        applyRecognition: configValue("pinyin_correction_apply_recognition", true),
+        applyDirective: configValue("pinyin_correction_apply_directive", true),
+      });
       if (matched == null) return;
       const replayed = await commands.replayDirective(matched.id).result();
       if (replayed.status === "error") {

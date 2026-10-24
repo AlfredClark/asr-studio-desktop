@@ -21,6 +21,7 @@
   import type { ShortcutOutput } from "#libs/commands/types";
   import { toast } from "#libs/utils/toast";
   import { groupLabel, lexiconState } from "#libs/hooks/lexicon.svelte";
+  import PinyinCorrectionDialog from "./pinyin-correction-dialog.svelte";
   import {
     deviceLabel,
     cancelTranscription,
@@ -136,6 +137,31 @@
     } else {
       toast.error(m.settings_strip_punct_update_failed());
     }
+  }
+
+  /** 拼音纠正弹窗开关：草稿态收敛在弹窗内部，此处只持有开关 */
+  let pinyinDialogOpen = $state(false);
+
+  /** 拼音纠正启用状态：后端配置为真值，水合前按关闭渲染 */
+  const pinyinEnabled = $derived(configValue("pinyin_correction_enabled", false));
+  /** 拼音纠正已选规则数：水合前按 0 渲染 */
+  const pinyinRulesCount = $derived(configValue("pinyin_correction_rules", []).length);
+  /** 拼音纠正应用范围：水合前按默认全开渲染 */
+  const pinyinApplyRecognition = $derived(configValue("pinyin_correction_apply_recognition", true));
+  const pinyinApplyDirective = $derived(configValue("pinyin_correction_apply_directive", true));
+
+  /** 拼音纠正设置项小文本：未启用 / 已启用 · 应用范围 · 已选数 */
+  function pinyinStatus(): string {
+    if (!pinyinEnabled) return m.service_pinyin_status_disabled();
+    let targets = m.service_pinyin_targets_none();
+    if (pinyinApplyRecognition && pinyinApplyDirective) {
+      targets = m.service_pinyin_targets_both();
+    } else if (pinyinApplyRecognition) {
+      targets = m.service_pinyin_targets_recognition();
+    } else if (pinyinApplyDirective) {
+      targets = m.service_pinyin_targets_directive();
+    }
+    return `${m.service_pinyin_status_enabled()} · ${targets} · ${m.service_pinyin_selected_count({ count: pinyinRulesCount })}`;
   }
 </script>
 
@@ -346,7 +372,19 @@
         />
       {/snippet}
     </CardRow>
+    <CardRow
+      label={m.service_pinyin_label()}
+      description={m.service_pinyin_description()}
+      value={pinyinStatus()}
+    >
+      {#snippet control()}
+        <Button variant="outline" size="sm" onclick={() => (pinyinDialogOpen = true)}>
+          {m.service_pinyin_configure()}
+        </Button>
+      {/snippet}
+    </CardRow>
     <!-- 下方留空：将来新增设置直接往下加行 -->
     <div class="min-h-4 flex-1"></div>
   </div>
+  <PinyinCorrectionDialog bind:open={pinyinDialogOpen} />
 </ScrollArea>

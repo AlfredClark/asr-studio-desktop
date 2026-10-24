@@ -13,6 +13,7 @@ pub mod deep_link;
 pub mod directives;
 pub mod lexicon;
 pub mod locale;
+pub mod pinyin_correction;
 pub mod shortcut;
 pub mod specta;
 pub mod system;

@@ -206,4 +206,27 @@ describe("指令纯函数", () => {
     expect(findDirectiveByPinyin(rows, "zhong qing", "打开记事本")?.id).toBe("d-1");
     expect(findDirectiveByPinyin(rows, "", "")).toBeNull();
   });
+
+  it("纠正开启时平翘舌互通，关闭时不互通", () => {
+    const rows = [makeDirective({ id: "d-1", trigger_text: "知道", trigger_pinyin: "zhi dao" })];
+    const correction = {
+      enabled: true,
+      rules: ["z_zh"],
+      applyRecognition: true,
+      applyDirective: true,
+    };
+    expect(findDirectiveByPinyin(rows, "zi dao", "乱码", correction)?.id).toBe("d-1");
+    // 总开关关闭：不互通
+    expect(
+      findDirectiveByPinyin(rows, "zi dao", "乱码", { ...correction, enabled: false }),
+    ).toBeNull();
+    // 指令应用关闭：不互通
+    expect(
+      findDirectiveByPinyin(rows, "zi dao", "乱码", { ...correction, applyDirective: false }),
+    ).toBeNull();
+    // 识别应用关闭不影响指令
+    expect(
+      findDirectiveByPinyin(rows, "zi dao", "乱码", { ...correction, applyRecognition: false })?.id,
+    ).toBe("d-1");
+  });
 });

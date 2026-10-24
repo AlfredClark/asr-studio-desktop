@@ -47,6 +47,14 @@ const KEY_CUSTOM_MODEL_DIRS: &str = "custom_model_dirs";
 const KEY_ACTIVE_LEXICON_GROUPS: &str = "active_lexicon_groups";
 /// 句末移除标点集在配置文件中的键名；空串表示不处理，写入时已去空格去重
 const KEY_STRIP_TRAILING_PUNCT: &str = "strip_trailing_punct";
+/// 拼音纠正在配置文件中的键名；总开关，默认关闭
+const KEY_PINYIN_CORRECTION_ENABLED: &str = "pinyin_correction_enabled";
+/// 拼音纠正选中规则在配置文件中的键名；值为规则 id 数组，脏 id 写入时过滤
+const KEY_PINYIN_CORRECTION_RULES: &str = "pinyin_correction_rules";
+/// 拼音纠正是否应用于识别在配置文件中的键名；默认开启
+const KEY_PINYIN_CORRECTION_APPLY_RECOGNITION: &str = "pinyin_correction_apply_recognition";
+/// 拼音纠正是否应用于指令在配置文件中的键名；默认开启
+const KEY_PINYIN_CORRECTION_APPLY_DIRECTIVE: &str = "pinyin_correction_apply_directive";
 /// 当前配置结构版本：变更字段语义时递增，并在迁移链中补对应升级步骤
 pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
@@ -199,6 +207,28 @@ pub struct Config {
     #[serde(deserialize_with = "de_strip_trailing_punct")]
     #[specta(type = String)]
     pub strip_trailing_punct: String,
+    /// 拼音纠正总开关：缺失或类型不符时回落 `false`（关闭）
+    #[serde(deserialize_with = "de_pinyin_correction_enabled")]
+    #[specta(type = bool)]
+    pub pinyin_correction_enabled: bool,
+    /// 拼音纠正选中规则 id 列表；缺失或脏值回落空数组（全不纠正）
+    #[serde(deserialize_with = "de_pinyin_correction_rules")]
+    #[specta(type = Vec<String>)]
+    pub pinyin_correction_rules: Vec<String>,
+    /// 拼音纠正是否应用于识别：缺失或类型不符时回落 `true`
+    #[serde(
+        default = "default_pinyin_correction_apply",
+        deserialize_with = "de_pinyin_correction_apply"
+    )]
+    #[specta(type = bool)]
+    pub pinyin_correction_apply_recognition: bool,
+    /// 拼音纠正是否应用于指令：缺失或类型不符时回落 `true`
+    #[serde(
+        default = "default_pinyin_correction_apply",
+        deserialize_with = "de_pinyin_correction_apply"
+    )]
+    #[specta(type = bool)]
+    pub pinyin_correction_apply_directive: bool,
 }
 
 impl Default for Config {
@@ -221,8 +251,17 @@ impl Default for Config {
             custom_model_dirs: HashMap::new(),
             active_lexicon_groups: Vec::new(),
             strip_trailing_punct: String::new(),
+            pinyin_correction_enabled: false,
+            pinyin_correction_rules: Vec::new(),
+            pinyin_correction_apply_recognition: default_pinyin_correction_apply(),
+            pinyin_correction_apply_directive: default_pinyin_correction_apply(),
         }
     }
+}
+
+/// 拼音纠正应用范围开关的默认值：启用后默认识别与指令都生效
+const fn default_pinyin_correction_apply() -> bool {
+    true
 }
 
 /// 系统托盘开关的默认值：开箱即见托盘
@@ -271,6 +310,14 @@ pub struct ConfigPatch {
     pub active_lexicon_groups: Option<Vec<String>>,
     /// 句末移除标点集（写入时归一化：去空格去重）
     pub strip_trailing_punct: Option<String>,
+    /// 拼音纠正总开关
+    pub pinyin_correction_enabled: Option<bool>,
+    /// 拼音纠正选中规则 id 列表（写入时清洗：去空、只留已知、去重）
+    pub pinyin_correction_rules: Option<Vec<String>>,
+    /// 拼音纠正是否应用于识别
+    pub pinyin_correction_apply_recognition: Option<bool>,
+    /// 拼音纠正是否应用于指令
+    pub pinyin_correction_apply_directive: Option<bool>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -428,6 +475,53 @@ fn normalize_punct_set(raw: &str) -> String {
         .filter(|c| !c.is_whitespace())
         .filter(|c| seen.insert(*c))
         .collect()
+}
+
+/// 容错解析拼音纠正总开关：经 `serde_json::Value` 中转，非布尔值一律回落 `false`（关闭）
+fn de_pinyin_correction_enabled<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value.as_bool().unwrap_or_default())
+}
+
+/// 容错解析拼音纠正选中规则：经 `serde_json::Value` 中转，非数组一律回落空数组；
+/// 逐项只保留 trim 后非空的已知规则 id（保首次序去重）
+fn de_pinyin_correction_rules<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_pinyin_correction_rules(Some(&value)))
+}
+
+/// 选中规则 id 列表的唯一转换口径：缺失、非数组一律回落空数组
+fn parse_pinyin_correction_rules(value: Option<&Value>) -> Vec<String> {
+    let Some(list) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let raw: Vec<String> = list
+        .iter()
+        .filter_map(|item| {
+            item.as_str()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+        })
+        .collect();
+    crate::cores::pinyin_correction::sanitize_rules(raw)
+}
+
+/// 容错解析拼音纠正应用范围开关：经 `serde_json::Value` 中转，非布尔值一律回落 `true`
+fn de_pinyin_correction_apply<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value
+        .as_bool()
+        .unwrap_or_else(default_pinyin_correction_apply))
 }
 
 /// 容错解析用户指定模型目录：经 `serde_json::Value` 中转，非对象一律回落空映射；
@@ -595,6 +689,10 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         custom_model_dirs: load_custom_model_dirs(app),
         active_lexicon_groups: load_active_lexicon_groups(app),
         strip_trailing_punct: load_strip_trailing_punct(app),
+        pinyin_correction_enabled: load_pinyin_correction_enabled(app),
+        pinyin_correction_rules: load_pinyin_correction_rules(app),
+        pinyin_correction_apply_recognition: load_pinyin_correction_apply_recognition(app),
+        pinyin_correction_apply_directive: load_pinyin_correction_apply_directive(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -698,14 +796,14 @@ fn load_shortcut_paste_restore(app: &tauri::AppHandle) -> bool {
 
 /// 读取持久化的用户指定模型目录；未设置或类型不符时回落空映射
 ///
-/// 转写/校验热路径走此单键读取，不拉 13 键全量 `load_config`
+/// 转写/校验热路径走此单键读取，不拉全量 `load_config`
 pub fn load_custom_model_dirs(app: &tauri::AppHandle) -> HashMap<String, String> {
     parse_custom_model_dirs(read_key(app, KEY_CUSTOM_MODEL_DIRS).as_ref())
 }
 
 /// 读取持久化的词库生效分组；未设置或类型不符时回落空数组
 ///
-/// 转写热路径（`apply_lexicon`）走此单键读取，不拉 13 键全量 `load_config`
+/// 转写热路径（`apply_lexicon`）走此单键读取，不拉全量 `load_config`
 pub fn load_active_lexicon_groups(app: &tauri::AppHandle) -> Vec<String> {
     parse_active_lexicon_groups(read_key(app, KEY_ACTIVE_LEXICON_GROUPS).as_ref())
 }
@@ -715,6 +813,36 @@ fn load_strip_trailing_punct(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_STRIP_TRAILING_PUNCT)
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_default()
+}
+
+/// 读取持久化的拼音纠正总开关；未设置或类型不符时回落 `false`（关闭）
+///
+/// 转写热路径（`apply_lexicon` 与指令匹配）走此单键读取，不拉全量 `load_config`
+pub fn load_pinyin_correction_enabled(app: &tauri::AppHandle) -> bool {
+    read_key(app, KEY_PINYIN_CORRECTION_ENABLED)
+        .and_then(|value| value.as_bool())
+        .unwrap_or_default()
+}
+
+/// 读取持久化的拼音纠正选中规则；未设置或类型不符时回落空数组
+///
+/// 转写热路径（`apply_lexicon`）走此单键读取，不拉全量 `load_config`
+pub fn load_pinyin_correction_rules(app: &tauri::AppHandle) -> Vec<String> {
+    parse_pinyin_correction_rules(read_key(app, KEY_PINYIN_CORRECTION_RULES).as_ref())
+}
+
+/// 读取持久化的拼音纠正识别应用开关；未设置或类型不符时回落 `true`
+pub fn load_pinyin_correction_apply_recognition(app: &tauri::AppHandle) -> bool {
+    read_key(app, KEY_PINYIN_CORRECTION_APPLY_RECOGNITION)
+        .and_then(|value| value.as_bool())
+        .unwrap_or_else(default_pinyin_correction_apply)
+}
+
+/// 读取持久化的拼音纠正指令应用开关；未设置或类型不符时回落 `true`
+pub fn load_pinyin_correction_apply_directive(app: &tauri::AppHandle) -> bool {
+    read_key(app, KEY_PINYIN_CORRECTION_APPLY_DIRECTIVE)
+        .and_then(|value| value.as_bool())
+        .unwrap_or_else(default_pinyin_correction_apply)
 }
 
 /// 读取持久化的配置结构版本；未设置或类型不符时回落 `0`
@@ -864,6 +992,10 @@ fn reset_patch() -> ConfigPatch {
         custom_model_dirs: Some(HashMap::new()),
         active_lexicon_groups: Some(Vec::new()),
         strip_trailing_punct: Some(String::new()),
+        pinyin_correction_enabled: Some(false),
+        pinyin_correction_rules: Some(Vec::new()),
+        pinyin_correction_apply_recognition: Some(default_pinyin_correction_apply()),
+        pinyin_correction_apply_directive: Some(default_pinyin_correction_apply()),
     }
 }
 
@@ -1010,7 +1142,43 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
             Value::from(normalize_punct_set(strip_trailing_punct)),
         ));
     }
+    entries.extend(write_pinyin_correction_entries(patch));
     entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
+    entries
+}
+
+/// 拼音纠正补丁对应的待写键值对：`write_entries` 的子清单，保持主清单在行数门禁内
+fn write_pinyin_correction_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
+    let mut entries = Vec::new();
+    if let Some(pinyin_correction_enabled) = patch.pinyin_correction_enabled {
+        entries.push((
+            KEY_PINYIN_CORRECTION_ENABLED,
+            Value::from(pinyin_correction_enabled),
+        ));
+    }
+    if let Some(pinyin_correction_rules) = patch.pinyin_correction_rules.as_ref() {
+        entries.push((
+            KEY_PINYIN_CORRECTION_RULES,
+            Value::from(
+                crate::cores::pinyin_correction::sanitize_rules(pinyin_correction_rules.clone())
+                    .iter()
+                    .map(|id| Value::from(id.trim()))
+                    .collect::<Vec<Value>>(),
+            ),
+        ));
+    }
+    if let Some(pinyin_correction_apply_recognition) = patch.pinyin_correction_apply_recognition {
+        entries.push((
+            KEY_PINYIN_CORRECTION_APPLY_RECOGNITION,
+            Value::from(pinyin_correction_apply_recognition),
+        ));
+    }
+    if let Some(pinyin_correction_apply_directive) = patch.pinyin_correction_apply_directive {
+        entries.push((
+            KEY_PINYIN_CORRECTION_APPLY_DIRECTIVE,
+            Value::from(pinyin_correction_apply_directive),
+        ));
+    }
     entries
 }
 
@@ -1186,6 +1354,10 @@ mod tests {
         assert!(config.custom_model_dirs.is_empty());
         assert_eq!(config.active_lexicon_groups.len(), 0);
         assert_eq!(config.strip_trailing_punct, "");
+        assert!(!config.pinyin_correction_enabled);
+        assert_eq!(config.pinyin_correction_rules.len(), 0);
+        assert!(config.pinyin_correction_apply_recognition);
+        assert!(config.pinyin_correction_apply_directive);
         assert_eq!(config.schema_version, 0);
     }
 
@@ -1211,12 +1383,16 @@ mod tests {
             )]),
             active_lexicon_groups: vec![String::from("work"), String::from("dialect")],
             strip_trailing_punct: String::from("，。！"),
+            pinyin_correction_enabled: true,
+            pinyin_correction_rules: vec![String::from("z_zh"), String::from("n_l")],
+            pinyin_correction_apply_recognition: true,
+            pinyin_correction_apply_directive: false,
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "schema_version": 2 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "pinyin_correction_enabled": true, "pinyin_correction_rules": ["z_zh", "n_l"], "pinyin_correction_apply_recognition": true, "pinyin_correction_apply_directive": false, "schema_version": 2 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -1241,6 +1417,28 @@ mod tests {
             let config: Config = serde_json::from_value(raw).expect("never fails");
             assert_eq!(config.strip_trailing_punct, expected);
         }
+    }
+
+    #[test]
+    fn tolerates_missing_or_invalid_pinyin_correction() {
+        // 缺键回落：关闭 + 空规则 + 两处默认开启
+        let config: Config = serde_json::from_value(json!({})).expect("never fails");
+        assert!(!config.pinyin_correction_enabled);
+        assert_eq!(config.pinyin_correction_rules.len(), 0);
+        assert!(config.pinyin_correction_apply_recognition);
+        assert!(config.pinyin_correction_apply_directive);
+        // 脏值回落：开关非布尔关，规则只留已知去重保序，范围非布尔开
+        let config: Config = serde_json::from_value(json!({
+            "pinyin_correction_enabled": "yes",
+            "pinyin_correction_rules": ["z_zh", "nope", " z_zh ", "", 5, "n_l"],
+            "pinyin_correction_apply_recognition": 0,
+            "pinyin_correction_apply_directive": "no",
+        }))
+        .expect("never fails");
+        assert!(!config.pinyin_correction_enabled);
+        assert_eq!(config.pinyin_correction_rules, vec!["z_zh", "n_l"]);
+        assert!(config.pinyin_correction_apply_recognition);
+        assert!(config.pinyin_correction_apply_directive);
     }
 
     #[test]
@@ -1728,6 +1926,10 @@ mod tests {
             )])),
             active_lexicon_groups: Some(vec![String::from("work")]),
             strip_trailing_punct: Some(String::from("，。")),
+            pinyin_correction_enabled: Some(true),
+            pinyin_correction_rules: Some(vec![String::from("z_zh")]),
+            pinyin_correction_apply_recognition: Some(true),
+            pinyin_correction_apply_directive: Some(false),
         });
         assert_eq!(
             keys_of(&patched),
@@ -1748,6 +1950,10 @@ mod tests {
                 KEY_CUSTOM_MODEL_DIRS,
                 KEY_ACTIVE_LEXICON_GROUPS,
                 KEY_STRIP_TRAILING_PUNCT,
+                KEY_PINYIN_CORRECTION_ENABLED,
+                KEY_PINYIN_CORRECTION_RULES,
+                KEY_PINYIN_CORRECTION_APPLY_RECOGNITION,
+                KEY_PINYIN_CORRECTION_APPLY_DIRECTIVE,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -1767,6 +1973,10 @@ mod tests {
         assert_eq!(patched[13].1, json!({ "sense-voice-int8": "/models/a" }));
         assert_eq!(patched[14].1, json!(["work"]));
         assert_eq!(patched[15].1, json!("，。"));
+        assert_eq!(patched[16].1, json!(true));
+        assert_eq!(patched[17].1, json!(["z_zh"]));
+        assert_eq!(patched[18].1, json!(true));
+        assert_eq!(patched[19].1, json!(false));
     }
 
     #[test]
@@ -1789,6 +1999,10 @@ mod tests {
             custom_model_dirs: Some(HashMap::new()),
             active_lexicon_groups: Some(vec![String::from("work")]),
             strip_trailing_punct: Some(String::from("，。")),
+            pinyin_correction_enabled: Some(true),
+            pinyin_correction_rules: Some(vec![String::from("z_zh")]),
+            pinyin_correction_apply_recognition: Some(true),
+            pinyin_correction_apply_directive: Some(true),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -1812,7 +2026,11 @@ mod tests {
         assert_eq!(entries[13].1, json!({}));
         assert_eq!(entries[14].1, json!([]));
         assert_eq!(entries[15].1, json!(""));
-        assert_eq!(entries[16].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[16].1, json!(false));
+        assert_eq!(entries[17].1, json!([]));
+        assert_eq!(entries[18].1, json!(true));
+        assert_eq!(entries[19].1, json!(true));
+        assert_eq!(entries[20].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -1834,6 +2052,10 @@ mod tests {
             custom_model_dirs: HashMap::new(),
             active_lexicon_groups: Vec::new(),
             strip_trailing_punct: String::new(),
+            pinyin_correction_enabled: false,
+            pinyin_correction_rules: Vec::new(),
+            pinyin_correction_apply_recognition: default_pinyin_correction_apply(),
+            pinyin_correction_apply_directive: default_pinyin_correction_apply(),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));

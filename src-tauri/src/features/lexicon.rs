@@ -9,6 +9,7 @@ use specta::Type;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::cores::lexicon::{LexiconData, LexiconEntry, LexiconGroup};
+use crate::cores::pinyin_correction::{self, fold_syllable};
 
 use super::output::{read_clipboard, send_copy_keystroke, write_clipboard};
 
@@ -87,13 +88,15 @@ pub fn suggest_pinyin(text: &str) -> String {
 }
 
 /// 解析出的生效词条：附带所属分组在分组列表中的序号（越大越靠后，仲裁时优先）；
-/// 全局组恒置顶（序号最小），同权重下天然靠后
+/// 全局组恒置顶（序号最小），同权重下天然靠后；`order` 为词条在落盘数组中的下标，即添加顺序
 #[derive(Debug, Clone, Copy)]
 pub struct ResolvedEntry<'a> {
     /// 词条
     pub entry: &'a LexiconEntry,
     /// 所属分组序号
     pub rank: usize,
+    /// 添加顺序（落盘下标，越小越先添加）
+    pub order: usize,
 }
 
 /// 解析出生效词条：仅启用项，命中任一生效分组或全局组；
@@ -104,9 +107,13 @@ pub fn resolve_entries<'a>(
     entries: &'a [LexiconEntry],
 ) -> Vec<ResolvedEntry<'a>> {
     let rank_of = |group_id: &str| groups.iter().position(|group| group.id == group_id);
-    let mut by_key: std::collections::HashMap<(String, String), (usize, &'a LexiconEntry)> =
+    let mut by_key: std::collections::HashMap<(String, String), (usize, usize, &'a LexiconEntry)> =
         std::collections::HashMap::new();
-    for entry in entries.iter().filter(|entry| entry.enabled) {
+    for (order, entry) in entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.enabled)
+    {
         let Some(rank) = rank_of(&entry.group_id) else {
             continue;
         };
@@ -115,16 +122,25 @@ pub fn resolve_entries<'a>(
         }
         let key = (entry.text.clone(), parse_pinyin(&entry.pinyin).join(" "));
         match by_key.get(&key) {
-            Some((old_rank, _)) if *old_rank >= rank => {}
+            Some((old_rank, _, _)) if *old_rank >= rank => {}
             _ => {
-                by_key.insert(key, (rank, entry));
+                by_key.insert(key, (rank, order, entry));
             }
         }
     }
     by_key
         .into_values()
-        .map(|(rank, entry)| ResolvedEntry { entry, rank })
+        .map(|(rank, order, entry)| ResolvedEntry { entry, rank, order })
         .collect()
+}
+
+/// 候选来源：原文完全一致（Exact）优先于纠正命中（Corrected）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MatchKind {
+    /// 文本区间与词面完全一致：锁定该区间，不再被纠正改写
+    Exact,
+    /// 仅拼音（含纠正折叠）命中：按权重等仲裁
+    Corrected,
 }
 
 /// 单个候选替换：字符字节区间 + 仲裁键
@@ -132,9 +148,11 @@ struct Candidate<'a> {
     entry: &'a LexiconEntry,
     byte_start: usize,
     byte_end: usize,
+    kind: MatchKind,
     weight: i32,
     syllables: usize,
     rank: usize,
+    order: usize,
 }
 
 /// 音节流与其双向下标：每个有拼音的汉字占一个音节
@@ -147,8 +165,12 @@ struct SyllableStream {
     char_byte_offsets: Vec<usize>,
 }
 
-/// 构建音节流；无拼音字符直接跳过（对齐不断错）
-fn build_syllable_stream(text: &str, chars: &[char]) -> Option<SyllableStream> {
+/// 构建音节流；无拼音字符直接跳过（对齐不断错）；纠正规则对两侧同折叠
+fn build_syllable_stream(
+    text: &str,
+    chars: &[char],
+    correction: &std::collections::HashSet<String>,
+) -> Option<SyllableStream> {
     use pinyin::ToPinyin;
 
     let mut char_byte_offsets: Vec<usize> = Vec::with_capacity(chars.len() + 1);
@@ -162,7 +184,8 @@ fn build_syllable_stream(text: &str, chars: &[char]) -> Option<SyllableStream> {
     let mut syllable_chars: Vec<usize> = Vec::new();
     for (index, c) in chars.iter().enumerate() {
         if let Some(pinyin) = c.to_pinyin() {
-            syllables.push(normalize_syllable(pinyin.plain()));
+            let normalized = normalize_syllable(pinyin.plain());
+            syllables.push(fold_syllable(&normalized, correction));
             syllable_chars.push(index);
         }
     }
@@ -186,8 +209,11 @@ struct DedupedPatterns {
     pattern_counts: Vec<usize>,
 }
 
-/// 词条拼音去重；空拼音词条直接丢弃（写入侧已拒绝，此处兜底）
-fn dedupe_patterns(entries: &[ResolvedEntry]) -> Option<DedupedPatterns> {
+/// 词条拼音去重；空拼音词条直接丢弃（写入侧已拒绝，此处兜底）；纠正规则对两侧同折叠
+fn dedupe_patterns(
+    entries: &[ResolvedEntry],
+    correction: &std::collections::HashSet<String>,
+) -> Option<DedupedPatterns> {
     let mut pattern_entries: Vec<Vec<usize>> = Vec::new();
     let mut pattern_counts: Vec<usize> = Vec::new();
     let mut pattern_of: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -196,7 +222,11 @@ fn dedupe_patterns(entries: &[ResolvedEntry]) -> Option<DedupedPatterns> {
         if parsed.is_empty() {
             continue;
         }
-        let joined = parsed.join(&SYLLABLE_SEP.to_string());
+        let folded: Vec<String> = parsed
+            .iter()
+            .map(|syllable| fold_syllable(syllable, correction))
+            .collect();
+        let joined = folded.join(&SYLLABLE_SEP.to_string());
         if let Some(&pattern) = pattern_of.get(&joined) {
             pattern_entries[pattern].push(index);
         } else {
@@ -217,7 +247,8 @@ fn dedupe_patterns(entries: &[ResolvedEntry]) -> Option<DedupedPatterns> {
     })
 }
 
-/// 收集全部候选替换：自动机多模式命中 → 音节区间换算字符字节区间 → 原文一致跳过
+/// 收集全部候选替换：自动机多模式命中 → 音节区间换算字符字节区间 →
+/// 原文一致记为 Exact（锁定区间），其余记为 Corrected
 fn collect_candidates<'a>(
     stream: &SyllableStream,
     automaton: &aho_corasick::AhoCorasick,
@@ -240,33 +271,38 @@ fn collect_candidates<'a>(
         for &index in &deduped.pattern_entries[pattern] {
             let resolved = &entries[index];
             let entry = resolved.entry;
-            // 命中但原文一致：不是纠错对象，直接跳过
-            if text.get(byte_start..byte_end) == Some(entry.text.as_str()) {
-                continue;
-            }
+            // 命中且原文一致：Exact，锁定该区间而非跳过
+            let kind = if text.get(byte_start..byte_end) == Some(entry.text.as_str()) {
+                MatchKind::Exact
+            } else {
+                MatchKind::Corrected
+            };
             candidates.push(Candidate {
                 entry,
                 byte_start,
                 byte_end,
+                kind,
                 weight: entry.weight,
                 syllables: deduped.pattern_counts[pattern],
                 rank: resolved.rank,
+                order: resolved.order,
             });
         }
     }
     candidates
 }
 
-/// 仲裁并落子：权重降序 → 分组顺序降序（越靠后越优先，全局恒置顶故天然靠后）
-/// → 音节长度降序 → id 升序保证确定性；重叠区间只保留首个接受者
+/// 仲裁并落子：完全一致优先 → 权重降序 → 分组顺序降序（越靠后越优先，
+/// 全局恒置顶故天然靠后）→ 音节长度降序 → 添加顺序升序；
+/// 重叠区间只保留首个接受者，Exact 天然压制重叠的 Corrected
 fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> String {
     candidates.sort_by(|left, right| {
-        right
-            .weight
-            .cmp(&left.weight)
+        left.kind
+            .cmp(&right.kind)
+            .then_with(|| right.weight.cmp(&left.weight))
             .then_with(|| right.rank.cmp(&left.rank))
             .then_with(|| right.syllables.cmp(&left.syllables))
-            .then_with(|| left.entry.id.cmp(&right.entry.id))
+            .then_with(|| left.order.cmp(&right.order))
     });
     let mut accepted: Vec<(usize, usize)> = Vec::new();
     let mut replacements: Vec<(usize, usize, &str)> = Vec::new();
@@ -300,7 +336,7 @@ fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> String {
 }
 
 /// 匹配器缓存：自动机编译是转写热路径最贵一步，按词条指纹复用；
-/// 指纹覆盖分组/词面/拼音/权重/序号，命中即跳过重建，未命中重建并覆盖
+/// 指纹覆盖分组/词面/拼音/权重/序号/添加顺序，命中即跳过重建，未命中重建并覆盖
 struct CachedMatcher {
     fingerprint: u64,
     automaton: aho_corasick::AhoCorasick,
@@ -308,6 +344,7 @@ struct CachedMatcher {
     /// owned 词条：缓存的匹配视图借用自此，跨转写调用保持稳定
     entries: Vec<LexiconEntry>,
     ranks: Vec<usize>,
+    orders: Vec<usize>,
 }
 
 /// 匹配器缓存锁：存 `Arc` 使命中后克隆即解锁，匹配主体无锁运行，构建才持锁
@@ -329,7 +366,7 @@ fn fingerprint_entries(entries: &[ResolvedEntry]) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    let mut keys: Vec<(&str, &str, &str, i32, usize)> = entries
+    let mut keys: Vec<(&str, &str, &str, i32, usize, usize)> = entries
         .iter()
         .map(|resolved| {
             (
@@ -338,6 +375,7 @@ fn fingerprint_entries(entries: &[ResolvedEntry]) -> u64 {
                 resolved.entry.pinyin.as_str(),
                 resolved.entry.weight,
                 resolved.rank,
+                resolved.order,
             )
         })
         .collect();
@@ -352,10 +390,20 @@ fn fingerprint_entries(entries: &[ResolvedEntry]) -> u64 {
 
 /// 带缓存的后处理：缓存命中跳过自动机重建；构建失败回落原文（与 `apply` 同口径）
 pub fn apply_cached(text: &str, entries: &[ResolvedEntry]) -> String {
+    apply_cached_with_correction(text, entries, &std::collections::HashSet::new())
+}
+
+/// 带纠正的后处理：纠正规则同时折叠识别拼音流与词条模板；缓存键包含规则指纹
+pub fn apply_cached_with_correction(
+    text: &str,
+    entries: &[ResolvedEntry],
+    correction: &std::collections::HashSet<String>,
+) -> String {
     if entries.is_empty() {
         return text.to_owned();
     }
-    let fingerprint = fingerprint_entries(entries);
+    let fingerprint =
+        fingerprint_entries(entries).wrapping_add(pinyin_correction::fingerprint_rules(correction));
     // 未命中即构建并覆盖，命中克隆 `Arc` 后立即解锁：匹配主体无锁运行
     let cached: Arc<CachedMatcher> = {
         let mut guard = lock_matcher_cache();
@@ -363,15 +411,19 @@ pub fn apply_cached(text: &str, entries: &[ResolvedEntry]) -> String {
             .as_ref()
             .is_none_or(|cached| cached.fingerprint != fingerprint)
         {
-            let owned: Vec<(LexiconEntry, usize)> = entries
+            let owned: Vec<(LexiconEntry, usize, usize)> = entries
                 .iter()
-                .map(|resolved| (resolved.entry.clone(), resolved.rank))
+                .map(|resolved| (resolved.entry.clone(), resolved.rank, resolved.order))
                 .collect();
             let rebuilt: Vec<ResolvedEntry> = owned
                 .iter()
-                .map(|(entry, rank)| ResolvedEntry { entry, rank: *rank })
+                .map(|(entry, rank, order)| ResolvedEntry {
+                    entry,
+                    rank: *rank,
+                    order: *order,
+                })
                 .collect();
-            let Some(deduped) = dedupe_patterns(&rebuilt) else {
+            let Some(deduped) = dedupe_patterns(&rebuilt, correction) else {
                 return text.to_owned();
             };
             let automaton = match aho_corasick::AhoCorasick::new(&deduped.patterns) {
@@ -383,9 +435,11 @@ pub fn apply_cached(text: &str, entries: &[ResolvedEntry]) -> String {
             };
             let mut cached_entries = Vec::with_capacity(owned.len());
             let mut cached_ranks = Vec::with_capacity(owned.len());
-            for (entry, rank) in owned {
+            let mut cached_orders = Vec::with_capacity(owned.len());
+            for (entry, rank, order) in owned {
                 cached_entries.push(entry);
                 cached_ranks.push(rank);
+                cached_orders.push(order);
             }
             *guard = Some(Arc::new(CachedMatcher {
                 fingerprint,
@@ -393,6 +447,7 @@ pub fn apply_cached(text: &str, entries: &[ResolvedEntry]) -> String {
                 deduped,
                 entries: cached_entries,
                 ranks: cached_ranks,
+                orders: cached_orders,
             }));
         }
         guard.as_ref().expect("matcher cached above").clone()
@@ -401,10 +456,15 @@ pub fn apply_cached(text: &str, entries: &[ResolvedEntry]) -> String {
         .entries
         .iter()
         .zip(cached.ranks.iter())
-        .map(|(entry, rank)| ResolvedEntry { entry, rank: *rank })
+        .zip(cached.orders.iter())
+        .map(|((entry, rank), order)| ResolvedEntry {
+            entry,
+            rank: *rank,
+            order: *order,
+        })
         .collect();
     let chars: Vec<char> = text.chars().collect();
-    let Some(stream) = build_syllable_stream(text, &chars) else {
+    let Some(stream) = build_syllable_stream(text, &chars, correction) else {
         return text.to_owned();
     };
     let candidates =
@@ -412,19 +472,35 @@ pub fn apply_cached(text: &str, entries: &[ResolvedEntry]) -> String {
     apply_replacements(text, candidates)
 }
 
-/// 对识别文本应用生效词库：空词库直接原文返回；调用方为转写命令
+/// 识别纠正是否生效：总开关开、识别应用开、且有选中规则
+const fn recognition_correction_enabled(
+    enabled: bool,
+    apply_recognition: bool,
+    rules: &[String],
+) -> bool {
+    enabled && apply_recognition && !rules.is_empty()
+}
+
+/// 对识别文本应用生效词库（含拼音纠正）：空词库直接原文返回；调用方为转写命令
 pub fn apply_lexicon(app: &tauri::AppHandle, text: &str) -> String {
     if text.is_empty() {
         return text.to_owned();
     }
-    // 生效分组走单键读取，转写热路径不拉 13 键全量配置
+    // 生效分组与纠正开关走单键读取，转写热路径不拉全量配置
     let active = crate::cores::config::load_active_lexicon_groups(app);
     let data = crate::cores::lexicon::load_data(app);
     let resolved = resolve_entries(&active, &data.groups, &data.entries);
     if resolved.is_empty() {
         return text.to_owned();
     }
-    apply_cached(text, &resolved)
+    let enabled = crate::cores::config::load_pinyin_correction_enabled(app);
+    let apply_recognition = crate::cores::config::load_pinyin_correction_apply_recognition(app);
+    let rules = crate::cores::config::load_pinyin_correction_rules(app);
+    if !recognition_correction_enabled(enabled, apply_recognition, &rules) {
+        return apply_cached(text, &resolved);
+    }
+    let correction = pinyin_correction::enabled_set(&rules);
+    apply_cached_with_correction(text, &resolved, &correction)
 }
 
 /// 权重钳制：`-100..=100`，越界写入时收敛
@@ -1233,6 +1309,45 @@ mod tests {
     }
 
     #[test]
+    fn correction_expands_homophone_matching() {
+        use std::collections::HashSet;
+
+        let groups = vec![group("global", true), group("work", false)];
+        // 词条存翘舌读音，识别文本为平舌同音错字
+        let entries = vec![entry("w1", "work", "知道", "zhi dao", 0)];
+        let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
+        // 无纠正：平舌文本不命中翘舌词条
+        assert_eq!(apply_cached("自道", &resolved), "自道");
+        // 开启 z_zh：两侧折叠后命中
+        let correction: HashSet<String> =
+            HashSet::from([crate::cores::pinyin_correction::RULE_Z_ZH.to_owned()]);
+        assert_eq!(
+            apply_cached_with_correction("自道", &resolved, &correction),
+            "知道"
+        );
+    }
+
+    #[test]
+    fn recognition_gate_requires_all_switches_and_rules() {
+        assert!(recognition_correction_enabled(
+            true,
+            true,
+            &["z_zh".to_owned()]
+        ));
+        assert!(!recognition_correction_enabled(
+            false,
+            true,
+            &["z_zh".to_owned()]
+        ));
+        assert!(!recognition_correction_enabled(
+            true,
+            false,
+            &["z_zh".to_owned()]
+        ));
+        assert!(!recognition_correction_enabled(true, true, &[]));
+    }
+
+    #[test]
     fn move_target_respects_bounds_and_global_pin() {
         use MoveDirection::{Down, Up};
         // 3 个分组：全局恒置顶于 0，用户组依次为 1、2
@@ -1329,8 +1444,8 @@ mod tests {
     }
 
     #[test]
-    fn apply_later_group_wins_tie() {
-        // 同权重同音：分组列表越靠后越优先（全局组恒置顶，天然靠后）
+    fn exact_text_locks_span_against_same_pinyin_rival() {
+        // 完全一致的词语锁定区间：同音高权重词条也不得改写（分组顺序靠后也不行）
         let groups = vec![
             group("global", true),
             group("older", false),
@@ -1342,7 +1457,78 @@ mod tests {
             entry("n1", "newer", "拳力", "quan li", 5),
         ];
         let resolved = resolve_entries(&active(&["older", "newer"]), &groups, &entries);
-        assert_eq!(apply_cached("权利", &resolved), "拳力");
+        assert_eq!(apply_cached("权利", &resolved), "权利");
+    }
+
+    #[test]
+    fn later_group_wins_correction_tie() {
+        // 无完全一致词条时：同权重同音的纠正候选仍按分组顺序（越靠后越优先）
+        let groups = vec![
+            group("global", true),
+            group("older", false),
+            group("newer", false),
+        ];
+        let entries = vec![
+            entry("g1", "global", "权利", "quan li", 5),
+            entry("o1", "older", "权力", "quan li", 5),
+            entry("n1", "newer", "拳力", "quan li", 5),
+        ];
+        let resolved = resolve_entries(&active(&["older", "newer"]), &groups, &entries);
+        // 文本无完全一致项：同权重下靠后分组的纠正候选胜出
+        assert_eq!(apply_cached("权立", &resolved), "拳力");
+    }
+
+    #[test]
+    fn exact_match_beats_correction_homophone() {
+        use std::collections::HashSet;
+
+        // 上海 / 桑海：纠正开启时完全一致的词语优先保留，双向皆然
+        let groups = vec![group("global", true), group("work", false)];
+        let entries = vec![
+            entry("w1", "work", "上海", "shang hai", 0),
+            entry("w2", "work", "桑海", "sang hai", 10),
+        ];
+        let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
+        let correction: HashSet<String> =
+            HashSet::from([crate::cores::pinyin_correction::RULE_S_SH.to_owned()]);
+        assert_eq!(
+            apply_cached_with_correction("上海", &resolved, &correction),
+            "上海"
+        );
+        assert_eq!(
+            apply_cached_with_correction("桑海", &resolved, &correction),
+            "桑海"
+        );
+    }
+
+    #[test]
+    fn correction_prefers_weight_then_insertion_order() {
+        use std::collections::HashSet;
+
+        // 纠正候选内部：权重优先；权重持平时先添加者胜
+        let groups = vec![group("global", true), group("work", false)];
+        let correction: HashSet<String> =
+            HashSet::from([crate::cores::pinyin_correction::RULE_S_SH.to_owned()]);
+        let entries = vec![
+            entry("w1", "work", "上海", "shang hai", 0),
+            entry("w2", "work", "桑海", "sang hai", 10),
+        ];
+        let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
+        // 无完全一致词条：高权重纠正候选胜出
+        assert_eq!(
+            apply_cached_with_correction("伤海", &resolved, &correction),
+            "桑海"
+        );
+        let entries = vec![
+            entry("w1", "work", "上海", "shang hai", 5),
+            entry("w2", "work", "桑海", "sang hai", 5),
+        ];
+        let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
+        // 权重持平：先添加的纠正候选胜出
+        assert_eq!(
+            apply_cached_with_correction("伤海", &resolved, &correction),
+            "上海"
+        );
     }
 
     #[test]
@@ -1368,10 +1554,18 @@ mod tests {
         let forward = resolve_entries(&active(&["work"]), &groups, &entries);
         let mut reversed = forward.clone();
         reversed.reverse();
-        // `resolve_entries` 经 `HashMap` 汇出顺序不定，指纹必须与顺序无关
+        // `resolve_entries` 经 `HashMap` 汇出顺序不定，指纹必须与汇出顺序无关
         assert_eq!(
             fingerprint_entries(&forward),
             fingerprint_entries(&reversed)
+        );
+        // 落盘顺序即添加顺序：输入顺序不同则 order 不同，指纹必须区分（仲裁结果可能不同）
+        let mut reordered = entries.clone();
+        reordered.reverse();
+        let shuffled = resolve_entries(&active(&["work"]), &groups, &reordered);
+        assert_ne!(
+            fingerprint_entries(&forward),
+            fingerprint_entries(&shuffled)
         );
     }
 
