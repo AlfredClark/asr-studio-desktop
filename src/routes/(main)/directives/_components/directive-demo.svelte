@@ -24,10 +24,8 @@
 
   /** 当前点亮的按下集合（就地变异，`SvelteSet` 本身即响应式） */
   let heldKeys = new SvelteSet<string>();
-  /** 当前事件键：描边环，不分方向 */
-  let currentKey = $state<string | null>(null);
-  /** 本轮触发过的键：逐事件累积，轮内保留描边，下一轮开始清空 */
-  let visitedKeys = new SvelteSet<string>();
+  /** 当前松开的键（0~1 个）：仅松开事件描边环，按下事件无描边，借此凸显松开步骤 */
+  let releasedKeys = new SvelteSet<string>();
 
   /** 播放中：暂停冻结当前高亮，不断开序列 */
   let playing = $state(true);
@@ -49,18 +47,20 @@
     return direction === "press" ? m.directives_action_press() : m.directives_action_release();
   }
 
-  /** 手动跳到指定步：暂停时步进/步退用，重算按住集与累计描边 */
+  /** 应用指定步的可视态：按住集重算 + 仅松开事件描边；越界即清空调零 */
+  function applyStepVisual(index: number): void {
+    heldKeys.clear();
+    releasedKeys.clear();
+    if (index < 0 || index >= actions.length) return;
+    for (const key of foldHeldKeys(actions, index)) heldKeys.add(key);
+    const action = actions[index];
+    if (action.direction === "release") releasedKeys.add(action.key);
+  }
+
+  /** 手动跳到指定步：暂停时步进/步退用，重算按住集与松开描边 */
   function showStep(index: number): void {
     stepIndex = index;
-    heldKeys.clear();
-    visitedKeys.clear();
-    if (index < 0 || index >= actions.length) {
-      currentKey = null;
-      return;
-    }
-    for (const key of foldHeldKeys(actions, index)) heldKeys.add(key);
-    currentKey = actions[index].key;
-    for (let i = 0; i <= index; i += 1) visitedKeys.add(actions[i].key);
+    applyStepVisual(index);
   }
 
   /** 步退：到开头回绕到末尾，形成首尾衔接循环 */
@@ -89,8 +89,7 @@
     const step = Math.max(intervalMs, DEMO_STEP_MIN_MS);
     if (sequence.length === 0 || !motionAllowed()) {
       heldKeys.clear();
-      visitedKeys.clear();
-      currentKey = null;
+      releasedKeys.clear();
       stepIndex = -1;
       return;
     }
@@ -105,15 +104,17 @@
       });
     void (async () => {
       while (!cancelled) {
-        visitedKeys.clear();
+        releasedKeys.clear();
         for (let index = 0; index < sequence.length; index += 1) {
           if (cancelled) return;
           await later(step);
           if (cancelled) return;
           heldKeys.clear();
           for (const key of foldHeldKeys(sequence, index)) heldKeys.add(key);
-          currentKey = sequence[index].key;
-          visitedKeys.add(sequence[index].key);
+          releasedKeys.clear();
+          if (sequence[index].direction === "release") {
+            releasedKeys.add(sequence[index].key);
+          }
           stepIndex = index;
         }
         if (cancelled) return;
@@ -188,7 +189,7 @@
           bind:clientWidth={naturalWidth}
           bind:clientHeight={naturalHeight}
         >
-          <KeyGrid {heldKeys} markedKeys={visitedKeys} {currentKey} />
+          <KeyGrid {heldKeys} markedKeys={releasedKeys} />
         </div>
       </div>
     </div>
