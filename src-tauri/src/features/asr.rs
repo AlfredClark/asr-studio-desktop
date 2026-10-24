@@ -33,15 +33,17 @@ pub struct ServiceStatus {
     pub load_ms: Option<u32>,
 }
 
-/// 文件转写结果：文本 + 音频时长 + 推理耗时，前端直接回显
+/// 文件转写结果：文本 + 音频时长 + 推理耗时 + 词库替换片段，前端直接回显
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct TranscribeResult {
-    /// 识别文本（空音频或静音时为空字符串，不算失败）
+    /// 识别文本（空音频或静音时为空字符串，不算失败；已剥句末标点，与投递文本一致）
     pub text: String,
     /// 音频时长秒
     pub audio_sec: f64,
     /// 推理耗时毫秒
     pub infer_ms: u32,
+    /// 词库替换展示片段：无替换时为空
+    pub segments: Vec<crate::features::lexicon::TextSegment>,
 }
 
 /// 服务单例：`None` 表示停止；转写时取出识别器独占使用后归还
@@ -541,9 +543,17 @@ async fn transcribe_file_inner(
     if !post_process {
         return outcome;
     }
-    // 词库后处理：空词库直接原文返回，推理耗时不受影响
+    // 词库后处理 + 句末剥离：与投递文本同口径，记录、回显、投递三处一致
     outcome.map(|mut result| {
-        result.text = crate::features::lexicon::apply_lexicon(app, &result.text);
+        let (text, mut segments) =
+            crate::features::lexicon::apply_lexicon_detailed(app, &result.text);
+        let strip_set = crate::cores::config::load_strip_trailing_punct(app);
+        let stripped = crate::features::output::strip_trailing_punct(&text, &strip_set);
+        crate::features::lexicon::truncate_segments(&mut segments, stripped.chars().count());
+        let stripped_len = stripped.len();
+        result.text = text;
+        result.text.truncate(stripped_len);
+        result.segments = segments;
         result
     })
 }
@@ -592,6 +602,7 @@ fn transcribe_blocking(
         text,
         audio_sec: (audio_sec * 100.0).round() / 100.0,
         infer_ms: u32::try_from(infer_ms).unwrap_or(u32::MAX),
+        segments: Vec::new(),
     })
 }
 

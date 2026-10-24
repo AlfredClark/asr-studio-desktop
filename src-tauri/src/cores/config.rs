@@ -809,7 +809,9 @@ pub fn load_active_lexicon_groups(app: &tauri::AppHandle) -> Vec<String> {
 }
 
 /// 读取持久化的句末移除标点集；未设置或类型不符时回落空串（不处理）
-fn load_strip_trailing_punct(app: &tauri::AppHandle) -> String {
+///
+/// 转写热路径走此单键读取，不拉全量 `load_config`
+pub fn load_strip_trailing_punct(app: &tauri::AppHandle) -> String {
     read_key(app, KEY_STRIP_TRAILING_PUNCT)
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_default()

@@ -29,7 +29,7 @@ vi.mock("#libs/commands", () => {
       stopRecording: () =>
         fake({ status: "ok", data: { path: "/records/a.wav", file_name: "a.wav", seconds: 1 } }),
       transcribeFile: () =>
-        fake({ status: "ok", data: { text: "你好", audio_sec: 1, infer_ms: 100 } }),
+        fake({ status: "ok", data: { text: "你好", audio_sec: 1, infer_ms: 100, segments: [] } }),
       outputText: () =>
         fake({
           status: "ok",

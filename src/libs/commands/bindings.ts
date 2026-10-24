@@ -629,14 +629,33 @@ export type SystemInfo = {
 	hostname: string,
 };
 
-/**  文件转写结果：文本 + 音频时长 + 推理耗时，前端直接回显 */
+/**  文本片段：原文完全一致的命中按 `Unchanged` 出，不画线 */
+export type TextSegment = {
+	/**  片段种类 */
+	kind: TextSegmentKind,
+	/**  片段文本 */
+	text: string,
+};
+
+/**  文本片段种类：识别记录可视化后处理过程的依据 */
+export type TextSegmentKind = 
+/**  未改动原文 */
+"unchanged" | 
+/**  被替换的原文中实际变化的部分（首尾公共字已裁掉，前端删除线展示） */
+"original" | 
+/**  替换后的文本（前端加粗展示） */
+"replacement";
+
+/**  文件转写结果：文本 + 音频时长 + 推理耗时 + 词库替换片段，前端直接回显 */
 export type TranscribeResult = {
-	/**  识别文本（空音频或静音时为空字符串，不算失败） */
+	/**  识别文本（空音频或静音时为空字符串，不算失败；已剥句末标点，与投递文本一致） */
 	text: string,
 	/**  音频时长秒 */
 	audio_sec: number | null,
 	/**  推理耗时毫秒 */
 	infer_ms: number,
+	/**  词库替换展示片段：无替换时为空 */
+	segments: TextSegment[],
 };
 
 /**  可用的更新信息：只含前端展示所需字段，插件的 `Update` 句柄不出命令边界 */

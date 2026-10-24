@@ -195,21 +195,29 @@ describe("服务页", () => {
         text: "你好世界",
         audioSec: 2.5,
         inferMs: 300,
+        segments: [],
         fileName: "a.wav",
         id: 2,
         at: 2,
         kind: "voice",
         output: "paste",
+        spokenPinyin: "",
+        directiveHit: false,
+        directiveName: "",
       },
       {
         text: longText,
         audioSec: 5,
         inferMs: 1500,
+        segments: [],
         fileName: "b.wav",
         id: 1,
         at: 1,
         kind: "directive",
         output: null,
+        spokenPinyin: "da kai",
+        directiveHit: false,
+        directiveName: "",
       },
     ];
     render(Page);
@@ -219,6 +227,9 @@ describe("服务页", () => {
     expect(stats.textContent).toContain("2");
     expect(stats.textContent).toContain("0.9 s");
     expect(screen.getByText("你好世界")).not.toBeNull();
+    // 指令记录按 `文本[拼音]` 展示，未命中追加弱色 `[Missed]` 标记
+    expect(screen.getByText(`${longText}[da kai]`)).not.toBeNull();
+    expect(screen.getByText("[Missed]")).not.toBeNull();
     // 来源类型移至行最右徽标，输出方式跟在用时后方
     expect(screen.getAllByText("Text")).not.toHaveLength(0);
     expect(screen.getByText("Directive")).not.toBeNull();
@@ -230,7 +241,81 @@ describe("服务页", () => {
     await user.click(recordButton);
 
     expect(recordButton.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText(longText)).not.toBeNull();
+    expect(screen.getByText(`${longText}[da kai]`)).not.toBeNull();
+  });
+
+  it("识别记录可按来源筛选，筛选落盘记忆", async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem("app.service-history-filter");
+    const longText = `识别结果全文${"补字".repeat(40)}结尾`;
+    serviceStateMock.history = [
+      {
+        text: "你好世界",
+        audioSec: 2.5,
+        inferMs: 300,
+        segments: [],
+        fileName: "a.wav",
+        id: 2,
+        at: 2,
+        kind: "voice",
+        output: "paste",
+        spokenPinyin: "",
+        directiveHit: false,
+        directiveName: "",
+      },
+      {
+        text: longText,
+        audioSec: 5,
+        inferMs: 1500,
+        segments: [],
+        fileName: "b.wav",
+        id: 1,
+        at: 1,
+        kind: "directive",
+        output: null,
+        spokenPinyin: "da kai",
+        directiveHit: false,
+        directiveName: "",
+      },
+    ];
+    render(Page);
+    // 默认全部展示
+    expect(screen.getByText("你好世界")).not.toBeNull();
+    expect(screen.getByText(`${longText}[da kai]`)).not.toBeNull();
+
+    // 切到文本：指令记录隐藏
+    await user.click(screen.getByRole("combobox", { name: m.service_history_filter_label() }));
+    const voiceOption = await waitFor(() => {
+      const el =
+        screen
+          .queryAllByRole("option", { hidden: true })
+          .find((item) => item.textContent?.trim() === m.service_history_kind_text()) ?? null;
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    await user.click(voiceOption);
+    expect(screen.getByText("你好世界")).not.toBeNull();
+    expect(screen.queryByText(`${longText}[da kai]`)).toBeNull();
+    expect(screen.queryByText("[Missed]")).toBeNull();
+    expect(localStorage.getItem("app.service-history-filter")).toBe("voice");
+
+    // 切到指令：文本记录隐藏，未命中标记随行显示
+    await user.click(screen.getByRole("combobox", { name: m.service_history_filter_label() }));
+    const directiveOption = await waitFor(() => {
+      const el =
+        screen
+          .queryAllByRole("option", { hidden: true })
+          .find((item) => item.textContent?.trim() === m.service_history_kind_directive()) ?? null;
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    await user.click(directiveOption);
+    expect(screen.queryByText("你好世界")).toBeNull();
+    expect(screen.getByText(`${longText}[da kai]`)).not.toBeNull();
+    expect(screen.getByText("[Missed]")).not.toBeNull();
+
+    // 复位，避免落盘值污染后续用例
+    localStorage.removeItem("app.service-history-filter");
   });
 
   it("服务未运行时录制按钮禁用", () => {

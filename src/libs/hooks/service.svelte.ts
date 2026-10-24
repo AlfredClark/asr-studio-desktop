@@ -3,7 +3,13 @@
 // 前端不做本地推断（后端是唯一真值，与配置中心的约定一致）。
 import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
-import type { AudioDevice, ModelEntry, OutputReport, OutputVia } from "#libs/commands/types";
+import type {
+  AudioDevice,
+  ModelEntry,
+  OutputReport,
+  OutputVia,
+  TextSegment,
+} from "#libs/commands/types";
 import { configValue } from "#libs/hooks/config.svelte";
 import {
   directiveState,
@@ -48,10 +54,68 @@ export interface RecognitionRecord extends TestResult {
   kind: "voice" | "directive";
   /** 实际投递通道：快捷键输出成功后回填；测试按钮与指令回放不走文本输出，恒为 `null` */
   output: OutputVia | null;
+  /** 词库替换展示片段：语音记录的后处理可视化；指令记录恒为空 */
+  segments: TextSegment[];
+  /** 指令触发时的口语拼音（归一化后）；语音记录恒为 `""` */
+  spokenPinyin: string;
+  /** 指令是否命中：语音记录恒为 `false`，仅 `kind === "directive"` 时有意义 */
+  directiveHit: boolean;
+  /** 命中的指令名；未命中或语音记录恒为 `""` */
+  directiveName: string;
 }
 
 /** 历史上限：最新在前，超限截尾，避免长会话内存膨胀 */
 export const HISTORY_LIMIT = 100;
+
+/** 识别记录筛选取值：按来源过滤，`all` 不过滤 */
+export type ServiceHistoryFilter = "all" | "voice" | "directive";
+
+/** 默认筛选：全部展示 */
+export const DEFAULT_SERVICE_HISTORY_FILTER: ServiceHistoryFilter = "all";
+
+/** 筛选持久化键名，改名即视为放弃老用户存量 */
+export const SERVICE_HISTORY_FILTER_STORAGE_KEY = "app.service-history-filter";
+
+/** 校验筛选取值，脏数据回落时使用 */
+export function isServiceHistoryFilter(value: unknown): value is ServiceHistoryFilter {
+  return (
+    typeof value === "string" &&
+    (["all", "voice", "directive"] as readonly string[]).includes(value)
+  );
+}
+
+/** 读取持久化筛选，缺失或非法一律回落全部展示 */
+export function loadServiceHistoryFilter(): ServiceHistoryFilter {
+  try {
+    if (typeof localStorage === "undefined") {
+      return DEFAULT_SERVICE_HISTORY_FILTER;
+    }
+    const stored = localStorage.getItem(SERVICE_HISTORY_FILTER_STORAGE_KEY);
+    return isServiceHistoryFilter(stored) ? stored : DEFAULT_SERVICE_HISTORY_FILTER;
+  } catch {
+    // 隐私模式等存储不可用时按默认值渲染，不阻塞首帧
+    return DEFAULT_SERVICE_HISTORY_FILTER;
+  }
+}
+
+/** 持久化筛选：落盘失败仅影响下次启动的默认值，本次会话不受影响 */
+export function saveServiceHistoryFilter(next: ServiceHistoryFilter): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(SERVICE_HISTORY_FILTER_STORAGE_KEY, next);
+  } catch {
+    // 落盘失败静默忽略
+  }
+}
+
+/** 按来源过滤识别记录：`all` 不过滤，其余只留对应来源 */
+export function filterHistoryByKind(
+  records: RecognitionRecord[],
+  mode: ServiceHistoryFilter,
+): RecognitionRecord[] {
+  if (mode === "all") return records;
+  return records.filter((record) => record.kind === mode);
+}
 
 /** 会话内记录 id 计数器：模块级，重启即清零 */
 let recordSeq = 0;
@@ -417,12 +481,17 @@ async function stopAndTranscribe(raw = false): Promise<RecognitionRecord | null>
       text: transcribed.data.text,
       audioSec: transcribed.data.audio_sec ?? 0,
       inferMs: transcribed.data.infer_ms,
+      segments: transcribed.data.segments,
       fileName,
       id: (recordSeq += 1),
       at: Date.now(),
       kind: raw ? "directive" : "voice",
       // 投递通道由调用方回填：快捷键输出成功后写实际通道，其余流程保持空
       output: null,
+      // 指令展示字段由指令流程回填：口语拼音、是否命中、命中指令名
+      spokenPinyin: "",
+      directiveHit: false,
+      directiveName: "",
     };
     // 会话历史：测试按钮与快捷键两路共用同一内核，此处一次记入，最新在前、超限截尾
     serviceState.history.unshift(entry);
@@ -524,6 +593,13 @@ export async function handleDirectiveTrigger(): Promise<void> {
         applyRecognition: configValue("pinyin_correction_apply_recognition", true),
         applyDirective: configValue("pinyin_correction_apply_directive", true),
       });
+      // 指令展示字段回填：命中与否、口语拼音、命中指令名均落盘到历史记录
+      const stored = serviceState.history.find((item) => item.id === result.id);
+      if (stored) {
+        stored.spokenPinyin = spoken;
+        stored.directiveHit = matched != null;
+        stored.directiveName = matched?.name ?? "";
+      }
       if (matched == null) return;
       const replayed = await commands.replayDirective(matched.id).result();
       if (replayed.status === "error") {

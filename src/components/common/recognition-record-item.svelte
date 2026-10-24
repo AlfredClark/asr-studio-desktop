@@ -27,6 +27,15 @@
     });
   }
 
+  /** 指令记录展示文案：命中为 `文本[拼音][指令名]`，未命中为 `文本[拼音]`；拼音为空时省略中括号段 */
+  function directiveDisplay(record: RecognitionRecord): string {
+    const pinyinPart = record.spokenPinyin === "" ? "" : `[${record.spokenPinyin}]`;
+    if (record.directiveHit) {
+      return `${record.text}${pinyinPart}[${record.directiveName}]`;
+    }
+    return `${record.text}${pinyinPart}`;
+  }
+
   /** 记录来源徽标文案 */
   function kindLabel(kind: RecognitionRecord["kind"]): string {
     return kind === "directive"
@@ -56,9 +65,25 @@
   onclick={onToggle}
 >
   <div class="min-w-0 flex-1">
-    <p class={open ? "text-sm whitespace-pre-wrap" : "line-clamp-2 text-sm"}>
-      {record.text}
-    </p>
+    {#if record.kind === "directive"}
+      <p class={open ? "text-sm whitespace-pre-wrap" : "line-clamp-2 text-sm"}>
+        {directiveDisplay(record)}{#if !record.directiveHit}
+          <span class="text-muted-foreground">[{m.service_history_directive_missed()}]</span>
+        {/if}
+      </p>
+    {:else if record.segments.length > 0}
+      <p class={open ? "text-sm whitespace-pre-wrap" : "line-clamp-2 text-sm"}>
+        {#each record.segments as segment, index (index)}
+          {#if segment.kind === "original"}<s class="text-muted-foreground">{segment.text}</s
+            >{:else if segment.kind === "replacement"}<strong>{segment.text}</strong
+            >{:else}{segment.text}{/if}
+        {/each}
+      </p>
+    {:else}
+      <p class={open ? "text-sm whitespace-pre-wrap" : "line-clamp-2 text-sm"}>
+        {record.text}
+      </p>
+    {/if}
     <p class="mt-1 text-xs text-muted-foreground tabular-nums">
       {recordTime(record.at)} · {m.service_result_audio()}
       {record.audioSec.toFixed(1)}s · {m.service_result_time()}

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { Directive, LexiconEntry, LexiconGroup, ModelEntry } from "#libs/commands/types";
+import type { RecognitionRecord } from "#libs/hooks/service.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
 import Page from "../../../../routes/(main)/+page.svelte";
 
@@ -49,16 +50,7 @@ const serviceStateMock = vi.hoisted(
     switching: boolean;
     recording: boolean;
     recognizing: boolean;
-    history: {
-      id: number;
-      text: string;
-      audioSec: number;
-      inferMs: number;
-      fileName: string;
-      at: number;
-      kind: "voice";
-      output: "paste" | "clipboard" | "ime" | null;
-    }[];
+    history: RecognitionRecord[];
   } => ({
     status: null,
     models: [],
@@ -278,10 +270,14 @@ describe("首页工作台", () => {
       text: `记录${id}`,
       audioSec: 1,
       inferMs: 100,
+      segments: [],
       fileName: "a.wav",
       at: id,
       kind: "voice" as const,
       output: "paste" as const,
+      spokenPinyin: "",
+      directiveHit: false,
+      directiveName: "",
     }));
     render(Page);
     const workspace = await screen.findByTestId("home-workspace");

@@ -46,9 +46,10 @@ pub struct OutputReport {
     pub reason: OutputReason,
 }
 
-/// 输出识别文本；空文本直接返回剪贴板通道，不做任何事
+/// 输出识别文本；空文本直接返回剪贴板通道，不做任何事。
+/// 句末标点已在转写阶段剥离（记录与投递同口径），此处不再重复剥离。
 pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputReport> {
-    use crate::cores::config::{self, ShortcutOutput};
+    use crate::cores::config::ShortcutOutput;
 
     if text.trim().is_empty() {
         return Ok(OutputReport {
@@ -57,17 +58,6 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
             reason: OutputReason::EmptyText,
         });
     }
-    let config = config::load_config(app);
-    // 句末移除：命中配置标点集则剥掉一个句末标点；剥完变空按空文本处理
-    let stripped = strip_trailing_punct(text, &config.strip_trailing_punct);
-    if stripped.trim().is_empty() {
-        return Ok(OutputReport {
-            via: OutputVia::Clipboard,
-            fallback: false,
-            reason: OutputReason::EmptyText,
-        });
-    }
-    let text = stripped;
     if check_focus() == FocusKind::NonEditable {
         log::info!("no editable focus, skipping injection and keeping text in clipboard");
         write_clipboard(app, text)?;
@@ -77,8 +67,7 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
             reason: OutputReason::NoEditableFocus,
         });
     }
-    let config = config::load_config(app);
-    let mode = config.shortcut_output;
+    let mode = crate::cores::config::load_config(app).shortcut_output;
     match mode {
         ShortcutOutput::Ime => match ime_type_text(text) {
             Ok(()) => Ok(OutputReport {
@@ -105,7 +94,7 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
             })
         }
         ShortcutOutput::Paste => {
-            let want_restore = config.shortcut_paste_restore;
+            let want_restore = crate::cores::config::load_config(app).shortcut_paste_restore;
             // 恢复模式先快照原剪贴板（仅文本；图片等非文本快照失败即放弃恢复，不阻断输出）
             let previous = if want_restore {
                 read_clipboard(app)
@@ -186,8 +175,8 @@ fn restore_clipboard_if_unchanged(app: &tauri::AppHandle, pasted: &str, previous
     }
 }
 
-/// 剥掉一个句末命中标点：集合为空直接返回原文；纯函数，可单测
-fn strip_trailing_punct<'a>(text: &'a str, set: &str) -> &'a str {
+/// 剥掉一个句末命中标点：集合为空直接返回原文；转写阶段调用，投递与记录同口径；纯函数，可单测
+pub fn strip_trailing_punct<'a>(text: &'a str, set: &str) -> &'a str {
     if set.is_empty() {
         return text;
     }

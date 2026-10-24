@@ -3,16 +3,21 @@ import {
   DEFAULT_DEVICE_ID,
   SELECTED_DEVICE_STORAGE_KEY,
   SELECTED_MODEL_STORAGE_KEY,
+  SERVICE_HISTORY_FILTER_STORAGE_KEY,
   TRANSCRIBE_BUSY_MESSAGE,
   TRANSCRIBE_CANCELLED_MESSAGE,
   deviceLabel,
+  filterHistoryByKind,
   handleDirectiveTrigger,
   handleQuickLexiconTrigger,
   handleShortcutTrigger,
+  isServiceHistoryFilter,
   isTranscribeBusyFailure,
   isTranscribeCancelledFailure,
+  loadServiceHistoryFilter,
   loadStoredSelection,
   refreshServiceData,
+  saveServiceHistoryFilter,
   selectDevice,
   selectModel,
   serviceState,
@@ -22,6 +27,7 @@ import {
   stopTestRecording,
 } from "#libs/hooks/service.svelte";
 import type { AudioDevice, Directive, ModelEntry } from "#libs/commands/types";
+import type { RecognitionRecord } from "#libs/hooks/service.svelte";
 import type { LexiconGroup } from "#libs/commands/types";
 import { configState, type AppConfig } from "#libs/hooks/config.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
@@ -176,7 +182,10 @@ beforeEach(() => {
     }) as never,
   );
   mocked.transcribeFile.mockReturnValue(
-    fakeCommand({ status: "ok", data: { text: "你好", audio_sec: 2.5, infer_ms: 300 } }) as never,
+    fakeCommand({
+      status: "ok",
+      data: { text: "你好", audio_sec: 2.5, infer_ms: 300, segments: [] },
+    }) as never,
   );
   mocked.outputText.mockReturnValue(
     fakeCommand({
@@ -191,7 +200,7 @@ beforeEach(() => {
   mocked.transcribeFileRaw.mockReturnValue(
     fakeCommand({
       status: "ok",
-      data: { text: "你好", audio_sec: 2.5, infer_ms: 300 },
+      data: { text: "你好", audio_sec: 2.5, infer_ms: 300, segments: [] },
     }) as never,
   );
   mocked.replayDirective.mockReturnValue(
@@ -461,6 +470,10 @@ describe("识别服务状态", () => {
       at: index,
       kind: "voice" as const,
       output: null,
+      segments: [],
+      spokenPinyin: "",
+      directiveHit: false,
+      directiveName: "",
     }));
 
     await startTestRecording();
@@ -485,6 +498,10 @@ describe("识别服务状态", () => {
         at: 1,
         kind: "voice",
         output: null,
+        segments: [],
+        spokenPinyin: "",
+        directiveHit: false,
+        directiveName: "",
       },
       {
         text: "世界！",
@@ -495,6 +512,10 @@ describe("识别服务状态", () => {
         at: 2,
         kind: "directive",
         output: null,
+        segments: [],
+        spokenPinyin: "",
+        directiveHit: false,
+        directiveName: "",
       },
     ]);
 
@@ -610,6 +631,69 @@ describe("识别服务状态", () => {
   });
 });
 
+describe("识别记录筛选", () => {
+  /** Node 环境桩 localStorage：每次调用都是全新空库 */
+  function stubFilterStorage(): void {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn((key: string) => store.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        store.set(key, value);
+      }),
+      removeItem: vi.fn((key: string) => {
+        store.delete(key);
+      }),
+    });
+  }
+
+  function historyRecord(partial: { id: number; kind: "voice" | "directive" }): RecognitionRecord {
+    return {
+      text: `记录${partial.id}`,
+      audioSec: 1,
+      inferMs: 100,
+      segments: [],
+      fileName: "a.wav",
+      at: partial.id,
+      output: null,
+      spokenPinyin: "",
+      directiveHit: false,
+      directiveName: "",
+      ...partial,
+    };
+  }
+
+  it("非法取值不被接受", () => {
+    expect(isServiceHistoryFilter("all")).toBe(true);
+    expect(isServiceHistoryFilter("voice")).toBe(true);
+    expect(isServiceHistoryFilter("directive")).toBe(true);
+    expect(isServiceHistoryFilter("nope")).toBe(false);
+    expect(isServiceHistoryFilter(null)).toBe(false);
+    expect(isServiceHistoryFilter(undefined)).toBe(false);
+  });
+
+  it("读写走 localStorage，脏数据回落全部", () => {
+    stubFilterStorage();
+    expect(loadServiceHistoryFilter()).toBe("all");
+    saveServiceHistoryFilter("voice");
+    expect(loadServiceHistoryFilter()).toBe("voice");
+    saveServiceHistoryFilter("directive");
+    expect(loadServiceHistoryFilter()).toBe("directive");
+    localStorage.setItem(SERVICE_HISTORY_FILTER_STORAGE_KEY, "nope");
+    expect(loadServiceHistoryFilter()).toBe("all");
+  });
+
+  it("按来源过滤，all 不过滤", () => {
+    const records = [
+      historyRecord({ id: 1, kind: "voice" }),
+      historyRecord({ id: 2, kind: "directive" }),
+    ];
+    expect(filterHistoryByKind(records, "all")).toHaveLength(2);
+    expect(filterHistoryByKind(records, "voice").map((record) => record.id)).toEqual([1]);
+    expect(filterHistoryByKind(records, "directive").map((record) => record.id)).toEqual([2]);
+    expect(filterHistoryByKind([], "voice")).toHaveLength(0);
+  });
+});
+
 describe("快捷词库触发", () => {
   function runningService(): void {
     runningStatus();
@@ -703,7 +787,8 @@ describe("指令触发", () => {
 
   it("录制中按第二次走原始文本转写并回放命中指令", async () => {
     runningRecording();
-    findDirectiveByPinyinMock.mockReturnValue({ id: "d-1" } as Directive);
+    suggestDirectivePinyinMock.mockResolvedValue("ni hao");
+    findDirectiveByPinyinMock.mockReturnValue({ id: "d-1", name: "打开记事本" } as Directive);
 
     await handleDirectiveTrigger();
 
@@ -712,18 +797,31 @@ describe("指令触发", () => {
     expect(findDirectiveByPinyinMock).toHaveBeenCalled();
     expect(mocked.replayDirective).toHaveBeenCalledWith("d-1");
     expect(serviceState.history[0]).toMatchObject({ text: "你好", kind: "directive" });
+    // 指令展示字段回填：口语拼音、命中标记、命中指令名
+    expect(serviceState.history[0]).toMatchObject({
+      spokenPinyin: "ni hao",
+      directiveHit: true,
+      directiveName: "打开记事本",
+    });
     expect(mockedToast.success).not.toHaveBeenCalled();
     expect(mockedToast.error).not.toHaveBeenCalled();
   });
 
   it("未命中时静默返回", async () => {
     runningRecording();
+    suggestDirectivePinyinMock.mockResolvedValue("ni hao");
     findDirectiveByPinyinMock.mockReturnValue(null);
 
     await handleDirectiveTrigger();
 
     expect(refreshDirectivesMock).toHaveBeenCalledOnce();
     expect(mocked.replayDirective).not.toHaveBeenCalled();
+    // 未命中仍回填拼音与标记，供记录展示 `文本[拼音][未命中]`
+    expect(serviceState.history[0]).toMatchObject({
+      spokenPinyin: "ni hao",
+      directiveHit: false,
+      directiveName: "",
+    });
     expect(mockedToast.success).not.toHaveBeenCalled();
     expect(mockedToast.error).not.toHaveBeenCalled();
     expect(mockedToast.warning).not.toHaveBeenCalled();

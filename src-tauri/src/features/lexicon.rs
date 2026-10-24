@@ -30,6 +30,40 @@ pub const WEIGHT_MIN: i32 = -100;
 /// 权重上下界：UI 步进与写入钳制共用
 pub const WEIGHT_MAX: i32 = 100;
 
+/// 文本片段种类：识别记录可视化后处理过程的依据
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TextSegmentKind {
+    /// 未改动原文
+    Unchanged,
+    /// 被替换的原文中实际变化的部分（首尾公共字已裁掉，前端删除线展示）
+    Original,
+    /// 替换后的文本（前端加粗展示）
+    Replacement,
+}
+
+/// 文本片段：原文完全一致的命中按 `Unchanged` 出，不画线
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct TextSegment {
+    /// 片段种类
+    pub kind: TextSegmentKind,
+    /// 片段文本
+    pub text: String,
+}
+
+/// 已接受替换的字符区间：供片段构建与句末标点截断共用
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedSpan {
+    /// 起始字符下标（含）
+    pub char_start: usize,
+    /// 结束字符下标（不含）
+    pub char_end: usize,
+    /// 被替换的原文
+    pub original: String,
+    /// 替换后的文本
+    pub replacement: String,
+}
+
 /// 词库快照：分组 + 词条 + 生效组 id 列表，前端一次拉全（命令返回体）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct LexiconSnapshot {
@@ -148,6 +182,8 @@ struct Candidate<'a> {
     entry: &'a LexiconEntry,
     byte_start: usize,
     byte_end: usize,
+    char_start: usize,
+    char_end: usize,
     kind: MatchKind,
     weight: i32,
     syllables: usize,
@@ -281,6 +317,9 @@ fn collect_candidates<'a>(
                 entry,
                 byte_start,
                 byte_end,
+                char_start,
+                // `char_end` 为闭区间末下标，转开区间供片段构建使用
+                char_end: char_end + 1,
                 kind,
                 weight: entry.weight,
                 syllables: deduped.pattern_counts[pattern],
@@ -294,8 +333,9 @@ fn collect_candidates<'a>(
 
 /// 仲裁并落子：完全一致优先 → 权重降序 → 分组顺序降序（越靠后越优先，
 /// 全局恒置顶故天然靠后）→ 音节长度降序 → 添加顺序升序；
-/// 重叠区间只保留首个接受者，Exact 天然压制重叠的 Corrected
-fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> String {
+/// 重叠区间只保留首个接受者，Exact 天然压制重叠的 Corrected。
+/// 返回拼好的文本与已接受替换的字符区间（原文一致的命中不产生区间）。
+fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> (String, Vec<AppliedSpan>) {
     candidates.sort_by(|left, right| {
         left.kind
             .cmp(&right.kind)
@@ -305,6 +345,7 @@ fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> String {
             .then_with(|| left.order.cmp(&right.order))
     });
     let mut accepted: Vec<(usize, usize)> = Vec::new();
+    let mut spans: Vec<AppliedSpan> = Vec::new();
     let mut replacements: Vec<(usize, usize, &str)> = Vec::new();
     for candidate in &candidates {
         if accepted
@@ -314,6 +355,15 @@ fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> String {
             continue;
         }
         accepted.push((candidate.byte_start, candidate.byte_end));
+        // 原文一致的命中只占位锁定，不产生替换区间
+        if candidate.kind == MatchKind::Corrected {
+            spans.push(AppliedSpan {
+                char_start: candidate.char_start,
+                char_end: candidate.char_end,
+                original: text[candidate.byte_start..candidate.byte_end].to_owned(),
+                replacement: candidate.entry.text.clone(),
+            });
+        }
         replacements.push((
             candidate.byte_start,
             candidate.byte_end,
@@ -321,9 +371,10 @@ fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> String {
         ));
     }
     if replacements.is_empty() {
-        return text.to_owned();
+        return (text.to_owned(), spans);
     }
     replacements.sort_unstable_by_key(|(start, _, _)| *start);
+    spans.sort_unstable_by_key(|span| span.char_start);
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
     for (start, end, replacement) in replacements {
@@ -332,7 +383,98 @@ fn apply_replacements(text: &str, mut candidates: Vec<Candidate>) -> String {
         cursor = end;
     }
     out.push_str(&text[cursor..]);
-    out
+    (out, spans)
+}
+
+/// 取原文相对替换文的变化中段：裁掉首尾公共字，仅保留真正变化的字符做删除线；
+/// 替换文保持完整加粗。原文与替换文不等时中段恒非空
+fn trim_changed_middle<'a>(original: &'a str, replacement: &str) -> &'a str {
+    let orig: Vec<char> = original.chars().collect();
+    let repl: Vec<char> = replacement.chars().collect();
+    let mut prefix = 0;
+    while prefix < orig.len() && prefix < repl.len() && orig[prefix] == repl[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    while suffix < orig.len() - prefix
+        && suffix < repl.len() - prefix
+        && orig[orig.len() - 1 - suffix] == repl[repl.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    let end = orig.len() - suffix;
+    let byte_start = original
+        .char_indices()
+        .nth(prefix)
+        .map_or(original.len(), |(index, _)| index);
+    let byte_end = original
+        .char_indices()
+        .nth(end)
+        .map_or(original.len(), |(index, _)| index);
+    &original[byte_start..byte_end]
+}
+
+/// 由原文与已接受替换区间构建展示片段：未改动原文、被替换原文（仅变化中段）、
+/// 替换后全文（完整加粗）交错排列
+pub fn build_segments(raw: &str, spans: &[AppliedSpan]) -> Vec<TextSegment> {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut segments = Vec::new();
+    let mut cursor = 0;
+    for span in spans {
+        if span.char_start > cursor {
+            segments.push(TextSegment {
+                kind: TextSegmentKind::Unchanged,
+                text: chars[cursor..span.char_start].iter().collect(),
+            });
+        }
+        let changed = trim_changed_middle(&span.original, &span.replacement);
+        if !changed.is_empty() {
+            segments.push(TextSegment {
+                kind: TextSegmentKind::Original,
+                text: changed.to_owned(),
+            });
+        }
+        segments.push(TextSegment {
+            kind: TextSegmentKind::Replacement,
+            text: span.replacement.clone(),
+        });
+        cursor = span.char_end;
+    }
+    if cursor < chars.len() {
+        segments.push(TextSegment {
+            kind: TextSegmentKind::Unchanged,
+            text: chars[cursor..].iter().collect(),
+        });
+    }
+    segments
+}
+
+/// 按目标字符数从尾部截断片段：句末标点剥离后调用，保持片段与剥离后文本对齐
+pub fn truncate_segments(segments: &mut Vec<TextSegment>, keep_chars: usize) {
+    let mut drop = segments
+        .iter()
+        .map(|segment| segment.text.chars().count())
+        .sum::<usize>()
+        .saturating_sub(keep_chars);
+    for segment in segments.iter_mut().rev() {
+        if drop == 0 {
+            break;
+        }
+        let len = segment.text.chars().count();
+        if len <= drop {
+            segment.text.clear();
+            drop -= len;
+        } else {
+            let cut = segment
+                .text
+                .char_indices()
+                .nth(len - drop)
+                .map_or(segment.text.len(), |(index, _)| index);
+            segment.text.truncate(cut);
+            drop = 0;
+        }
+    }
+    segments.retain(|segment| !segment.text.is_empty());
 }
 
 /// 匹配器缓存：自动机编译是转写热路径最贵一步，按词条指纹复用；
@@ -388,19 +530,15 @@ fn fingerprint_entries(entries: &[ResolvedEntry]) -> u64 {
     hasher.finish()
 }
 
-/// 带缓存的后处理：缓存命中跳过自动机重建；构建失败回落原文（与 `apply` 同口径）
-pub fn apply_cached(text: &str, entries: &[ResolvedEntry]) -> String {
-    apply_cached_with_correction(text, entries, &std::collections::HashSet::new())
-}
-
-/// 带纠正的后处理：纠正规则同时折叠识别拼音流与词条模板；缓存键包含规则指纹
-pub fn apply_cached_with_correction(
+/// 带展示片段的后处理：缓存命中跳过自动机重建；构建失败回落原文；
+/// 返回拼好的文本与替换片段，无替换时片段为空
+pub fn apply_detailed(
     text: &str,
     entries: &[ResolvedEntry],
     correction: &std::collections::HashSet<String>,
-) -> String {
+) -> (String, Vec<TextSegment>) {
     if entries.is_empty() {
-        return text.to_owned();
+        return (text.to_owned(), Vec::new());
     }
     let fingerprint =
         fingerprint_entries(entries).wrapping_add(pinyin_correction::fingerprint_rules(correction));
@@ -424,13 +562,13 @@ pub fn apply_cached_with_correction(
                 })
                 .collect();
             let Some(deduped) = dedupe_patterns(&rebuilt, correction) else {
-                return text.to_owned();
+                return (text.to_owned(), Vec::new());
             };
             let automaton = match aho_corasick::AhoCorasick::new(&deduped.patterns) {
                 Ok(automaton) => automaton,
                 Err(err) => {
                     log::warn!("lexicon automaton build failed, skipping post-processing: {err:#}");
-                    return text.to_owned();
+                    return (text.to_owned(), Vec::new());
                 }
             };
             let mut cached_entries = Vec::with_capacity(owned.len());
@@ -465,11 +603,12 @@ pub fn apply_cached_with_correction(
         .collect();
     let chars: Vec<char> = text.chars().collect();
     let Some(stream) = build_syllable_stream(text, &chars, correction) else {
-        return text.to_owned();
+        return (text.to_owned(), Vec::new());
     };
     let candidates =
         collect_candidates(&stream, &cached.automaton, &cached.deduped, &resolved, text);
-    apply_replacements(text, candidates)
+    let (out, spans) = apply_replacements(text, candidates);
+    (out, build_segments(text, &spans))
 }
 
 /// 识别纠正是否生效：总开关开、识别应用开、且有选中规则
@@ -481,26 +620,27 @@ const fn recognition_correction_enabled(
     enabled && apply_recognition && !rules.is_empty()
 }
 
-/// 对识别文本应用生效词库（含拼音纠正）：空词库直接原文返回；调用方为转写命令
-pub fn apply_lexicon(app: &tauri::AppHandle, text: &str) -> String {
+/// 对识别文本应用生效词库（含拼音纠正）：空词库直接原文返回；调用方为转写命令。
+/// 返回处理后文本与替换片段，无替换时片段为空
+pub fn apply_lexicon_detailed(app: &tauri::AppHandle, text: &str) -> (String, Vec<TextSegment>) {
     if text.is_empty() {
-        return text.to_owned();
+        return (text.to_owned(), Vec::new());
     }
     // 生效分组与纠正开关走单键读取，转写热路径不拉全量配置
     let active = crate::cores::config::load_active_lexicon_groups(app);
     let data = crate::cores::lexicon::load_data(app);
     let resolved = resolve_entries(&active, &data.groups, &data.entries);
     if resolved.is_empty() {
-        return text.to_owned();
+        return (text.to_owned(), Vec::new());
     }
     let enabled = crate::cores::config::load_pinyin_correction_enabled(app);
     let apply_recognition = crate::cores::config::load_pinyin_correction_apply_recognition(app);
     let rules = crate::cores::config::load_pinyin_correction_rules(app);
     if !recognition_correction_enabled(enabled, apply_recognition, &rules) {
-        return apply_cached(text, &resolved);
+        return apply_detailed(text, &resolved, &std::collections::HashSet::new());
     }
     let correction = pinyin_correction::enabled_set(&rules);
-    apply_cached_with_correction(text, &resolved, &correction)
+    apply_detailed(text, &resolved, &correction)
 }
 
 /// 权重钳制：`-100..=100`，越界写入时收敛
@@ -1286,6 +1426,11 @@ mod tests {
         }
     }
 
+    /// 无纠正后处理的纯文本断言口径：`apply_detailed` 的文本分量
+    fn plain(text: &str, resolved: &[ResolvedEntry]) -> String {
+        apply_detailed(text, resolved, &std::collections::HashSet::new()).0
+    }
+
     #[test]
     fn parse_pinyin_normalizes_case_and_variants() {
         assert_eq!(parse_pinyin("Quan Li"), vec!["quan", "li"]);
@@ -1317,14 +1462,11 @@ mod tests {
         let entries = vec![entry("w1", "work", "知道", "zhi dao", 0)];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 无纠正：平舌文本不命中翘舌词条
-        assert_eq!(apply_cached("自道", &resolved), "自道");
+        assert_eq!(plain("自道", &resolved), "自道");
         // 开启 z_zh：两侧折叠后命中
         let correction: HashSet<String> =
             HashSet::from([crate::cores::pinyin_correction::RULE_Z_ZH.to_owned()]);
-        assert_eq!(
-            apply_cached_with_correction("自道", &resolved, &correction),
-            "知道"
-        );
+        assert_eq!(apply_detailed("自道", &resolved, &correction).0, "知道");
     }
 
     #[test]
@@ -1417,11 +1559,11 @@ mod tests {
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 同音错字被纠正
-        assert_eq!(apply_cached("全力以赴", &resolved), "权力以赴");
+        assert_eq!(plain("全力以赴", &resolved), "权力以赴");
         // 原文本已一致：不改写
-        assert_eq!(apply_cached("权力游戏", &resolved), "权力游戏");
+        assert_eq!(plain("权力游戏", &resolved), "权力游戏");
         // 无关文本不动
-        assert_eq!(apply_cached("今天天气不错", &resolved), "今天天气不错");
+        assert_eq!(plain("今天天气不错", &resolved), "今天天气不错");
     }
 
     #[test]
@@ -1433,14 +1575,78 @@ mod tests {
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 权重优先：高权重的短词抢占重叠区
-        assert_eq!(apply_cached("背景大学", &resolved), "背静大学");
+        assert_eq!(plain("背景大学", &resolved), "背静大学");
         let entries = vec![
             entry("w-short", "work", "背静", "bei jing", 0),
             entry("w-long", "work", "北京大学", "bei jing da xue", 0),
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 权重持平：同组内长词优先
-        assert_eq!(apply_cached("背景大学", &resolved), "北京大学");
+        assert_eq!(plain("背景大学", &resolved), "北京大学");
+    }
+
+    #[test]
+    fn segments_mark_replaced_and_untouched_parts() {
+        use super::TextSegmentKind::{Original, Replacement, Unchanged};
+
+        let groups = vec![group("global", true), group("work", false)];
+        let entries = vec![
+            entry("w1", "work", "权力", "quan li", 0),
+            entry("w2", "work", "成长", "cheng zhang", 0),
+        ];
+        let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
+        let (out, segments) =
+            apply_detailed("全力以赴成长", &resolved, &std::collections::HashSet::new());
+        assert_eq!(out, "权力以赴成长");
+        let kinds: Vec<super::TextSegmentKind> =
+            segments.iter().map(|segment| segment.kind).collect();
+        let texts: Vec<&str> = segments
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect();
+        // 完全一致的“成长”按未改动出，不画线；尾部上下文整段保留
+        assert_eq!(kinds, vec![Original, Replacement, Unchanged]);
+        assert_eq!(texts, vec!["全", "权力", "以赴成长"]);
+    }
+
+    #[test]
+    fn truncate_segments_cuts_trailing_chars_only() {
+        use super::TextSegmentKind::{Original, Replacement, Unchanged};
+
+        let mut segments = vec![
+            super::TextSegment {
+                kind: Unchanged,
+                text: "你好".to_owned(),
+            },
+            super::TextSegment {
+                kind: Original,
+                text: "，。".to_owned(),
+            },
+            super::TextSegment {
+                kind: Replacement,
+                text: "。".to_owned(),
+            },
+        ];
+        super::truncate_segments(&mut segments, 3);
+        let texts: Vec<&str> = segments
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect();
+        // 从尾部共剥掉 2 个字符：末片段清空移除，原文片段缩为 1 字
+        assert_eq!(texts, vec!["你好", "，"]);
+        assert_eq!(segments[1].kind, Original);
+    }
+
+    #[test]
+    fn changed_middle_trims_common_affixes() {
+        // 后缀公共字裁掉：原文仅留变化字，替换文保持完整
+        assert_eq!(trim_changed_middle("上海", "桑海"), "上");
+        // 前缀公共字同样裁掉
+        assert_eq!(trim_changed_middle("开心", "开新"), "心");
+        // 无公共首尾：原文整体保留
+        assert_eq!(trim_changed_middle("全力", "权力"), "全");
+        // 全不相同：原文整体保留
+        assert_eq!(trim_changed_middle("你好", "世界"), "你好");
     }
 
     #[test]
@@ -1457,7 +1663,7 @@ mod tests {
             entry("n1", "newer", "拳力", "quan li", 5),
         ];
         let resolved = resolve_entries(&active(&["older", "newer"]), &groups, &entries);
-        assert_eq!(apply_cached("权利", &resolved), "权利");
+        assert_eq!(plain("权利", &resolved), "权利");
     }
 
     #[test]
@@ -1475,7 +1681,7 @@ mod tests {
         ];
         let resolved = resolve_entries(&active(&["older", "newer"]), &groups, &entries);
         // 文本无完全一致项：同权重下靠后分组的纠正候选胜出
-        assert_eq!(apply_cached("权立", &resolved), "拳力");
+        assert_eq!(plain("权立", &resolved), "拳力");
     }
 
     #[test]
@@ -1491,14 +1697,8 @@ mod tests {
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         let correction: HashSet<String> =
             HashSet::from([crate::cores::pinyin_correction::RULE_S_SH.to_owned()]);
-        assert_eq!(
-            apply_cached_with_correction("上海", &resolved, &correction),
-            "上海"
-        );
-        assert_eq!(
-            apply_cached_with_correction("桑海", &resolved, &correction),
-            "桑海"
-        );
+        assert_eq!(apply_detailed("上海", &resolved, &correction).0, "上海");
+        assert_eq!(apply_detailed("桑海", &resolved, &correction).0, "桑海");
     }
 
     #[test]
@@ -1515,24 +1715,18 @@ mod tests {
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 无完全一致词条：高权重纠正候选胜出
-        assert_eq!(
-            apply_cached_with_correction("伤海", &resolved, &correction),
-            "桑海"
-        );
+        assert_eq!(apply_detailed("伤海", &resolved, &correction).0, "桑海");
         let entries = vec![
             entry("w1", "work", "上海", "shang hai", 5),
             entry("w2", "work", "桑海", "sang hai", 5),
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 权重持平：先添加的纠正候选胜出
-        assert_eq!(
-            apply_cached_with_correction("伤海", &resolved, &correction),
-            "上海"
-        );
+        assert_eq!(apply_detailed("伤海", &resolved, &correction).0, "上海");
     }
 
     #[test]
-    fn apply_cached_is_deterministic_across_rebuilds() {
+    fn apply_detailed_is_deterministic_across_rebuilds() {
         let groups = vec![group("global", true), group("work", false)];
         let entries = vec![
             entry("w1", "work", "权力", "quan li", 0),
@@ -1540,8 +1734,8 @@ mod tests {
         ];
         let resolved = resolve_entries(&active(&["work"]), &groups, &entries);
         // 首调建缓存，次调命中：多次调用结果稳定一致
-        assert_eq!(apply_cached("全力以赴", &resolved), "权力以赴");
-        assert_eq!(apply_cached("全力以赴", &resolved), "权力以赴");
+        assert_eq!(plain("全力以赴", &resolved), "权力以赴");
+        assert_eq!(plain("全力以赴", &resolved), "权力以赴");
     }
 
     #[test]
@@ -1575,8 +1769,8 @@ mod tests {
         let entries = vec![entry("g1", "global", "你好", "ni hao", 0)];
         let resolved = resolve_entries(&[], &groups, &entries);
         // 数字与标点跳过但不断错对齐
-        assert_eq!(apply_cached("你好2024！", &resolved), "你好2024！");
-        assert_eq!(apply_cached("说你好ABC", &resolved), "说你好ABC");
+        assert_eq!(plain("你好2024！", &resolved), "你好2024！");
+        assert_eq!(plain("说你好ABC", &resolved), "说你好ABC");
     }
 
     fn export_entry(text: &str, pinyin: &str, weight: i32, enabled: bool) -> LexiconExportEntry {
