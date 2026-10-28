@@ -13,12 +13,6 @@ ignore = [
   { id = "RUSTSEC-2024-0370", reason = "transitive via gtk stack on linux tray backend, build-time only, no safe upgrade per advisory" },
   # ttf-parser：经 fontdb → tauri-plugin-system-fonts（系统字体枚举）引入
   { id = "RUSTSEC-2026-0192", reason = "transitive via fontdb/tauri-plugin-system-fonts, no safe upgrade per advisory" },
-  # unic-*：经 urlpattern → tauri-utils（tauri 核心）引入，共 4 条同源公告
-  { id = "RUSTSEC-2025-0081", reason = "transitive via urlpattern/tauri-utils, no safe upgrade per advisory" },
-  { id = "RUSTSEC-2025-0075", reason = "transitive via urlpattern/tauri-utils, no safe upgrade per advisory" },
-  { id = "RUSTSEC-2025-0080", reason = "transitive via urlpattern/tauri-utils, no safe upgrade per advisory" },
-  { id = "RUSTSEC-2025-0098", reason = "transitive via urlpattern/tauri-utils, no safe upgrade per advisory" },
-  { id = "RUSTSEC-2025-0100", reason = "transitive via urlpattern/tauri-utils, no safe upgrade per advisory" },
   # zbus_names / zvariant / zvariant_derive：经 zbus 5（仅 Linux，tauri-plugin-opener / single-instance 的 D-Bus 依赖）引入，
   # 公告注明已并入 zbus 6、无安全升级可用
   { id = "RUSTSEC-2026-0370", reason = "transitive via zbus 5 (tauri-plugin-opener / single-instance), merged into zbus 6, no safe upgrade per advisory" },

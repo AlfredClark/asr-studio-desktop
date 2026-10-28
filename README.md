@@ -24,12 +24,12 @@
 
 - 前端：SvelteKit 2（SPA，`adapter-static`）+ Svelte 5（runes）+ Tailwind CSS v4 + shadcn-svelte + Paraglide（`en` / `zh-CN`）+ tauri-specta 生成的前后端契约绑定。
 - 后端：Tauri v2 + Rust（edition 2024，工具链锁定 `1.99.1`）；语音 `sherpa-onnx`，录音 `cpal`，拼音 `pinyin`，按键回放 `enigo`。
-- 工具：包管理器 `pnpm@12.14.0`（Node `>= 24`）；`pnpm-lock.yaml` 与 `Cargo.lock` 均提交。
+- 工具：包管理器 `pnpm@12.15.0`（Node `>= 24`）；`pnpm-lock.yaml` 与 `Cargo.lock` 均提交。
 
 ## 快速开始
 
 ```bash
-# 环境：Node >= 24，pnpm@12.14.0，Rust 1.99.1
+# 环境：Node >= 24，pnpm@12.15.0，Rust 1.99.1
 # Linux 另需系统依赖（WebKitGTK 等），见 .github/workflows/release.yml 的 Dependencies 步骤
 
 pnpm install --frozen-lockfile   # 按锁文件安装依赖
