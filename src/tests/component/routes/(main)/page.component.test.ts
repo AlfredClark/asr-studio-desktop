@@ -286,7 +286,7 @@ describe("首页工作台", () => {
     }
     // 来源徽标居右，输出方式跟在时间后方（带“·”前缀以区别输出下拉的选中值）
     expect(within(workspace).getAllByText(m.service_history_kind_text())).not.toHaveLength(0);
-    expect(within(workspace).getAllByText(/· Simulate copy-paste$/)).not.toHaveLength(0);
+    expect(within(workspace).getAllByText(/· Simulate paste$/)).not.toHaveLength(0);
   });
 
   it("服务卡渲染模型、设备与输出三个下拉", async () => {

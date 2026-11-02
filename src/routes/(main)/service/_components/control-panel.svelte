@@ -18,7 +18,7 @@
   } from "#components/shadcn-svelte/select";
   import { m } from "#libs/i18n/paraglide/messages";
   import { configValue, updateConfig } from "#libs/hooks/config.svelte";
-  import type { ShortcutOutput } from "#libs/commands/types";
+  import type { PasteShortcut, ShortcutOutput } from "#libs/commands/types";
   import { toast } from "#libs/utils/toast";
   import { groupLabel, lexiconState } from "#libs/hooks/lexicon.svelte";
   import PinyinCorrectionDialog from "./pinyin-correction-dialog.svelte";
@@ -83,6 +83,23 @@
 
   /** 粘贴模式才展示恢复开关：水合前按粘贴默认渲染，避免首帧闪烁 */
   const isPasteMode = $derived(configValue("shortcut_output", "paste") === "paste");
+
+  /** 粘贴方式选项：值与后端 `PasteShortcut` 落盘标签一一对应 */
+  const pasteShortcutItems: { value: PasteShortcut; label: string }[] = [
+    { value: "ctrl_v", label: m.service_paste_shortcut_option_ctrl_v() },
+    { value: "ctrl_shift_v", label: m.service_paste_shortcut_option_ctrl_shift_v() },
+  ];
+
+  /** 粘贴方式经命令落盘后端；失败不乐观更新，下拉自动回滚 */
+  async function handlePasteShortcutChange(value: string): Promise<void> {
+    const shortcut = pasteShortcutItems.find((item) => item.value === value)?.value;
+    if (!shortcut) return;
+    if (await updateConfig({ shortcut_paste_shortcut: shortcut })) {
+      toast.success(m.service_paste_shortcut_updated());
+    } else {
+      toast.error(m.service_paste_shortcut_update_failed());
+    }
+  }
 
   /** 恢复开关以后端配置为真值；水合前按关闭渲染 */
   const pasteRestore = $derived(configValue("shortcut_paste_restore", false));
@@ -292,6 +309,32 @@
       {/snippet}
     </CardRow>
     {#if isPasteMode}
+      <CardRow
+        label={m.service_paste_shortcut_label()}
+        description={m.service_paste_shortcut_description()}
+      >
+        {#snippet control()}
+          <Select
+            type="single"
+            value={configValue("shortcut_paste_shortcut", "ctrl_v")}
+            items={pasteShortcutItems}
+            onValueChange={(value) => void handlePasteShortcutChange(value)}
+          >
+            <SelectTrigger
+              class="w-(--control-column-width)"
+              aria-label={m.service_paste_shortcut_label()}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ctrl_v">{m.service_paste_shortcut_option_ctrl_v()}</SelectItem>
+              <SelectItem value="ctrl_shift_v">
+                {m.service_paste_shortcut_option_ctrl_shift_v()}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        {/snippet}
+      </CardRow>
       <CardRow
         label={m.service_output_restore_label()}
         description={m.service_output_restore_description()}

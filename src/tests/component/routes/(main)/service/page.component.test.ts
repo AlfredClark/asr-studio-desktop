@@ -40,6 +40,7 @@ const configStateMock = vi.hoisted(
     value: {
       shortcut_output: string;
       shortcut_paste_restore?: boolean;
+      shortcut_paste_shortcut?: string;
       shortcut_quick_lexicon?: string;
       quick_lexicon_group?: string;
       strip_trailing_punct?: string;
@@ -233,7 +234,7 @@ describe("服务页", () => {
     // 来源类型移至行最右徽标，输出方式跟在用时后方
     expect(screen.getAllByText("Text")).not.toHaveLength(0);
     expect(screen.getByText("Directive")).not.toBeNull();
-    expect(screen.getByText(/· Simulate copy-paste$/)).not.toBeNull();
+    expect(screen.getByText(/· Simulate paste$/)).not.toBeNull();
     expect(screen.getByText(/· No output$/)).not.toBeNull();
 
     const recordButton = screen.getByRole("button", { name: new RegExp("补字") });
@@ -419,16 +420,18 @@ describe("服务页", () => {
     expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_output: "paste" });
   });
 
-  it("仅粘贴模式展示恢复开关，其它模式隐藏", async () => {
+  it("仅粘贴模式展示粘贴方式与恢复开关，其它模式隐藏", async () => {
     configStateMock.value = { shortcut_output: "paste", shortcut_paste_restore: false };
     const { unmount } = render(Page);
-    expect(screen.getByRole("switch", { name: "Restore clipboard after paste" })).not.toBeNull();
+    expect(screen.getByRole("combobox", { name: "Paste method" })).not.toBeNull();
+    expect(screen.getByRole("switch", { name: "Restore content" })).not.toBeNull();
     unmount();
     cleanup();
 
     configStateMock.value = { shortcut_output: "clipboard", shortcut_paste_restore: false };
     render(Page);
-    expect(screen.queryByRole("switch", { name: "Restore clipboard after paste" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Paste method" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Restore content" })).toBeNull();
   });
 
   it("恢复开关切换经命令落盘", async () => {
@@ -436,9 +439,23 @@ describe("服务页", () => {
     configStateMock.value = { shortcut_output: "paste", shortcut_paste_restore: false };
     render(Page);
 
-    await user.click(screen.getByRole("switch", { name: "Restore clipboard after paste" }));
+    await user.click(screen.getByRole("switch", { name: "Restore content" }));
 
     expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_paste_restore: true });
+  });
+
+  it("粘贴方式切换经命令落盘", async () => {
+    const user = userEvent.setup();
+    configStateMock.value = { shortcut_output: "paste", shortcut_paste_shortcut: "ctrl_v" };
+    render(Page);
+
+    await user.click(screen.getByRole("combobox", { name: "Paste method" }));
+    await waitFor(() => {
+      expect(document.querySelector('[data-value="ctrl_shift_v"]')).not.toBeNull();
+    });
+    await user.click(document.querySelector('[data-value="ctrl_shift_v"]') as HTMLElement);
+
+    expect(updateConfigMock).toHaveBeenCalledWith({ shortcut_paste_shortcut: "ctrl_shift_v" });
   });
 
   it("句末移除输入失焦后经命令落盘", async () => {

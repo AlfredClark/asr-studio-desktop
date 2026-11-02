@@ -230,6 +230,8 @@ export type ConfigPatch = {
 	shortcut_output?: ShortcutOutput | null,
 	/**  粘贴后是否恢复原剪贴板 */
 	shortcut_paste_restore?: boolean | null,
+	/**  模拟粘贴快捷键组合 */
+	shortcut_paste_shortcut?: PasteShortcut | null,
 	/**  各模型的用户指定目录（整包替换写该键） */
 	custom_model_dirs?: { [key in string]: string } | null,
 	/**  词库生效分组 id 列表 */
@@ -289,6 +291,8 @@ export type Config_Deserialize = {
 	shortcut_output?: ShortcutOutput,
 	/**  粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效 */
 	shortcut_paste_restore?: boolean,
+	/**  模拟粘贴快捷键组合：缺失或无法识别时回落默认（`Ctrl+V`），仅 `paste` 模式生效 */
+	shortcut_paste_shortcut?: PasteShortcut,
 	/**
 	 *  各模型的用户指定目录：`{模型 id: 绝对路径}`，目录名不强制匹配；
 	 *  缺失或类型不符时回落空映射（全部走应用管理目录）
@@ -351,6 +355,8 @@ export type Config_Serialize = {
 	shortcut_output: ShortcutOutput,
 	/**  粘贴后是否恢复原剪贴板：缺失或类型不符时回落 `false`（保持覆盖），仅 `paste` 模式生效 */
 	shortcut_paste_restore: boolean,
+	/**  模拟粘贴快捷键组合：缺失或无法识别时回落默认（`Ctrl+V`），仅 `paste` 模式生效 */
+	shortcut_paste_shortcut: PasteShortcut,
 	/**
 	 *  各模型的用户指定目录：`{模型 id: 绝对路径}`，目录名不强制匹配；
 	 *  缺失或类型不符时回落空映射（全部走应用管理目录）
@@ -557,8 +563,18 @@ export type OutputVia =
 "ime" | 
 /**  写入剪贴板 */
 "clipboard" | 
-/**  模拟复制粘贴：写剪贴板后发粘贴键 */
+/**  模拟粘贴：写剪贴板后发粘贴键 */
 "paste";
+
+/**
+ *  模拟粘贴快捷键组合：落盘值为 `snake_case` 字符串；
+ *  缺键与脏值一律回落默认（`Ctrl+V`）
+ */
+export type PasteShortcut = 
+/**  `Ctrl+V`：默认选项 */
+"ctrl_v" | 
+/**  `Ctrl+Shift+V`：部分应用的无格式粘贴 */
+"ctrl_shift_v";
 
 /**  快捷词库的落盘统计：实际写入数 + 跳过数（重复 / 空拼音 / 空 token） */
 export type QuickLexiconSummary = {
@@ -614,7 +630,7 @@ export type ShortcutOutput =
 "ime" | 
 /**  写入剪贴板：全平台可用 */
 "clipboard" | 
-/**  模拟复制粘贴：先写剪贴板再发 Ctrl+V，默认选项 */
+/**  模拟粘贴：先写剪贴板再发粘贴键，默认选项 */
 "paste";
 
 /**  运行平台信息：经 `tauri-plugin-os` 采集，全字段必填，前端逐行展示 */

@@ -41,6 +41,8 @@ const KEY_QUICK_LEXICON_GROUP: &str = "quick_lexicon_group";
 const KEY_SHORTCUT_OUTPUT: &str = "shortcut_output";
 /// 粘贴后是否恢复原剪贴板在配置文件中的键名；仅 `paste` 模式生效
 const KEY_SHORTCUT_PASTE_RESTORE: &str = "shortcut_paste_restore";
+/// 模拟粘贴快捷键组合在配置文件中的键名；仅 `paste` 模式生效
+const KEY_SHORTCUT_PASTE_SHORTCUT: &str = "shortcut_paste_shortcut";
 /// 各模型的用户指定目录在配置文件中的键名；值为 `{模型 id: 绝对路径}`，缺键或脏值回落空映射
 const KEY_CUSTOM_MODEL_DIRS: &str = "custom_model_dirs";
 /// 词库生效分组在配置文件中的键名；值为分组 id 数组，缺失或脏值回落空数组（仅全局组生效）
@@ -97,7 +99,7 @@ pub enum ShortcutOutput {
     Ime,
     /// 写入剪贴板：全平台可用
     Clipboard,
-    /// 模拟复制粘贴：先写剪贴板再发 Ctrl+V，默认选项
+    /// 模拟粘贴：先写剪贴板再发粘贴键，默认选项
     #[default]
     Paste,
 }
@@ -118,6 +120,36 @@ impl ShortcutOutput {
             "ime" => Self::Ime,
             "paste" => Self::Paste,
             _ => Self::Clipboard,
+        }
+    }
+}
+
+/// 模拟粘贴快捷键组合：落盘值为 `snake_case` 字符串；
+/// 缺键与脏值一律回落默认（`Ctrl+V`）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PasteShortcut {
+    /// `Ctrl+V`：默认选项
+    #[default]
+    CtrlV,
+    /// `Ctrl+Shift+V`：部分应用的无格式粘贴
+    CtrlShiftV,
+}
+
+impl PasteShortcut {
+    /// 取对应的落盘标签，与 `serde` 值一致，前后端契约共用
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CtrlV => "ctrl_v",
+            Self::CtrlShiftV => "ctrl_shift_v",
+        }
+    }
+
+    /// 容错解析粘贴组合标签：未知一律回落默认
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim() {
+            "ctrl_shift_v" => Self::CtrlShiftV,
+            _ => Self::default(),
         }
     }
 }
@@ -194,6 +226,10 @@ pub struct Config {
     #[serde(deserialize_with = "de_shortcut_paste_restore")]
     #[specta(type = bool)]
     pub shortcut_paste_restore: bool,
+    /// 模拟粘贴快捷键组合：缺失或无法识别时回落默认（`Ctrl+V`），仅 `paste` 模式生效
+    #[serde(deserialize_with = "de_shortcut_paste_shortcut")]
+    #[specta(type = PasteShortcut)]
+    pub shortcut_paste_shortcut: PasteShortcut,
     /// 各模型的用户指定目录：`{模型 id: 绝对路径}`，目录名不强制匹配；
     /// 缺失或类型不符时回落空映射（全部走应用管理目录）
     #[serde(deserialize_with = "de_custom_model_dirs")]
@@ -248,6 +284,7 @@ impl Default for Config {
             quick_lexicon_group: default_quick_lexicon_group(),
             shortcut_output: ShortcutOutput::default(),
             shortcut_paste_restore: false,
+            shortcut_paste_shortcut: PasteShortcut::default(),
             custom_model_dirs: HashMap::new(),
             active_lexicon_groups: Vec::new(),
             strip_trailing_punct: String::new(),
@@ -304,6 +341,8 @@ pub struct ConfigPatch {
     pub shortcut_output: Option<ShortcutOutput>,
     /// 粘贴后是否恢复原剪贴板
     pub shortcut_paste_restore: Option<bool>,
+    /// 模拟粘贴快捷键组合
+    pub shortcut_paste_shortcut: Option<PasteShortcut>,
     /// 各模型的用户指定目录（整包替换写该键）
     pub custom_model_dirs: Option<HashMap<String, String>>,
     /// 词库生效分组 id 列表
@@ -457,6 +496,17 @@ where
 {
     let value = Value::deserialize(deserializer)?;
     Ok(value.as_bool().unwrap_or_default())
+}
+
+/// 容错解析粘贴组合：未知标签与非字符串一律回落默认；缺键走字段默认值
+fn de_shortcut_paste_shortcut<'de, D>(deserializer: D) -> Result<PasteShortcut, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value
+        .as_str()
+        .map_or_else(PasteShortcut::default, PasteShortcut::parse))
 }
 
 /// 容错解析句末移除标点集：经 `serde_json::Value` 中转，非字符串一律回落空串（不处理）
@@ -686,6 +736,7 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         quick_lexicon_group: load_quick_lexicon_group(app),
         shortcut_output: load_shortcut_output(app),
         shortcut_paste_restore: load_shortcut_paste_restore(app),
+        shortcut_paste_shortcut: load_shortcut_paste_shortcut(app),
         custom_model_dirs: load_custom_model_dirs(app),
         active_lexicon_groups: load_active_lexicon_groups(app),
         strip_trailing_punct: load_strip_trailing_punct(app),
@@ -792,6 +843,15 @@ fn load_shortcut_paste_restore(app: &tauri::AppHandle) -> bool {
     read_key(app, KEY_SHORTCUT_PASTE_RESTORE)
         .and_then(|value| value.as_bool())
         .unwrap_or_default()
+}
+
+/// 读取持久化的粘贴组合；未设置回落默认，类型不符或无法识别回落默认
+pub fn load_shortcut_paste_shortcut(app: &tauri::AppHandle) -> PasteShortcut {
+    read_key(app, KEY_SHORTCUT_PASTE_SHORTCUT).map_or_else(PasteShortcut::default, |value| {
+        value
+            .as_str()
+            .map_or_else(PasteShortcut::default, PasteShortcut::parse)
+    })
 }
 
 /// 读取持久化的用户指定模型目录；未设置或类型不符时回落空映射
@@ -991,6 +1051,7 @@ fn reset_patch() -> ConfigPatch {
         quick_lexicon_group: Some(default_quick_lexicon_group()),
         shortcut_output: Some(ShortcutOutput::default()),
         shortcut_paste_restore: Some(false),
+        shortcut_paste_shortcut: Some(PasteShortcut::default()),
         custom_model_dirs: Some(HashMap::new()),
         active_lexicon_groups: Some(Vec::new()),
         strip_trailing_punct: Some(String::new()),
@@ -1114,6 +1175,12 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
         entries.push((
             KEY_SHORTCUT_PASTE_RESTORE,
             Value::from(shortcut_paste_restore),
+        ));
+    }
+    if let Some(shortcut_paste_shortcut) = patch.shortcut_paste_shortcut {
+        entries.push((
+            KEY_SHORTCUT_PASTE_SHORTCUT,
+            Value::from(shortcut_paste_shortcut.as_str()),
         ));
     }
     if let Some(custom_model_dirs) = patch.custom_model_dirs.as_ref() {
@@ -1353,6 +1420,7 @@ mod tests {
         assert_eq!(config.quick_lexicon_group, "global");
         assert_eq!(config.shortcut_output, ShortcutOutput::Paste);
         assert!(!config.shortcut_paste_restore);
+        assert_eq!(config.shortcut_paste_shortcut, PasteShortcut::CtrlV);
         assert!(config.custom_model_dirs.is_empty());
         assert_eq!(config.active_lexicon_groups.len(), 0);
         assert_eq!(config.strip_trailing_punct, "");
@@ -1379,6 +1447,7 @@ mod tests {
             quick_lexicon_group: String::from("g-work"),
             shortcut_output: ShortcutOutput::Paste,
             shortcut_paste_restore: true,
+            shortcut_paste_shortcut: PasteShortcut::CtrlShiftV,
             custom_model_dirs: HashMap::from([(
                 String::from("sense-voice-int8"),
                 String::from("/models/custom"),
@@ -1394,7 +1463,7 @@ mod tests {
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "pinyin_correction_enabled": true, "pinyin_correction_rules": ["z_zh", "n_l"], "pinyin_correction_apply_recognition": true, "pinyin_correction_apply_directive": false, "schema_version": 2 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "shortcut_paste_shortcut": "ctrl_shift_v", "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "pinyin_correction_enabled": true, "pinyin_correction_rules": ["z_zh", "n_l"], "pinyin_correction_apply_recognition": true, "pinyin_correction_apply_directive": false, "schema_version": 2 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -1766,6 +1835,44 @@ mod tests {
     }
 
     #[test]
+    fn paste_shortcut_fallback_rules() {
+        // 缺键与脏值一律回落默认（`Ctrl+V`）
+        for (raw, expected) in [
+            (json!({}), PasteShortcut::CtrlV),
+            (
+                json!({ "shortcut_paste_shortcut": "ctrl_v" }),
+                PasteShortcut::CtrlV,
+            ),
+            (
+                json!({ "shortcut_paste_shortcut": "ctrl_shift_v" }),
+                PasteShortcut::CtrlShiftV,
+            ),
+            (
+                json!({ "shortcut_paste_shortcut": "ctrl_alt_v" }),
+                PasteShortcut::CtrlV,
+            ),
+            (
+                json!({ "shortcut_paste_shortcut": 5 }),
+                PasteShortcut::CtrlV,
+            ),
+            (
+                json!({ "shortcut_paste_shortcut": null }),
+                PasteShortcut::CtrlV,
+            ),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("never fails");
+            assert_eq!(config.shortcut_paste_shortcut, expected);
+        }
+    }
+
+    #[test]
+    fn paste_shortcut_round_trips_through_as_str() {
+        for shortcut in [PasteShortcut::CtrlV, PasteShortcut::CtrlShiftV] {
+            assert_eq!(PasteShortcut::parse(shortcut.as_str()), shortcut);
+        }
+    }
+
+    #[test]
     fn tolerates_missing_or_unrecognized_schema_version() {
         for (raw, expected) in [
             (json!({}), 0_u32),
@@ -1830,6 +1937,7 @@ mod tests {
         assert_eq!(absent.quick_lexicon_group, None);
         assert_eq!(absent.shortcut_output, None);
         assert_eq!(absent.shortcut_paste_restore, None);
+        assert_eq!(absent.shortcut_paste_shortcut, None);
         assert_eq!(absent.custom_model_dirs, None);
         assert_eq!(absent.active_lexicon_groups, None);
 
@@ -1878,6 +1986,14 @@ mod tests {
                 .expect("restore parsed");
         assert_eq!(restore.shortcut_paste_restore, Some(true));
 
+        let paste_shortcut: ConfigPatch =
+            serde_json::from_value(json!({ "shortcut_paste_shortcut": "ctrl_shift_v" }))
+                .expect("paste shortcut parsed");
+        assert_eq!(
+            paste_shortcut.shortcut_paste_shortcut,
+            Some(PasteShortcut::CtrlShiftV)
+        );
+
         let dirs: ConfigPatch = serde_json::from_value(
             json!({ "custom_model_dirs": { "sense-voice-int8": "/models/a" } }),
         )
@@ -1922,6 +2038,7 @@ mod tests {
             quick_lexicon_group: Some(String::from("g-work")),
             shortcut_output: Some(ShortcutOutput::Ime),
             shortcut_paste_restore: Some(true),
+            shortcut_paste_shortcut: Some(PasteShortcut::CtrlShiftV),
             custom_model_dirs: Some(HashMap::from([(
                 String::from("sense-voice-int8"),
                 String::from("/models/a"),
@@ -1949,6 +2066,7 @@ mod tests {
                 KEY_SHORTCUT_DIRECTIVE,
                 KEY_QUICK_LEXICON_GROUP,
                 KEY_SHORTCUT_PASTE_RESTORE,
+                KEY_SHORTCUT_PASTE_SHORTCUT,
                 KEY_CUSTOM_MODEL_DIRS,
                 KEY_ACTIVE_LEXICON_GROUPS,
                 KEY_STRIP_TRAILING_PUNCT,
@@ -1972,13 +2090,14 @@ mod tests {
         assert_eq!(patched[10].1, json!("Ctrl+Alt+D"));
         assert_eq!(patched[11].1, json!("g-work"));
         assert_eq!(patched[12].1, json!(true));
-        assert_eq!(patched[13].1, json!({ "sense-voice-int8": "/models/a" }));
-        assert_eq!(patched[14].1, json!(["work"]));
-        assert_eq!(patched[15].1, json!("，。"));
-        assert_eq!(patched[16].1, json!(true));
-        assert_eq!(patched[17].1, json!(["z_zh"]));
-        assert_eq!(patched[18].1, json!(true));
-        assert_eq!(patched[19].1, json!(false));
+        assert_eq!(patched[13].1, json!("ctrl_shift_v"));
+        assert_eq!(patched[14].1, json!({ "sense-voice-int8": "/models/a" }));
+        assert_eq!(patched[15].1, json!(["work"]));
+        assert_eq!(patched[16].1, json!("，。"));
+        assert_eq!(patched[17].1, json!(true));
+        assert_eq!(patched[18].1, json!(["z_zh"]));
+        assert_eq!(patched[19].1, json!(true));
+        assert_eq!(patched[20].1, json!(false));
     }
 
     #[test]
@@ -1998,6 +2117,7 @@ mod tests {
             shortcut_directive: Some(String::from("Ctrl+Alt+D")),
             quick_lexicon_group: Some(String::from("g-work")),
             shortcut_paste_restore: Some(true),
+            shortcut_paste_shortcut: Some(PasteShortcut::CtrlShiftV),
             custom_model_dirs: Some(HashMap::new()),
             active_lexicon_groups: Some(vec![String::from("work")]),
             strip_trailing_punct: Some(String::from("，。")),
@@ -2025,14 +2145,15 @@ mod tests {
         assert_eq!(entries[10].1, json!(""));
         assert_eq!(entries[11].1, json!("global"));
         assert_eq!(entries[12].1, json!(false));
-        assert_eq!(entries[13].1, json!({}));
-        assert_eq!(entries[14].1, json!([]));
-        assert_eq!(entries[15].1, json!(""));
-        assert_eq!(entries[16].1, json!(false));
-        assert_eq!(entries[17].1, json!([]));
-        assert_eq!(entries[18].1, json!(true));
+        assert_eq!(entries[13].1, json!(PasteShortcut::default().as_str()));
+        assert_eq!(entries[14].1, json!({}));
+        assert_eq!(entries[15].1, json!([]));
+        assert_eq!(entries[16].1, json!(""));
+        assert_eq!(entries[17].1, json!(false));
+        assert_eq!(entries[18].1, json!([]));
         assert_eq!(entries[19].1, json!(true));
-        assert_eq!(entries[20].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[20].1, json!(true));
+        assert_eq!(entries[21].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -2051,6 +2172,7 @@ mod tests {
             quick_lexicon_group: default_quick_lexicon_group(),
             shortcut_output: ShortcutOutput::default(),
             shortcut_paste_restore: false,
+            shortcut_paste_shortcut: PasteShortcut::default(),
             custom_model_dirs: HashMap::new(),
             active_lexicon_groups: Vec::new(),
             strip_trailing_punct: String::new(),

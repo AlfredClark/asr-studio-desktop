@@ -54,6 +54,7 @@ const defaults: Config_Serialize = {
   shortcut_quick_open: "",
   shortcut_output: "clipboard",
   shortcut_paste_restore: false,
+  shortcut_paste_shortcut: "ctrl_v",
   custom_model_dirs: {},
   active_lexicon_groups: [],
   strip_trailing_punct: "",

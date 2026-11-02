@@ -17,7 +17,7 @@ pub enum OutputVia {
     Ime,
     /// 写入剪贴板
     Clipboard,
-    /// 模拟复制粘贴：写剪贴板后发粘贴键
+    /// 模拟粘贴：写剪贴板后发粘贴键
     Paste,
 }
 
@@ -94,7 +94,9 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
             })
         }
         ShortcutOutput::Paste => {
-            let want_restore = crate::cores::config::load_config(app).shortcut_paste_restore;
+            let config = crate::cores::config::load_config(app);
+            let want_restore = config.shortcut_paste_restore;
+            let paste_shortcut = config.shortcut_paste_shortcut;
             // 恢复模式先快照原剪贴板（仅文本；图片等非文本快照失败即放弃恢复，不阻断输出）
             let previous = if want_restore {
                 read_clipboard(app)
@@ -102,7 +104,7 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
                 None
             };
             write_clipboard(app, text)?;
-            match paste_from_clipboard() {
+            match paste_from_clipboard(paste_shortcut) {
                 Ok(()) => {
                     if let Some(previous) = previous {
                         restore_clipboard_if_unchanged(app, text, &previous);
@@ -247,11 +249,11 @@ fn ime_type_text(_text: &str) -> anyhow::Result<()> {
 }
 
 /// 发粘贴键：先等剪贴板落定（150ms，与 demo 一致），再按住修饰键点按 V 后松开。
-/// macOS 用 Command（`Meta`），其余桌面端用 Ctrl。
+/// macOS 用 Command（`Meta`），其余桌面端用 Ctrl；`Ctrl+Shift+V` 多按住 `Shift`。
 ///
 /// 阻塞调用方线程；调用方在 `spawn_blocking` 内执行，不占异步运行时。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn paste_from_clipboard() -> anyhow::Result<()> {
+fn paste_from_clipboard(shortcut: crate::cores::config::PasteShortcut) -> anyhow::Result<()> {
     use anyhow::Context;
     use enigo::{Direction, Key, Keyboard};
 
@@ -264,7 +266,15 @@ fn paste_from_clipboard() -> anyhow::Result<()> {
         enigo
             .key(modifier, Direction::Press)
             .context("failed to press paste modifier")?;
+        let with_shift = shortcut == crate::cores::config::PasteShortcut::CtrlShiftV;
+        if with_shift && let Err(err) = enigo.key(Key::Shift, Direction::Press) {
+            let _ = enigo.key(modifier, Direction::Release);
+            return Err(err).context("failed to press paste shift")?;
+        }
         let clicked = enigo.key(Key::Unicode('v'), Direction::Click);
+        if with_shift {
+            let _ = enigo.key(Key::Shift, Direction::Release);
+        }
         let _ = enigo.key(modifier, Direction::Release);
         clicked.context("failed to send paste keystroke")?;
         Ok(())
@@ -304,7 +314,7 @@ pub fn send_copy_keystroke() -> anyhow::Result<()> {
 
 /// 发粘贴键；移动端无此能力，直接返回错误走降级
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn paste_from_clipboard() -> anyhow::Result<()> {
+fn paste_from_clipboard(_shortcut: crate::cores::config::PasteShortcut) -> anyhow::Result<()> {
     Err(anyhow::anyhow!(
         "paste keystroke is not supported on mobile"
     ))
