@@ -69,7 +69,7 @@ function checkTauriPluginPairs(): void {
 
   const npmVersions = new Map<string, string>();
   const npmPattern =
-    /'((?:@tauri-apps\/(?:api|plugin-[a-z-]+))|(?:tauri-plugin-[a-z-]+-api))':\s*\n\s*specifier: [^\n]*\n\s*version: (\d+\.\d+\.\d+)/g;
+    /'?((?:@tauri-apps\/(?:api|plugin-[a-z-]+))|(?:tauri-plugin-[a-z-]+-api))'?:\s*\n\s*specifier: [^\n]*\n\s*version: (\d+\.\d+\.\d+)/g;
   for (const match of lock.matchAll(npmPattern)) {
     npmVersions.set(match[1], match[2]);
   }
