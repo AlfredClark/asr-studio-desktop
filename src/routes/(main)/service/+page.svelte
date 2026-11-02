@@ -13,8 +13,11 @@
   import ControlPanel from "./_components/control-panel.svelte";
 
   onMount(() => {
-    void refreshServiceData();
-    void refreshLexicon();
+    void (async () => {
+      // 错峰串行：避免与lexicon刷新并发打后端造成负载突增
+      await refreshServiceData();
+      await refreshLexicon();
+    })();
   });
 </script>
 

@@ -232,26 +232,39 @@ export async function refreshServiceStatus(): Promise<void> {
   await syncStatus();
 }
 
+/** 服务模型清单脏标记：模型页增删/校验/改目录后置真，下次刷新重拉；首刷靠空清单触发 */
+let serviceModelsStale = false;
+
+/** 标记服务模型清单过期：模型域写操作后调用，下次 `refreshServiceData` 重拉清单 */
+export function invalidateServiceModels(): void {
+  serviceModelsStale = true;
+}
+
 /** 刷新模型与设备清单，并补齐默认选中（首个就绪模型、默认设备优先） */
 export async function refreshServiceData(): Promise<void> {
-  await commands
-    .listModels()
-    .success((entries) => {
-      serviceState.models = entries.filter((entry) => entry.status === "ready");
-      // 存量优先：存量仍在就绪列表才沿用，否则回落首个就绪模型
-      const stored = loadStoredSelection(SELECTED_MODEL_STORAGE_KEY);
-      if (stored != null && serviceState.models.some((entry) => entry.id === stored)) {
-        serviceState.selectedModel = stored;
-      } else if (
-        serviceState.selectedModel == null ||
-        !serviceState.models.some((entry) => entry.id === serviceState.selectedModel)
-      ) {
-        serviceState.selectedModel = serviceState.models[0]?.id ?? null;
-      }
-    })
-    .failed((failure) => {
-      reportCommandFailure("[service] failed to load models", failure);
-    });
+  // 模型清单会话内缓存：`listModels` 走全盘 stat，切页就刷又慢又耗电；
+  // 有缓存且未过期直接跳过，过期由模型域写操作经 `invalidateServiceModels` 标记
+  if (serviceState.models.length === 0 || serviceModelsStale) {
+    await commands
+      .listModels()
+      .success((entries) => {
+        serviceState.models = entries.filter((entry) => entry.status === "ready");
+        serviceModelsStale = false;
+        // 存量优先：存量仍在就绪列表才沿用，否则回落首个就绪模型
+        const stored = loadStoredSelection(SELECTED_MODEL_STORAGE_KEY);
+        if (stored != null && serviceState.models.some((entry) => entry.id === stored)) {
+          serviceState.selectedModel = stored;
+        } else if (
+          serviceState.selectedModel == null ||
+          !serviceState.models.some((entry) => entry.id === serviceState.selectedModel)
+        ) {
+          serviceState.selectedModel = serviceState.models[0]?.id ?? null;
+        }
+      })
+      .failed((failure) => {
+        reportCommandFailure("[service] failed to load models", failure);
+      });
+  }
   // 设备清单会话内只取一次：枚举会打开硬件，每次进页都刷又慢又有电流声；
   // 有缓存直接跳过后端调用，热插拔经下方 `refreshDevices` 手动重取
   if (serviceState.devices.length === 0) {

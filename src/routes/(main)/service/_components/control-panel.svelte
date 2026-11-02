@@ -2,6 +2,7 @@
   // 服务控制面板（右栏）：状态徽标与启停录制按钮组、模型/设备/输出选择、
   // 粘贴恢复开关、快捷键录制行、快捷词库分组、句末标点输入；下方留空待扩展。
   // 按钮可用性派生与输入草稿全在内部，状态机收敛在 service/config/lexicon hooks。
+  import { onDestroy } from "svelte";
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
   import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
@@ -18,10 +19,11 @@
   } from "#components/shadcn-svelte/select";
   import { m } from "#libs/i18n/paraglide/messages";
   import { configValue, updateConfig } from "#libs/hooks/config.svelte";
-  import type { PasteShortcut, ShortcutOutput } from "#libs/commands/types";
+  import type { PasteShortcut } from "#libs/commands/types";
   import { toast } from "#libs/utils/toast";
   import { groupLabel, lexiconState } from "#libs/hooks/lexicon.svelte";
   import PinyinCorrectionDialog from "./pinyin-correction-dialog.svelte";
+  import OutputMethodSelect from "#components/common/output-method-select.svelte";
   import {
     deviceLabel,
     cancelTranscription,
@@ -63,23 +65,7 @@
       serviceState.selectedDevice != null,
   );
 
-  /** 输出方式选项：值与后端 `ShortcutOutput` 落盘标签一一对应，粘贴优先、输入法置末 */
-  const outputItems: { value: ShortcutOutput; label: string }[] = [
-    { value: "paste", label: m.service_output_option_paste() },
-    { value: "clipboard", label: m.service_output_option_clipboard() },
-    { value: "ime", label: m.service_output_option_ime() },
-  ];
-
-  /** 输出方式经命令落盘后端；失败不乐观更新，下拉自动回滚 */
-  async function handleOutputChange(value: string): Promise<void> {
-    const output = outputItems.find((item) => item.value === value)?.value;
-    if (!output) return;
-    if (await updateConfig({ shortcut_output: output })) {
-      toast.success(m.service_output_updated());
-    } else {
-      toast.error(m.service_output_update_failed());
-    }
-  }
+  /** 输出方式经共享下拉落盘（见 `output-method-select.svelte`），此处只判粘贴模式显隐 */
 
   /** 粘贴模式才展示恢复开关：水合前按粘贴默认渲染，避免首帧闪烁 */
   const isPasteMode = $derived(configValue("shortcut_output", "paste") === "paste");
@@ -155,6 +141,11 @@
       toast.error(m.settings_strip_punct_update_failed());
     }
   }
+
+  /** 切页销毁时刷一次草稿：用户输一半直接点左侧导航，失焦落盘不会触发 */
+  onDestroy(() => {
+    if (stripPunctDraft != null) void handleStripPunctSave();
+  });
 
   /** 拼音纠正弹窗开关：草稿态收敛在弹窗内部，此处只持有开关 */
   let pinyinDialogOpen = $state(false);
@@ -291,21 +282,7 @@
     </CardRow>
     <CardRow label={m.service_output_label()} description={m.service_output_description()}>
       {#snippet control()}
-        <Select
-          type="single"
-          value={configValue("shortcut_output", "paste")}
-          items={outputItems}
-          onValueChange={(value) => void handleOutputChange(value)}
-        >
-          <SelectTrigger class="w-(--control-column-width)" aria-label={m.service_output_label()}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="paste">{m.service_output_option_paste()}</SelectItem>
-            <SelectItem value="clipboard">{m.service_output_option_clipboard()}</SelectItem>
-            <SelectItem value="ime">{m.service_output_option_ime()}</SelectItem>
-          </SelectContent>
-        </Select>
+        <OutputMethodSelect triggerClass="w-(--control-column-width)" />
       {/snippet}
     </CardRow>
     {#if isPasteMode}

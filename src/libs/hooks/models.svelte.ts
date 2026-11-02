@@ -4,6 +4,7 @@ import commands from "#libs/commands";
 import { reportCommandFailure } from "#libs/commands/cores";
 import type { ModelEntry } from "#libs/commands/types";
 import { configState } from "#libs/hooks/config.svelte";
+import { invalidateServiceModels } from "#libs/hooks/service.svelte";
 import { m } from "#libs/i18n/paraglide/messages";
 import { toast } from "#libs/utils/toast";
 
@@ -69,12 +70,14 @@ export async function downloadModel(id: string): Promise<void> {
     .success(() => {
       delete modelsState.progress[id];
       toast.success(m.models_download_done());
+      invalidateServiceModels();
       void refreshModels();
     })
     .failed((failure) => {
       delete modelsState.progress[id];
       toast.error(m.models_download_failed());
       reportCommandFailure("[models] download failed", failure);
+      invalidateServiceModels();
       void refreshModels();
     });
 }
@@ -86,11 +89,13 @@ export async function cancelDownload(id: string): Promise<void> {
     .success(() => {
       delete modelsState.progress[id];
       toast.success(m.models_download_cancelled());
+      invalidateServiceModels();
       void refreshModels();
     })
     .failed((failure) => {
       delete modelsState.progress[id];
       reportCommandFailure("[models] cancel failed", failure);
+      invalidateServiceModels();
       void refreshModels();
     });
 }
@@ -105,6 +110,7 @@ export async function verifyModel(id: string): Promise<void> {
       } else {
         toast.error(m.models_verify_failed());
       }
+      invalidateServiceModels();
       void refreshModels();
     })
     .failed((failure) => {
@@ -148,7 +154,10 @@ export async function deleteModel(id: string): Promise<boolean> {
       toast.error(m.models_delete_failed());
       reportCommandFailure("[models] delete failed", failure);
     });
-  if (deleted) await refreshModels();
+  if (deleted) {
+    invalidateServiceModels();
+    await refreshModels();
+  }
   return deleted;
 }
 
@@ -185,6 +194,9 @@ export async function setCustomModelDir(id: string, path: string | null): Promis
       toast.error(m.models_custom_dir_update_failed());
       reportCommandFailure("[models] set custom dir failed", failure);
     });
-  if (succeeded) await refreshModels();
+  if (succeeded) {
+    invalidateServiceModels();
+    await refreshModels();
+  }
   return succeeded;
 }

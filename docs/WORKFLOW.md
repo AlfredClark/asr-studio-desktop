@@ -107,6 +107,7 @@ pnpm release                       # bumpp 联动升级三处版本号（package
 - [ ] 无 `console.log / print / debugger` 残留（失败上报走 plugin-log / 后端 log）
 - [ ] 无硬编码 URL / 密钥 / 本地绝对路径（外部 URL 已同步 capabilities + CSP）
 - [ ] 改文案已补跑 `i18n:compile`；`validate` 已含 `cargo test`（含绑定重生成），无需另跑
+- [ ] `pnpm update` 后检查 `src/libs/i18n/project.inlang/.meta.json` 的附带变更（如 `highestSdkVersion`）：确认为依赖升级的正常跟随则一并提交，勿误回滚
 
 **提交前钩子**（`lint-staged`，最后防线）：`*.{js,ts,svelte}` → `prettier --write` + `eslint --fix`；`*.{json,md,html,css,yml,yaml}` → prettier（范围须与 CI 的 `prettier --check .` 一致）；`**/*.rs` → 暂存文件 `cargo fmt` + 工作区级 `clippy -D warnings`。
 

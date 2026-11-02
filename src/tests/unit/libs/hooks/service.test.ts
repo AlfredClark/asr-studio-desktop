@@ -11,6 +11,7 @@ import {
   handleDirectiveTrigger,
   handleQuickLexiconTrigger,
   handleShortcutTrigger,
+  invalidateServiceModels,
   isServiceHistoryFilter,
   isTranscribeBusyFailure,
   isTranscribeCancelledFailure,
@@ -232,6 +233,26 @@ describe("识别服务状态", () => {
     // 第二次只刷模型与状态，不再碰硬件
     expect(mocked.listInputDevices).toHaveBeenCalledTimes(1);
     expect(serviceState.selectedDevice).toBe(device.id);
+  });
+
+  it("模型有缓存且未过期时跳过后端清单", async () => {
+    await refreshServiceData();
+    expect(mocked.listModels).toHaveBeenCalledTimes(1);
+
+    await refreshServiceData();
+
+    expect(mocked.listModels).toHaveBeenCalledTimes(1);
+    expect(serviceState.selectedModel).toBe(model.id);
+  });
+
+  it("模型写操作后标记过期，下次刷新重拉清单", async () => {
+    await refreshServiceData();
+    expect(mocked.listModels).toHaveBeenCalledTimes(1);
+
+    invalidateServiceModels();
+    await refreshServiceData();
+
+    expect(mocked.listModels).toHaveBeenCalledTimes(2);
   });
 
   it("系统默认合成项优先于物理默认标记", async () => {

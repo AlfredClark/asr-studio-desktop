@@ -17,10 +17,7 @@
     SelectValue,
   } from "#components/shadcn-svelte/select";
   import { m } from "#libs/i18n/paraglide/messages";
-  import type { ShortcutOutput } from "#libs/commands/types";
   import { formatBytes } from "#libs/utils/format";
-  import { toast } from "#libs/utils/toast";
-  import { configValue, updateConfig } from "#libs/hooks/config.svelte";
   import { modelsState, refreshModels } from "#libs/hooks/models.svelte";
   import {
     deviceLabel,
@@ -33,6 +30,7 @@
   } from "#libs/hooks/service.svelte";
   import { groupLabel, lexiconState, refreshLexicon } from "#libs/hooks/lexicon.svelte";
   import { directiveState, refreshDirectives } from "#libs/hooks/directives.svelte";
+  import OutputMethodSelect from "#components/common/output-method-select.svelte";
   import HomeOnboardingStep from "./_components/home-onboarding-step.svelte";
   import HomeStatusCard from "./_components/home-status-card.svelte";
   import RecognitionRecordItem from "#components/common/recognition-record-item.svelte";
@@ -92,24 +90,6 @@
     serviceState.recording || serviceState.recognizing || serviceState.devices.length === 0,
   );
 
-  /** 输出方式选项：值与后端 `ShortcutOutput` 落盘标签一一对应（与服务页同款） */
-  const outputItems: { value: ShortcutOutput; label: string }[] = [
-    { value: "paste", label: m.service_output_option_paste() },
-    { value: "clipboard", label: m.service_output_option_clipboard() },
-    { value: "ime", label: m.service_output_option_ime() },
-  ];
-
-  /** 输出方式经命令落盘后端；失败不乐观更新，下拉自动回滚 */
-  async function handleOutputChange(value: string): Promise<void> {
-    const output = outputItems.find((item) => item.value === value)?.value;
-    if (!output) return;
-    if (await updateConfig({ shortcut_output: output })) {
-      toast.success(m.service_output_updated());
-    } else {
-      toast.error(m.service_output_update_failed());
-    }
-  }
-
   /** 服务状态徽标文案：三态一一对应，未水合按停止渲染 */
   function statusLabel(): string {
     switch (serviceState.status?.state) {
@@ -131,12 +111,11 @@
 
   onMount(() => {
     void (async () => {
-      await Promise.all([
-        refreshModels(),
-        refreshServiceData(),
-        refreshLexicon(),
-        refreshDirectives(),
-      ]);
+      // 错峰串行：四路并发打后端会造成负载突增（音箱电流声），按依赖顺序依次刷新
+      await refreshServiceData();
+      await refreshModels();
+      await refreshLexicon();
+      await refreshDirectives();
       loaded = true;
     })();
   });
@@ -254,21 +233,7 @@
               <span class="shrink-0 text-xs text-muted-foreground">
                 {m.service_output_label()}
               </span>
-              <Select
-                type="single"
-                value={configValue("shortcut_output", "paste")}
-                items={outputItems}
-                onValueChange={(value) => void handleOutputChange(value)}
-              >
-                <SelectTrigger class="min-w-0 flex-1" aria-label={m.service_output_label()}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="paste">{m.service_output_option_paste()}</SelectItem>
-                  <SelectItem value="clipboard">{m.service_output_option_clipboard()}</SelectItem>
-                  <SelectItem value="ime">{m.service_output_option_ime()}</SelectItem>
-                </SelectContent>
-              </Select>
+              <OutputMethodSelect />
             </div>
           </div>
         </HomeStatusCard>

@@ -106,8 +106,14 @@ pub fn output_text(app: &tauri::AppHandle, text: &str) -> anyhow::Result<OutputR
             write_clipboard(app, text)?;
             match paste_from_clipboard(paste_shortcut) {
                 Ok(()) => {
+                    // 恢复丢进后台线程：轮询等待约 500ms，串行会拖慢本次命令结算；
+                    // 恢复失败只记日志，不翻转输出结论
                     if let Some(previous) = previous {
-                        restore_clipboard_if_unchanged(app, text, &previous);
+                        let handle = app.clone();
+                        let pasted = text.to_owned();
+                        std::thread::spawn(move || {
+                            restore_clipboard_if_unchanged(&handle, &pasted, &previous);
+                        });
                     }
                     Ok(OutputReport {
                         via: OutputVia::Paste,
@@ -152,12 +158,13 @@ pub fn read_clipboard(app: &tauri::AppHandle) -> Option<String> {
     }
 }
 
-/// 粘贴成功后按需恢复原剪贴板：轮询代替一次睡满（50ms×6，上限仍是 300ms），
-/// 用户中途复制即提前让路；300ms 内无人动剪贴板才写回；
+/// 粘贴成功后按需恢复原剪贴板：轮询代替一次睡满（50ms×10，上限 500ms），
+/// 用户中途复制即提前让路；500ms 内无人动剪贴板才写回；
+/// 慢应用（Electron / 远程桌面）消费粘贴更久，宁可多等也不早覆盖；
 /// 恢复失败只记日志，不翻转输出结论
 fn restore_clipboard_if_unchanged(app: &tauri::AppHandle, pasted: &str, previous: &str) {
     /// 恢复等待总时长：给目标应用留足消费粘贴的时间
-    const RESTORE_WAIT_MS: u64 = 300;
+    const RESTORE_WAIT_MS: u64 = 500;
     /// 轮询步长：用户复制即提前退出，不必每次都等满
     const RESTORE_POLL_MS: u64 = 50;
 
@@ -250,6 +257,9 @@ fn ime_type_text(_text: &str) -> anyhow::Result<()> {
 
 /// 发粘贴键：先等剪贴板落定（150ms，与 demo 一致），再按住修饰键点按 V 后松开。
 /// macOS 用 Command（`Meta`），其余桌面端用 Ctrl；`Ctrl+Shift+V` 多按住 `Shift`。
+/// 键码用 `Unicode('v')` 而非物理键：非拉丁键盘布局下两者可能不等价，
+/// 当前选择未经多布局真机验证，更改前需在目标布局实测。
+/// macOS 修饰组合未经真机验证，改动此处后需在 Mac 上实测 `⌘V / ⇧⌘V`。
 ///
 /// 阻塞调用方线程；调用方在 `spawn_blocking` 内执行，不占异步运行时。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -258,6 +268,7 @@ fn paste_from_clipboard(shortcut: crate::cores::config::PasteShortcut) -> anyhow
     use enigo::{Direction, Key, Keyboard};
 
     std::thread::sleep(std::time::Duration::from_millis(150));
+    log::debug!("sending paste keystroke with shortcut: {shortcut:?}");
     with_enigo(|enigo| {
         #[cfg(target_os = "macos")]
         let modifier = Key::Meta;
