@@ -137,6 +137,17 @@ jobs:
         with:
           workspaces: . -> target
 
+      # sherpa-onnx-sys 的构建脚本在编译期下载预编译库并以“目录存在即复用”缓存到
+      # target/sherpa-onnx-prebuilt/；若某次 job 被取消时正好落在下载/解压期间，
+      # rust-cache 会把半成品持久化，之后每次都命中坏缓存并在链接期报错。
+      # 此处只做完整性校验，坏了才删，好缓存继续用，不增加正常耗时。
+      - name: Validate sherpa prebuilt cache
+        run: |
+          if [ -d target/sherpa-onnx-prebuilt ] && ! find target/sherpa-onnx-prebuilt -name 'libsherpa-onnx-c-api.*' | grep -q .; then
+            echo "stale sherpa-onnx cache, purging to force re-download"
+            rm -rf target/sherpa-onnx-prebuilt
+          fi
+
       - name: Format
         run: cargo fmt --manifest-path Cargo.toml --all -- --check
 
@@ -177,6 +188,18 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
+
+      # 同 backend job：sherpa 预编译库坏缓存会在链接期报错，此处提前校验，
+      # Windows job 目前只 check 不链接，但坏缓存同样会污染后续复用。
+      - name: Validate sherpa prebuilt cache
+        run: |
+          if (Test-Path target/sherpa-onnx-prebuilt) {
+            $found = Get-ChildItem -Recurse -Filter 'sherpa-onnx-c-api.*' target/sherpa-onnx-prebuilt -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $found) {
+              echo "stale sherpa-onnx cache, purging to force re-download"
+              Remove-Item -Recurse -Force target/sherpa-onnx-prebuilt
+            }
+          }
 
       - name: Check
         run: cargo check --manifest-path Cargo.toml --workspace --all-targets
