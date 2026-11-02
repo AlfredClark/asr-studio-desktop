@@ -223,6 +223,17 @@ describe("识别服务状态", () => {
     expect(serviceState.status?.state).toBe("stopped");
   });
 
+  it("设备有缓存时跳过后端枚举，避免重复打开硬件", async () => {
+    await refreshServiceData();
+    expect(mocked.listInputDevices).toHaveBeenCalledTimes(1);
+
+    await refreshServiceData();
+
+    // 第二次只刷模型与状态，不再碰硬件
+    expect(mocked.listInputDevices).toHaveBeenCalledTimes(1);
+    expect(serviceState.selectedDevice).toBe(device.id);
+  });
+
   it("系统默认合成项优先于物理默认标记", async () => {
     const synthetic: AudioDevice = {
       id: DEFAULT_DEVICE_ID,

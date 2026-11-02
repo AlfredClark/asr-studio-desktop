@@ -252,35 +252,38 @@ export async function refreshServiceData(): Promise<void> {
     .failed((failure) => {
       reportCommandFailure("[service] failed to load models", failure);
     });
-  await commands
-    .listInputDevices()
-    .success((devices) => {
-      // 设备列表会话内只取一次：枚举会打开硬件，进页就刷又慢又刷屏；
-      // 热插拔经下方 `refreshDevices` 手动重取，此处保留首刷
-      if (serviceState.devices.length > 0) return;
-      serviceState.devices = devices;
-      // 存量优先：存量仍在设备列表才沿用，否则走默认选中逻辑
-      const stored = loadStoredSelection(SELECTED_DEVICE_STORAGE_KEY);
-      if (stored != null && devices.some((device) => device.id === stored)) {
-        serviceState.selectedDevice = stored;
-        return;
-      }
-      if (
-        serviceState.selectedDevice == null ||
-        !devices.some((device) => device.id === serviceState.selectedDevice)
-      ) {
-        // 默认采用系统默认输入：合成项 → 物理默认标记 → 第 1 个
-        serviceState.selectedDevice =
-          devices.find((device) => device.id === DEFAULT_DEVICE_ID)?.id ??
-          devices.find((device) => device.is_default)?.id ??
-          devices[0]?.id ??
-          null;
-      }
-    })
-    .failed((failure) => {
-      toast.error(m.service_load_devices_failed());
-      reportCommandFailure("[service] failed to load devices", failure);
-    });
+  // 设备清单会话内只取一次：枚举会打开硬件，每次进页都刷又慢又有电流声；
+  // 有缓存直接跳过后端调用，热插拔经下方 `refreshDevices` 手动重取
+  if (serviceState.devices.length === 0) {
+    await commands
+      .listInputDevices()
+      .success((devices) => {
+        // 并发竞态下的二次保护：两路同时进首刷时只留第一份结果
+        if (serviceState.devices.length > 0) return;
+        serviceState.devices = devices;
+        // 存量优先：存量仍在设备列表才沿用，否则走默认选中逻辑
+        const stored = loadStoredSelection(SELECTED_DEVICE_STORAGE_KEY);
+        if (stored != null && devices.some((device) => device.id === stored)) {
+          serviceState.selectedDevice = stored;
+          return;
+        }
+        if (
+          serviceState.selectedDevice == null ||
+          !devices.some((device) => device.id === serviceState.selectedDevice)
+        ) {
+          // 默认采用系统默认输入：合成项 → 物理默认标记 → 第 1 个
+          serviceState.selectedDevice =
+            devices.find((device) => device.id === DEFAULT_DEVICE_ID)?.id ??
+            devices.find((device) => device.is_default)?.id ??
+            devices[0]?.id ??
+            null;
+        }
+      })
+      .failed((failure) => {
+        toast.error(m.service_load_devices_failed());
+        reportCommandFailure("[service] failed to load devices", failure);
+      });
+  }
   await syncStatus();
 }
 
