@@ -4,6 +4,38 @@ English | [简体中文](../README.md)
 
 A local speech-recognition desktop app built on Tauri v2 + SvelteKit 2 + Svelte 5. Recording, models, and recognition all run on-device and work fully offline; the network is only used to fetch models and check for updates.
 
+## Screenshots
+
+### Workbench (`/`): service status + recent recognitions
+
+![Workbench](images/home.png)
+
+Running service state with recognition model / input device / output channel in one view; usage summaries for models, lexicon, and directives below, plus recent texts with audio duration and latency.
+
+### Speech service (`/service`): recording and output setup
+
+![Speech service](images/service.png)
+
+Recognition count / total characters / average latency plus per-session records on the left; recognition model, recording device, output and paste mode, restore-after-paste, three hotkeys (voice / directive / quick-capture), and capture lexicon on the right.
+
+### Models (`/models`): pick by family, verify on disk
+
+![Models](images/models.png)
+
+Nine models grouped under FunASR Nano / Qwen3-ASR / SenseVoice with local size and readiness; details show description, size, install path, and directory tree, with open / re-verify / relocate / unbind actions. Downloads survive page switches.
+
+### Lexicon (`/lexicon`): groups and entries
+
+![Lexicon](images/lexicon.png)
+
+Groups on the left (global group always on, custom groups toggleable); entries with pinyin on the right, sortable by insertion order, filterable, with batch-add and single-add. Exact-text matches win first, then weight → group order → syllable length → insertion order.
+
+### Directives (`/directives`): trigger text replays keys
+
+![Directives](images/directives.png)
+
+Directive list on the left (e.g. "delete paragraph" enabled); trigger text, trigger pinyin, trigger gap, and the press/release-balanced sequence on the right, with a 104-key keyboard looping the effect preview without sending real keystrokes.
+
 ## Features
 
 - **Fully offline recognition**: sherpa-onnx based; recording, model loading, and decoding never leave the machine.
@@ -62,7 +94,7 @@ src/                 Frontend SvelteKit SPA: routes/ (pages) · components/ (com
                      · libs/ (commands contract chain · i18n · hooks · navigation · utils) · tests/
 src-tauri/           Backend: src/{commands (thin wrappers) · cores (shared capabilities) · features (business) · plugins/}
                      · locales/ · capabilities/ · tauri.conf.json
-docs/                ARCHITECTURE.md (structure & invariants) · WORKFLOW.md (commands & flows) · README_en.md (this file)
+docs/                ARCHITECTURE.md (structure & invariants) · WORKFLOW.md (commands & flows) · README_en.md (this file) · images/ (screenshots)
 static/              Copied-verbatim assets; .github/workflows/ (ci.yml / release.yml)
 ```
 

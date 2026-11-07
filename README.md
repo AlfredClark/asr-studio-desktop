@@ -4,6 +4,38 @@
 
 基于 Tauri v2 + SvelteKit 2 + Svelte 5 的本地语音识别桌面应用。录音、模型、识别全部在本机运行，全程离线可用；联网仅用于获取模型与检查更新。
 
+## 界面预览
+
+### 工作台（`/`）：服务状态 + 最近识别
+
+![工作台](docs/images/home.png)
+
+服务运行态、识别模型 / 录音设备 / 输出方式一屏可配；下方按模型、词库、指令分卡汇总用量，最近识别列出文本、音频时长与耗时。
+
+### 语音服务（`/service`）：录制与输出配置
+
+![语音服务](docs/images/service.png)
+
+左侧为识别条数 / 字符总数 / 平均识别时间统计与本会话识别记录；右侧集中管理识别模型、录音设备、输出与粘贴方式、内容恢复，以及语音识别 / 语音指令 / 快捷收录三路快捷键与收录词库。
+
+### 模型管理（`/models`）：按系列选型与校验
+
+![模型管理](docs/images/models.png)
+
+左侧按 FunASR Nano / Qwen3-ASR / SenseVoice 系列列出 9 个模型（含本地大小与就绪态）；右侧展示选中模型的说明、本地大小、安装位置与目录结构，支持打开目录、重新校验、更改目录与取消绑定，切换页面不中断下载。
+
+### 词库（`/lexicon`）：分组与词条
+
+![词库](docs/images/lexicon.png)
+
+左侧分组（全局词库始终启用、自定义分组可开关）；右侧词条带拼音注音，支持按添加顺序排序、启用过滤、批量添加与新建，排序规则为原文完全一致优先，其余按权重 → 分组顺序 → 音节长度 → 添加顺序伸裁。
+
+### 指令（`/directives`）：触发文本回放按键
+
+![指令](docs/images/directives.png)
+
+左侧指令列表（如“整段删除”已启用）；右侧展示触发文本、触发拼音、触发间隔与操作序列（按下 / 松开成对），下方 104 键键盘按触发间隔循环预演，不真正触发按键。
+
 ## 功能
 
 - **本地离线识别**：基于 sherpa-onnx，录音、模型加载、解码全在本机完成，不出网。
@@ -62,7 +94,7 @@ src/                 前端 SvelteKit SPA：routes/（页面）· components/（
                      · libs/（commands 契约链 · i18n · hooks · navigation · utils）· tests/
 src-tauri/           后端：src/{commands（薄封装）· cores（共享能力）· features（业务）· plugins/}
                      · locales/ · capabilities/ · tauri.conf.json
-docs/                ARCHITECTURE.md（结构与设计不变量）· WORKFLOW.md（命令与流程）· README_en.md（英文版）
+docs/                ARCHITECTURE.md（结构与设计不变量）· WORKFLOW.md（命令与流程）· README_en.md（英文版）· images/（界面截图）
 static/              原样拷贝资源；.github/workflows/（ci.yml / release.yml）
 ```
 
