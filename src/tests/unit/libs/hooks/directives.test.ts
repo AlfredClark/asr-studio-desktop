@@ -8,6 +8,7 @@ import {
   findDirectiveByPinyin,
   isTriggerDuplicate,
   moveDirective,
+  normalizeDirectiveText,
   refreshDirectives,
   setDirectiveEnabled,
   updateDirective,
@@ -158,9 +159,11 @@ describe("指令纯函数", () => {
     const rows = [makeDirective({ id: "d-1", trigger_text: "打开记事本" })];
     expect(isTriggerDuplicate(rows, "打开记事本")).toBe(true);
     expect(isTriggerDuplicate(rows, "  打开记事本  ")).toBe(true);
+    expect(isTriggerDuplicate(rows, "打开，记事本。")).toBe(true);
     expect(isTriggerDuplicate(rows, "打开记事本", "d-1")).toBe(false);
     expect(isTriggerDuplicate(rows, "关闭窗口", "d-1")).toBe(false);
     expect(isTriggerDuplicate(rows, "   ")).toBe(false);
+    expect(isTriggerDuplicate(rows, "，。！")).toBe(false);
   });
 
   it("平衡序列通过", () => {
@@ -228,5 +231,22 @@ describe("指令纯函数", () => {
     expect(
       findDirectiveByPinyin(rows, "zi dao", "乱码", { ...correction, applyRecognition: false })?.id,
     ).toBe("d-1");
+  });
+
+  it("触发文本归一去掉标点符号与空白", () => {
+    expect(normalizeDirectiveText("打开，记事本。")).toBe("打开记事本");
+    expect(normalizeDirectiveText("打开,记事本!")).toBe("打开记事本");
+    expect(normalizeDirectiveText("  打开 记事本  ")).toBe("打开记事本");
+    expect(normalizeDirectiveText("，。！？")).toBe("");
+  });
+
+  it("文本去标点后相等亦命中，纯标点不命中", () => {
+    const rows = [
+      makeDirective({ id: "d-1", trigger_text: "打开记事本", trigger_pinyin: "da kai ji shi ben" }),
+    ];
+    expect(findDirectiveByPinyin(rows, "乱码拼音", "打开记事本。")?.id).toBe("d-1");
+    expect(findDirectiveByPinyin(rows, "乱码拼音", "打开，记事本")?.id).toBe("d-1");
+    expect(findDirectiveByPinyin(rows, "乱码拼音", "打开记事本！")?.id).toBe("d-1");
+    expect(findDirectiveByPinyin(rows, "", "，。！")).toBeNull();
   });
 });

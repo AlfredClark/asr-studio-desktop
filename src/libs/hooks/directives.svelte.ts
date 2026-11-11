@@ -144,15 +144,23 @@ export function directiveTriggerKey(text: string): string {
   return text.trim();
 }
 
-/** 触发是否命中已存在（文本或拼音任一命中即真；更新时排除自身）；纯函数，可单测 */
+/** 触发文本归一：去 Unicode 标点/符号/空白，大小写与简繁保持原样 */
+export function normalizeDirectiveText(text: string): string {
+  return text.replace(/[\p{P}\p{S}\s]+/gu, "");
+}
+
+/** 触发是否命中已存在（去标点文本或拼音任一命中即真；更新时排除自身）；纯函数，可单测 */
 export function isTriggerDuplicate(
   directives: Directive[],
   text: string,
   excludeId?: string,
   pinyin?: string,
 ): boolean {
-  const key = directiveTriggerKey(text);
-  if (key !== "" && directives.some((d) => d.trigger_text === key && d.id !== excludeId)) {
+  const key = normalizeDirectiveText(text);
+  if (
+    key !== "" &&
+    directives.some((d) => normalizeDirectiveText(d.trigger_text) === key && d.id !== excludeId)
+  ) {
     return true;
   }
   const normalized = pinyin == null ? "" : normalizeDirectivePinyin(pinyin);
@@ -163,8 +171,8 @@ export function isTriggerDuplicate(
 }
 
 /**
- * 按拼音匹配指令：归一化后精确相等，或 raw 文本 trim 后与触发文本相等；仅启用项参与。
- * 纠正设置生效时（总开关开、指令应用开、有选中规则），两侧拼音先同折叠再比对。
+ * 按拼音或文本匹配指令：拼音归一后精确相等，或去标点文本相等；仅启用项参与。 纠正设置生效时（总开关开、指令应用开、有选中规则），两侧拼音先同折叠再比对。
+ * 文本侧去 Unicode 标点/符号/空白后比对，去空后不命中；展示与历史仍用原文。 建时标点变体判重拦截，存量变体按数组顺序首个胜出。
  */
 export function findDirectiveByPinyin(
   directives: Directive[],
@@ -178,7 +186,7 @@ export function findDirectiveByPinyin(
     folded == null || folded.size === 0
       ? normalizedSpoken
       : foldPinyinText(normalizedSpoken, folded);
-  const trimmed = rawText.trim();
+  const spokenText = normalizeDirectiveText(rawText);
   for (const directive of directives) {
     if (!directive.enabled) continue;
     const normalizedTrigger = normalizeDirectivePinyin(directive.trigger_pinyin);
@@ -187,7 +195,8 @@ export function findDirectiveByPinyin(
         ? normalizedTrigger
         : foldPinyinText(normalizedTrigger, folded);
     if (spoken !== "" && trigger !== "" && trigger === spoken) return directive;
-    if (trimmed !== "" && directive.trigger_text === trimmed) return directive;
+    if (spokenText !== "" && normalizeDirectiveText(directive.trigger_text) === spokenText)
+      return directive;
   }
   return null;
 }

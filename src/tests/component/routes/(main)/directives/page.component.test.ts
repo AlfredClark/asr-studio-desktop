@@ -380,4 +380,45 @@ describe("指令页", () => {
     });
     expect(createMock).not.toHaveBeenCalled();
   });
+
+  it("触发文本去标点后重复时拦截保存", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New directive" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Next" })).not.toBeNull();
+    });
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "标点变体");
+    await user.type(within(dialog).getByLabelText("Trigger text"), "打开，记事本。");
+    await user.click(within(dialog).getByRole("button", { name: "Next" }));
+
+    // 与存量「打开记事本」去标点后相同，拦截且不进入按键步
+    await waitFor(() => {
+      expect(within(dialog).getByText("This trigger text already exists")).not.toBeNull();
+    });
+    expect(within(dialog).queryByText("Action sequence (0)")).toBeNull();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("纯标点触发词按空输入拦截", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New directive" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Next" })).not.toBeNull();
+    });
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "纯标点");
+    await user.type(within(dialog).getByLabelText("Trigger text"), "，。！");
+    await user.click(within(dialog).getByRole("button", { name: "Next" }));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("Trigger text is required")).not.toBeNull();
+    });
+    expect(within(dialog).queryByText("Action sequence (0)")).toBeNull();
+    expect(createMock).not.toHaveBeenCalled();
+  });
 });

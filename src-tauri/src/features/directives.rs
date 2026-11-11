@@ -90,15 +90,28 @@ pub fn check_actions_balanced(actions: &[DirectiveAction]) -> anyhow::Result<()>
     Ok(())
 }
 
-/// 触发文本唯一校验：trim 后比对，更新时排除自身。纯函数，可单测
+/// 触发文本归一：仅保留字母与数字，去标点/符号/空白；与前端 `normalizeDirectiveText` 同口径。
+///
+/// 前端用 Unicode 属性类 `[\p{P}\p{S}\s]` 做减法，本处用 `is_alphanumeric` 做加法；
+/// 字母数字输入下两者等价，差异仅在极少见的标记/格式字符（触发词基本不出现），可接受。
+/// 纯函数，可单测
+fn normalize_trigger_text(text: &str) -> String {
+    text.chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
+/// 触发文本唯一校验：去标点/符号/空白后比对，更新时排除自身。纯函数，可单测
 fn check_trigger_unique(
     directives: &[Directive],
     text: &str,
     exclude_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    let text = text.trim();
+    let key = normalize_trigger_text(text);
+    if key.is_empty() {
+        return Ok(());
+    }
     if directives.iter().any(|directive| {
-        directive.trigger_text == text && Some(directive.id.as_str()) != exclude_id
+        normalize_trigger_text(&directive.trigger_text) == key
+            && Some(directive.id.as_str()) != exclude_id
     }) {
         anyhow::bail!("directive trigger text already exists");
     }
@@ -136,7 +149,7 @@ pub fn create_directive(app: &tauri::AppHandle, input: NewDirective) -> anyhow::
         anyhow::bail!("directive name must not be empty");
     }
     let trigger_text = input.trigger_text.trim().to_owned();
-    if trigger_text.is_empty() {
+    if trigger_text.is_empty() || normalize_trigger_text(&trigger_text).is_empty() {
         anyhow::bail!("directive trigger text must not be empty");
     }
     let trigger_pinyin = resolve_trigger_pinyin(&trigger_text, input.trigger_pinyin.as_deref())?;
@@ -170,7 +183,7 @@ pub fn update_directive(
         anyhow::bail!("directive name must not be empty");
     }
     if let Some(trigger_text) = patch.trigger_text.as_deref()
-        && trigger_text.trim().is_empty()
+        && (trigger_text.trim().is_empty() || normalize_trigger_text(trigger_text).is_empty())
     {
         anyhow::bail!("directive trigger text must not be empty");
     }
@@ -700,6 +713,26 @@ mod tests {
         assert!(check_trigger_unique(&data.directives, "打开记事本", None).is_err());
         assert!(check_trigger_unique(&data.directives, "打开记事本", Some("d-1")).is_ok());
         assert!(check_trigger_unique(&data.directives, "关闭窗口", Some("d-1")).is_ok());
+    }
+
+    #[test]
+    fn trigger_text_normalizes_punct_and_space() {
+        assert_eq!(normalize_trigger_text("打开，记事本。"), "打开记事本");
+        assert_eq!(normalize_trigger_text("打开,记事本!"), "打开记事本");
+        assert_eq!(normalize_trigger_text("  打开 记事本  "), "打开记事本");
+        assert_eq!(normalize_trigger_text("，。！？"), "");
+    }
+
+    #[test]
+    fn trigger_unique_rejects_punct_variants() {
+        let data = DirectivesData {
+            version: 1,
+            directives: vec![directive("d-1", "打开记事本")],
+        };
+        assert!(check_trigger_unique(&data.directives, "打开，记事本。", None).is_err());
+        assert!(check_trigger_unique(&data.directives, "打开记事本。", Some("d-1")).is_ok());
+        // 去空后不判重：空值由非空校验拦截，此处不误报
+        assert!(check_trigger_unique(&data.directives, "，。！", None).is_ok());
     }
 
     #[test]

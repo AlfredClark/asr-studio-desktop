@@ -24,6 +24,7 @@
     createDirective,
     directiveState,
     isTriggerDuplicate,
+    normalizeDirectiveText,
     suggestDirectivePinyin,
     updateDirective,
   } from "#libs/hooks/directives.svelte";
@@ -158,11 +159,13 @@
     }
   });
 
-  /** 第一步校验：非空 + 判重（文本/拼音），失败留内联错误 */
+  /** 第一步校验：非空 + 判重（去标点文本/拼音），失败留内联错误 */
   async function validateTrigger(): Promise<boolean> {
     const next: typeof errors = {};
     if (draftName.trim() === "") next.name = m.directives_name_empty();
-    if (draftTrigger.trim() === "") next.trigger = m.directives_trigger_empty();
+    // 纯标点触发词去标点后为空，运行时永不命中，与空输入同等拦截
+    if (draftTrigger.trim() === "" || normalizeDirectiveText(draftTrigger) === "")
+      next.trigger = m.directives_trigger_empty();
     if (next.name == null && next.trigger == null) {
       const pinyin = await resolvePinyin();
       if (isTriggerDuplicate(directiveState.value, draftTrigger.trim(), editing?.id, pinyin)) {
