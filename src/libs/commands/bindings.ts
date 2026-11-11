@@ -80,9 +80,9 @@ export const commands = {
 	 * 
 	 *  命令层保持薄封装，结构体转换在此完成，避免前端直接依赖内部类型
 	 */
-	createDirective: (name: string, triggerText: string, triggerPinyin: string | null, enabled: boolean, intervalMs: number, actions: DirectiveAction[]) => typedError<Directive, CommandError>(__TAURI_INVOKE("create_directive", { name, triggerText, triggerPinyin, enabled, intervalMs, actions })),
+	createDirective: (name: string, triggerText: string, triggerPinyin: string | null, enabled: boolean, intervalMs: number, tolerance: number, actions: DirectiveAction[]) => typedError<Directive, CommandError>(__TAURI_INVOKE("create_directive", { name, triggerText, triggerPinyin, enabled, intervalMs, tolerance, actions })),
 	/**  更新指令输入（前端透传）：各字段缺省即不改 */
-	updateDirective: (id: string, name: string | null, triggerText: string | null, triggerPinyin: string | null, enabled: boolean | null, intervalMs: number | null, actions: DirectiveAction[] | null) => typedError<Directive, CommandError>(__TAURI_INVOKE("update_directive", { id, name, triggerText, triggerPinyin, enabled, intervalMs, actions })),
+	updateDirective: (id: string, name: string | null, triggerText: string | null, triggerPinyin: string | null, enabled: boolean | null, intervalMs: number | null, tolerance: number | null, actions: DirectiveAction[] | null) => typedError<Directive, CommandError>(__TAURI_INVOKE("update_directive", { id, name, triggerText, triggerPinyin, enabled, intervalMs, tolerance, actions })),
 	/**  删除指令 */
 	deleteDirective: (id: string) => typedError<null, CommandError>(__TAURI_INVOKE("delete_directive", { id })),
 	/**  移动指令：列表内换位；触顶 / 触底原地不动 */
@@ -390,6 +390,8 @@ export type Directive = {
 	enabled: boolean,
 	/**  事件间隔毫秒：触发回放时每个事件前等待 */
 	interval_ms: number,
+	/**  拼音容错：允许的最大音节编辑距离；0 为关闭 */
+	tolerance?: number,
 	/**  按键事件序列：收尾必须平衡（无残留按下） */
 	actions: DirectiveAction[],
 };

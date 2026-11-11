@@ -12,12 +12,16 @@ use tauri_plugin_store::StoreExt;
 pub const DIRECTIVES_FILE: &str = "directives.json";
 /// 指令文件内的唯一数据键
 const KEY_DATA: &str = "data";
-/// 指令结构版本：首版为 `1`，后续字段变更时递增并补迁移
-pub const DIRECTIVES_SCHEMA_VERSION: u32 = 1;
+/// 指令结构版本：首版为 `1`，容错指数引入后为 `2`
+pub const DIRECTIVES_SCHEMA_VERSION: u32 = 2;
 /// 触发间隔上下界：毫秒，落盘时钳制，触发回放时逐事件等待
 pub const INTERVAL_MS_MIN: u32 = 0;
 /// 触发间隔上下界：毫秒，落盘时钳制，触发回放时逐事件等待
 pub const INTERVAL_MS_MAX: u32 = 5000;
+/// 拼音容错上下界：允许的最大音节编辑距离，落盘时钳制；0 为关闭（精确匹配）
+pub const TOLERANCE_MIN: u32 = 0;
+/// 拼音容错上下界：允许的最大音节编辑距离，落盘时钳制；0 为关闭（精确匹配）
+pub const TOLERANCE_MAX: u32 = 2;
 
 /// 按键事件方向：按下 / 松开，录制时按点击交替产生
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -53,6 +57,9 @@ pub struct Directive {
     pub enabled: bool,
     /// 事件间隔毫秒：触发回放时每个事件前等待
     pub interval_ms: u32,
+    /// 拼音容错：允许的最大音节编辑距离；0 为关闭
+    #[serde(default)]
+    pub tolerance: u32,
     /// 按键事件序列：收尾必须平衡（无残留按下）
     pub actions: Vec<DirectiveAction>,
 }
@@ -180,6 +187,7 @@ mod tests {
             trigger_pinyin: String::new(),
             enabled: true,
             interval_ms: 0,
+            tolerance: 0,
             actions: Vec::new(),
         }]);
         assert_ne!(first, second);

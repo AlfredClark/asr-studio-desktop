@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::cores::directives::{
-    ActionDirection, Directive, DirectiveAction, INTERVAL_MS_MAX, INTERVAL_MS_MIN,
+    ActionDirection, Directive, DirectiveAction, INTERVAL_MS_MAX, INTERVAL_MS_MIN, TOLERANCE_MAX,
+    TOLERANCE_MIN,
 };
 use crate::features::lexicon::{MoveDirection, parse_pinyin, suggest_pinyin};
 
@@ -25,6 +26,8 @@ pub struct NewDirective {
     pub enabled: bool,
     /// 事件间隔毫秒（触发回放时每个事件前等待）
     pub interval_ms: u32,
+    /// 拼音容错：允许的最大音节编辑距离；0 为关闭
+    pub tolerance: u32,
     /// 按键事件序列
     pub actions: Vec<DirectiveAction>,
 }
@@ -42,6 +45,8 @@ pub struct DirectivePatch {
     pub enabled: Option<bool>,
     /// 事件间隔毫秒
     pub interval_ms: Option<u32>,
+    /// 拼音容错：允许的最大音节编辑距离；缺省即不改
+    pub tolerance: Option<u32>,
     /// 按键事件序列（整包替换）
     pub actions: Option<Vec<DirectiveAction>>,
 }
@@ -54,6 +59,11 @@ pub fn list_directives(app: &tauri::AppHandle) -> Vec<Directive> {
 /// 间隔钳制：`INTERVAL_MS_MIN..=INTERVAL_MS_MAX`
 pub fn clamp_interval_ms(interval_ms: u32) -> u32 {
     interval_ms.clamp(INTERVAL_MS_MIN, INTERVAL_MS_MAX)
+}
+
+/// 容错钳制：`TOLERANCE_MIN..=TOLERANCE_MAX`
+pub fn clamp_tolerance(tolerance: u32) -> u32 {
+    tolerance.clamp(TOLERANCE_MIN, TOLERANCE_MAX)
 }
 
 /// 动作序列平衡校验：非空；键名非空；`Release` 须有前序未配对的 `Press`；
@@ -164,6 +174,7 @@ pub fn create_directive(app: &tauri::AppHandle, input: NewDirective) -> anyhow::
             trigger_pinyin,
             enabled: input.enabled,
             interval_ms: clamp_interval_ms(input.interval_ms),
+            tolerance: clamp_tolerance(input.tolerance),
             actions: input.actions,
         };
         data.directives.push(directive.clone());
@@ -222,6 +233,9 @@ pub fn update_directive(
         }
         if let Some(interval_ms) = patch.interval_ms {
             directive.interval_ms = clamp_interval_ms(interval_ms);
+        }
+        if let Some(tolerance) = patch.tolerance {
+            directive.tolerance = clamp_tolerance(tolerance);
         }
         if let Some(actions) = patch.actions {
             directive.actions = actions;
@@ -681,6 +695,7 @@ mod tests {
             trigger_pinyin: String::from("ce shi"),
             enabled: true,
             interval_ms: 50,
+            tolerance: 0,
             actions: Vec::new(),
         }
     }
@@ -772,6 +787,29 @@ mod tests {
         assert_eq!(clamp_interval_ms(50), 50);
         assert_eq!(clamp_interval_ms(0), 0);
         assert_eq!(clamp_interval_ms(99999), INTERVAL_MS_MAX);
+    }
+
+    #[test]
+    fn tolerance_clamps_to_range() {
+        assert_eq!(clamp_tolerance(0), 0);
+        assert_eq!(clamp_tolerance(1), 1);
+        assert_eq!(clamp_tolerance(2), 2);
+        assert_eq!(clamp_tolerance(999), TOLERANCE_MAX);
+    }
+
+    #[test]
+    fn legacy_directive_without_tolerance_falls_back_to_zero() {
+        let raw = serde_json::json!({
+            "id": "d-1",
+            "name": "测试",
+            "trigger_text": "打开记事本",
+            "trigger_pinyin": "da kai ji shi ben",
+            "enabled": true,
+            "interval_ms": 50,
+            "actions": [],
+        });
+        let directive: Directive = serde_json::from_value(raw).expect("legacy row parses");
+        assert_eq!(directive.tolerance, 0);
     }
 
     #[test]

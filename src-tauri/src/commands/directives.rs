@@ -27,6 +27,7 @@ pub fn create_directive(
     trigger_pinyin: Option<String>,
     enabled: bool,
     interval_ms: u32,
+    tolerance: u32,
     actions: Vec<DirectiveAction>,
 ) -> CommandResult<Directive> {
     Ok(directives::create_directive(
@@ -37,6 +38,7 @@ pub fn create_directive(
             trigger_pinyin,
             enabled,
             interval_ms,
+            tolerance,
             actions,
         },
     )?)
@@ -55,6 +57,7 @@ pub fn update_directive(
     trigger_pinyin: Option<String>,
     enabled: Option<bool>,
     interval_ms: Option<u32>,
+    tolerance: Option<u32>,
     actions: Option<Vec<DirectiveAction>>,
 ) -> CommandResult<Directive> {
     Ok(directives::update_directive(
@@ -66,6 +69,7 @@ pub fn update_directive(
             trigger_pinyin,
             enabled,
             interval_ms,
+            tolerance,
             actions,
         },
     )?)

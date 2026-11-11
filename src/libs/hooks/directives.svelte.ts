@@ -17,6 +17,10 @@ import { toast } from "#libs/utils/toast";
 export const DIRECTIVE_INTERVAL_MIN = 0;
 /** 触发间隔上下界：毫秒，与后端 `INTERVAL_MS_*` 同口径，输入时钳制 */
 export const DIRECTIVE_INTERVAL_MAX = 5000;
+/** 拼音容错上下界：允许的最大音节编辑距离，与后端 `TOLERANCE_*` 同口径；0 为关闭 */
+export const DIRECTIVE_TOLERANCE_MIN = 0;
+/** 拼音容错上下界：允许的最大音节编辑距离，与后端 `TOLERANCE_*` 同口径；0 为关闭 */
+export const DIRECTIVE_TOLERANCE_MAX = 2;
 
 /** 跨页面共享的指令状态；首帧水合前为空表 */
 export const directiveState = $state<{ value: Directive[] }>({ value: [] });
@@ -59,6 +63,8 @@ export interface NewDirective {
   enabled: boolean;
   /** 事件间隔毫秒 */
   intervalMs: number;
+  /** 拼音容错：允许的最大音节编辑距离；0 为关闭 */
+  tolerance: number;
   /** 按键事件序列 */
   actions: DirectiveAction[];
 }
@@ -73,6 +79,7 @@ export async function createDirective(input: NewDirective): Promise<boolean> {
         input.triggerPinyin ?? null,
         input.enabled,
         input.intervalMs,
+        input.tolerance,
         input.actions,
       )
       .result(),
@@ -92,6 +99,8 @@ export interface DirectivePatch {
   enabled?: boolean;
   /** 事件间隔毫秒 */
   intervalMs?: number;
+  /** 拼音容错：允许的最大音节编辑距离；缺省即不改 */
+  tolerance?: number;
   /** 按键事件序列 */
   actions?: DirectiveAction[];
 }
@@ -107,6 +116,7 @@ export async function updateDirective(id: string, patch: DirectivePatch): Promis
         patch.triggerPinyin ?? null,
         patch.enabled ?? null,
         patch.intervalMs ?? null,
+        patch.tolerance ?? null,
         patch.actions ?? null,
       )
       .result(),
@@ -171,8 +181,8 @@ export function isTriggerDuplicate(
 }
 
 /**
- * 按拼音或文本匹配指令：拼音归一后精确相等，或去标点文本相等；仅启用项参与。 纠正设置生效时（总开关开、指令应用开、有选中规则），两侧拼音先同折叠再比对。
- * 文本侧去 Unicode 标点/符号/空白后比对，去空后不命中；展示与历史仍用原文。 建时标点变体判重拦截，存量变体按数组顺序首个胜出。
+ * 按拼音或文本匹配指令：文本去标点精确优先，其次拼音距离择优；仅启用项参与。 纠正设置生效时（总开关开、指令应用开、有选中规则），两侧拼音先同折叠再比距离。
+ * 容错取指令自身落盘值与 `len - 1` 的较小值，单字触发词只走精确；展示与历史仍用原文。 建时标点变体判重拦截，存量变体按数组顺序首个胜出。
  */
 export function findDirectiveByPinyin(
   directives: Directive[],
@@ -187,18 +197,59 @@ export function findDirectiveByPinyin(
       ? normalizedSpoken
       : foldPinyinText(normalizedSpoken, folded);
   const spokenText = normalizeDirectiveText(rawText);
+  let textHit: Directive | null = null;
+  let best: Directive | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
   for (const directive of directives) {
     if (!directive.enabled) continue;
+    if (
+      textHit == null &&
+      spokenText !== "" &&
+      normalizeDirectiveText(directive.trigger_text) === spokenText
+    ) {
+      textHit = directive;
+    }
     const normalizedTrigger = normalizeDirectivePinyin(directive.trigger_pinyin);
     const trigger =
       folded == null || folded.size === 0
         ? normalizedTrigger
         : foldPinyinText(normalizedTrigger, folded);
-    if (spoken !== "" && trigger !== "" && trigger === spoken) return directive;
-    if (spokenText !== "" && normalizeDirectiveText(directive.trigger_text) === spokenText)
-      return directive;
+    if (spoken === "" || trigger === "") continue;
+    const distance = pinyinEditDistance(spoken.split(" "), trigger.split(" "));
+    if (distance !== 0 && distance > effectiveTolerance(directive)) continue;
+    if (distance < bestDistance) {
+      best = directive;
+      bestDistance = distance;
+    }
   }
-  return null;
+  return textHit ?? best;
+}
+
+/** 音节级编辑距离：增/删/替换一个音节计 1；纯函数，可单测 */
+export function pinyinEditDistance(left: string[], right: string[]): number {
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const table: number[][] = Array.from({ length: rows }, (_, row) =>
+    Array.from({ length: cols }, (_, col) => (row === 0 ? col : col === 0 ? row : 0)),
+  );
+  for (let row = 1; row < rows; row += 1) {
+    for (let col = 1; col < cols; col += 1) {
+      const cost = left[row - 1] === right[col - 1] ? 0 : 1;
+      table[row][col] = Math.min(
+        table[row - 1][col] + 1,
+        table[row][col - 1] + 1,
+        table[row - 1][col - 1] + cost,
+      );
+    }
+  }
+  return table[left.length][right.length];
+}
+
+/** 指令生效容错：自身落盘值与 `len - 1` 取小，单字触发词只走精确 */
+function effectiveTolerance(directive: Directive): number {
+  const trigger = normalizeDirectivePinyin(directive.trigger_pinyin);
+  const len = trigger === "" ? 0 : trigger.split(" ").length;
+  return Math.min(directive.tolerance ?? 0, Math.max(len - 1, 0));
 }
 
 /** 动作序列收尾是否平衡：空序列、有残留按下均为否；纯函数，可单测 */

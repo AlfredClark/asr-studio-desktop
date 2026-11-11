@@ -332,11 +332,46 @@ describe("指令页", () => {
       expect.objectContaining({
         name: "复制",
         triggerText: "复制",
+        tolerance: 0,
         actions: [
           { key: "LControl", direction: "press" },
           { key: "LControl", direction: "release" },
         ],
       }),
+    );
+  });
+
+  it("打开容错开关后保存透传容错值", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: "New directive" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Next" })).not.toBeNull();
+    });
+    const dialog = screen.getByRole("dialog");
+    const dialogScope = within(dialog);
+    await user.type(dialogScope.getByLabelText("Name"), "容错");
+    await user.type(dialogScope.getByLabelText("Trigger text"), "打开发射台");
+    // 第一步两个开关：启用与拼音容错，打开第二个
+    await user.click(dialogScope.getAllByRole("switch")[1]);
+    await user.click(dialogScope.getByRole("button", { name: "Next" }));
+    await waitFor(() => {
+      expect(dialogScope.getByText("Action sequence (0)")).not.toBeNull();
+    });
+
+    await user.click(dialogScope.getByRole("button", { name: "Tap to toggle" }));
+    const ctrls = dialogScope.getAllByRole("button", { name: "Ctrl" });
+    await user.click(ctrls[0]);
+    await user.click(ctrls[0]);
+    await user.click(dialogScope.getByRole("button", { name: "Next" }));
+    await waitFor(() => {
+      expect(dialogScope.getByRole("button", { name: "Save" })).not.toBeNull();
+    });
+    await user.click(dialogScope.getByRole("button", { name: "Save" }));
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerText: "打开发射台", tolerance: 1 }),
     );
   });
 

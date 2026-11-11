@@ -9,6 +9,7 @@ import {
   isTriggerDuplicate,
   moveDirective,
   normalizeDirectiveText,
+  pinyinEditDistance,
   refreshDirectives,
   setDirectiveEnabled,
   updateDirective,
@@ -66,6 +67,7 @@ function makeDirective(partial: Partial<Directive> & { id: string }): Directive 
     trigger_pinyin: "da kai ji shi ben",
     enabled: true,
     interval_ms: 50,
+    tolerance: 0,
     actions: [],
     ...partial,
   };
@@ -111,10 +113,11 @@ describe("指令 hook", () => {
         triggerText: "复制",
         enabled: true,
         intervalMs: 50,
+        tolerance: 1,
         actions,
       }),
     ).toBe(true);
-    expect(mocked.createDirective).toHaveBeenCalledWith("复制", "复制", null, true, 50, actions);
+    expect(mocked.createDirective).toHaveBeenCalledWith("复制", "复制", null, true, 50, 1, actions);
     expect(mocked.listDirectives).toHaveBeenCalled();
   });
 
@@ -129,6 +132,7 @@ describe("指令 hook", () => {
         triggerText: "复制",
         enabled: true,
         intervalMs: 50,
+        tolerance: 0,
         actions: [press("C"), release("C")],
       }),
     ).toBe(false);
@@ -137,7 +141,16 @@ describe("指令 hook", () => {
 
   it("更新透传补丁", async () => {
     expect(await updateDirective("d-1", { enabled: false })).toBe(true);
-    expect(mocked.updateDirective).toHaveBeenCalledWith("d-1", null, null, null, false, null, null);
+    expect(mocked.updateDirective).toHaveBeenCalledWith(
+      "d-1",
+      null,
+      null,
+      null,
+      false,
+      null,
+      null,
+      null,
+    );
   });
 
   it("删除与移动透传 id", async () => {
@@ -146,7 +159,16 @@ describe("指令 hook", () => {
     expect(await moveDirective("d-1", "up")).toBe(true);
     expect(mocked.moveDirective).toHaveBeenCalledWith("d-1", "up");
     expect(await setDirectiveEnabled("d-1", false)).toBe(true);
-    expect(mocked.updateDirective).toHaveBeenCalledWith("d-1", null, null, null, false, null, null);
+    expect(mocked.updateDirective).toHaveBeenCalledWith(
+      "d-1",
+      null,
+      null,
+      null,
+      false,
+      null,
+      null,
+      null,
+    );
   });
 });
 
@@ -248,5 +270,63 @@ describe("指令纯函数", () => {
     expect(findDirectiveByPinyin(rows, "乱码拼音", "打开，记事本")?.id).toBe("d-1");
     expect(findDirectiveByPinyin(rows, "乱码拼音", "打开记事本！")?.id).toBe("d-1");
     expect(findDirectiveByPinyin(rows, "", "，。！")).toBeNull();
+  });
+
+  it("音节编辑距离按增删替计数", () => {
+    expect(pinyinEditDistance(["da", "kai"], ["da", "kai"])).toBe(0);
+    expect(pinyinEditDistance(["da", "kai", "ji"], ["da", "kai", "si"])).toBe(1);
+    expect(pinyinEditDistance(["da", "kai"], ["da", "kai", "ji"])).toBe(1);
+    expect(pinyinEditDistance(["da", "kai", "ji"], ["da", "kai"])).toBe(1);
+    expect(pinyinEditDistance(["a"], ["b", "c"])).toBe(2);
+    expect(pinyinEditDistance([], [])).toBe(0);
+  });
+
+  it("容错关闭时一字之差不命中，开启后命中", () => {
+    const rows = [
+      makeDirective({
+        id: "d-1",
+        trigger_text: "打开记事本",
+        trigger_pinyin: "da kai ji shi ben",
+        tolerance: 1,
+      }),
+    ];
+    // 差一个音节：容错 1 命中
+    expect(findDirectiveByPinyin(rows, "da kai ji si ben", "乱码")?.id).toBe("d-1");
+    // 差两个音节：超出容错仍不命中
+    expect(findDirectiveByPinyin(rows, "da kai ji si men", "乱码")).toBeNull();
+    // 容错 0 时一字之差不命中
+    const strict = [makeDirective({ id: "d-1", trigger_pinyin: "da kai ji shi ben" })];
+    expect(findDirectiveByPinyin(strict, "da kai ji si ben", "乱码")).toBeNull();
+  });
+
+  it("文本精确优先于拼音模糊，模糊按距离择优", () => {
+    const rows = [
+      makeDirective({
+        id: "d-1",
+        trigger_text: "关闭窗口",
+        trigger_pinyin: "guan bi chuang kou",
+        tolerance: 2,
+      }),
+      makeDirective({
+        id: "d-2",
+        trigger_text: "打开记事本",
+        trigger_pinyin: "da kai ji shi ben",
+        tolerance: 0,
+      }),
+    ];
+    // d-2 文本精确命中，压过 d-1 的拼音模糊
+    expect(findDirectiveByPinyin(rows, "guan bi chuang kou", "打开记事本")?.id).toBe("d-2");
+    // 同距离时按数组顺序首个胜出
+    const tied = [
+      makeDirective({ id: "d-1", trigger_pinyin: "da kai ji shi ben", tolerance: 1 }),
+      makeDirective({ id: "d-2", trigger_pinyin: "da kai ji shi ben", tolerance: 1 }),
+    ];
+    expect(findDirectiveByPinyin(tied, "da kai ji si ben", "乱码")?.id).toBe("d-1");
+  });
+
+  it("单字触发词只走精确匹配", () => {
+    const rows = [makeDirective({ id: "d-1", trigger_pinyin: "hao", tolerance: 2 })];
+    expect(findDirectiveByPinyin(rows, "hao", "乱码")?.id).toBe("d-1");
+    expect(findDirectiveByPinyin(rows, "gao", "乱码")).toBeNull();
   });
 });

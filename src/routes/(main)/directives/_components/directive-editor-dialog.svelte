@@ -20,6 +20,7 @@
   import {
     DIRECTIVE_INTERVAL_MAX,
     DIRECTIVE_INTERVAL_MIN,
+    DIRECTIVE_TOLERANCE_MAX,
     areActionsBalanced,
     createDirective,
     directiveState,
@@ -48,6 +49,10 @@
   let pinyinTouched = $state(false);
   let draftEnabled = $state(true);
   let draftInterval = $state("50");
+  /** 拼音容错开关：默认关闭（落盘 0），打开后按步进值落盘 */
+  let draftFuzzy = $state(false);
+  /** 拼音容错步进值：仅开关开时有效，非法回落 1 */
+  let draftTolerance = $state("1");
   let draftActions = $state<DirectiveAction[]>([]);
   let saving = $state(false);
 
@@ -62,6 +67,9 @@
       pinyinTouched = editing != null;
       draftEnabled = editing?.enabled ?? true;
       draftInterval = String(editing?.interval_ms ?? 50);
+      const savedTolerance = editing?.tolerance ?? 0;
+      draftFuzzy = savedTolerance > 0;
+      draftTolerance = String(savedTolerance > 0 ? savedTolerance : 1);
       draftActions = editing != null ? [...editing.actions] : [];
       saving = false;
       step = 1;
@@ -113,6 +121,14 @@
     const parsed = Number.parseInt(draftInterval, 10);
     if (Number.isNaN(parsed)) return DIRECTIVE_INTERVAL_MIN;
     return Math.min(DIRECTIVE_INTERVAL_MAX, Math.max(DIRECTIVE_INTERVAL_MIN, parsed));
+  }
+
+  /** 解析落盘用容错：开关关即 0，非法钳到 1..上限 */
+  function parseTolerance(): number {
+    if (!draftFuzzy) return 0;
+    const parsed = Number.parseInt(draftTolerance, 10);
+    if (Number.isNaN(parsed)) return 1;
+    return Math.min(DIRECTIVE_TOLERANCE_MAX, Math.max(1, parsed));
   }
 
   /** 点击键帽（点按模式）：按下↔松开交替，跨键可同时多按 */
@@ -231,6 +247,7 @@
               triggerPinyin: pinyin === "" ? undefined : pinyin,
               enabled: draftEnabled,
               intervalMs: parseIntervalMs(),
+              tolerance: parseTolerance(),
               actions: draftActions,
             })
           : await updateDirective(editing.id, {
@@ -239,6 +256,7 @@
               triggerPinyin: pinyin === "" ? undefined : pinyin,
               enabled: draftEnabled,
               intervalMs: parseIntervalMs(),
+              tolerance: parseTolerance(),
               actions: draftActions,
             });
       if (ok) open = false;
@@ -324,6 +342,28 @@
               <span class="text-xs text-destructive">{errors.trigger}</span>
             {/if}
           </div>
+          <div class="flex flex-col gap-1 text-sm sm:col-span-2">
+            <span class="font-medium">{m.directives_trigger_pinyin()}</span>
+            <div class="flex items-center gap-2">
+              <Input
+                value={draftPinyin}
+                oninput={(event) => {
+                  pinyinTouched = true;
+                  draftPinyin = event.currentTarget.value;
+                }}
+                class="min-w-0 flex-1"
+                aria-label={m.directives_trigger_pinyin()}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onclick={() => void handleRegeneratePinyin()}
+                disabled={saving || draftTrigger.trim() === ""}
+              >
+                {m.directives_regenerate_pinyin()}
+              </Button>
+            </div>
+          </div>
           <div class="flex flex-col gap-1 text-sm">
             <span class="font-medium">{m.directives_interval()}</span>
             <div class="flex items-center gap-2">
@@ -347,26 +387,27 @@
             <p class="text-xs text-muted-foreground">{m.directives_interval_hint()}</p>
           </div>
           <div class="flex flex-col gap-1 text-sm">
-            <span class="font-medium">{m.directives_trigger_pinyin()}</span>
+            <span class="font-medium">{m.directives_tolerance()}</span>
             <div class="flex items-center gap-2">
               <Input
-                value={draftPinyin}
-                oninput={(event) => {
-                  pinyinTouched = true;
-                  draftPinyin = event.currentTarget.value;
-                }}
+                type="number"
+                min={1}
+                max={DIRECTIVE_TOLERANCE_MAX}
+                value={draftTolerance}
+                oninput={(event) => (draftTolerance = event.currentTarget.value)}
                 class="min-w-0 flex-1"
-                aria-label={m.directives_trigger_pinyin()}
+                aria-label={m.directives_tolerance()}
+                disabled={!draftFuzzy}
               />
-              <Button
-                variant="outline"
-                size="sm"
-                onclick={() => void handleRegeneratePinyin()}
-                disabled={saving || draftTrigger.trim() === ""}
-              >
-                {m.directives_regenerate_pinyin()}
-              </Button>
+              <label class="flex shrink-0 items-center gap-2 text-sm">
+                <span class="font-medium">{m.directives_enabled_label()}</span>
+                <Switch
+                  checked={draftFuzzy}
+                  onCheckedChange={(checked) => (draftFuzzy = checked)}
+                />
+              </label>
             </div>
+            <p class="text-xs text-muted-foreground">{m.directives_tolerance_hint()}</p>
           </div>
         </div>
       </div>

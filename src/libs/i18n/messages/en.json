@@ -344,6 +344,8 @@
   "directives_interval": "Interval (ms)",
   "directives_interval_label": "Interval",
   "directives_interval_hint": "Wait before each key event during replay",
+  "directives_tolerance": "Pinyin tolerance",
+  "directives_tolerance_hint": "Off means exact match; when on, one or two syllable differences are allowed, recommended only for triggers of 3+ syllables",
   "directives_enabled_label": "Enabled",
   "directives_editor_hint": "Replay key presses in order when the trigger text matches; click caps to record press/release, the sequence can only be cleared",
   "directives_key_unsupported": "This key is not supported on the current platform",
