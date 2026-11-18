@@ -154,8 +154,7 @@ fn new_id(prefix: &str, taken: &[&str]) -> String {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or_default();
+        .map_or_default(|elapsed| elapsed.as_millis());
     let mut seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     loop {
         let id = format!("{prefix}-{millis}-{seq}");

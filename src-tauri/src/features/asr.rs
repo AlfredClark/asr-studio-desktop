@@ -660,8 +660,7 @@ fn transcribe_blocking(
     let infer_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let text = stream
         .get_result()
-        .map(|result| result.text.trim().to_owned())
-        .unwrap_or_default();
+        .map_or_default(|result| result.text.trim().to_owned());
     Ok(TranscribeResult {
         text,
         audio_sec: (audio_sec * 100.0).round() / 100.0,

@@ -783,8 +783,7 @@ fn stat_sizes(dir: &std::path::Path, files: &[RequiredFile]) -> HashMap<String, 
             let size = std::fs::metadata(dir.join(file.path))
                 .ok()
                 .filter(std::fs::Metadata::is_file)
-                .map(|meta| meta.len())
-                .unwrap_or_default();
+                .map_or_default(|meta| meta.len());
             (file.path.to_owned(), size)
         })
         .collect()

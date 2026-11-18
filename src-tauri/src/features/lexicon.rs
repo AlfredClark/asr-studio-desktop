@@ -813,7 +813,7 @@ pub fn create_entry(
             group_id: group_id.to_owned(),
             text,
             pinyin: syllables.join(" "),
-            weight: weight.map(clamp_weight).unwrap_or_default(),
+            weight: weight.map_or_default(clamp_weight),
             enabled: enabled.unwrap_or(true),
         };
         data.entries.push(entry.clone());

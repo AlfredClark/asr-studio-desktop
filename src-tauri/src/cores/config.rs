@@ -406,7 +406,7 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value.as_str().map(Locale::parse).unwrap_or_default())
+    Ok(value.as_str().map_or_default(Locale::parse))
 }
 
 /// 容错解析识别语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值（中文）
@@ -415,7 +415,7 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value.as_str().map(AsrLanguage::parse).unwrap_or_default())
+    Ok(value.as_str().map_or_default(AsrLanguage::parse))
 }
 
 /// 容错解析开机自启：经 `serde_json::Value` 中转，非布尔值一律回落默认值（`false`）
@@ -460,7 +460,7 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value.as_str().map(CloseBehavior::parse).unwrap_or_default())
+    Ok(value.as_str().map_or_default(CloseBehavior::parse))
 }
 
 /// 容错解析快速打开快捷键：经 `serde_json::Value` 中转，非字符串一律回落空字符串（禁用）
@@ -469,11 +469,7 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value
-        .as_str()
-        .map(str::trim)
-        .map(str::to_owned)
-        .unwrap_or_default())
+    Ok(value.as_str().map(str::trim).map_or_default(str::to_owned))
 }
 
 /// 容错解析语音识别快捷键：经 `serde_json::Value` 中转，非字符串一律回落空字符串（禁用）
@@ -482,11 +478,7 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value
-        .as_str()
-        .map(str::trim)
-        .map(str::to_owned)
-        .unwrap_or_default())
+    Ok(value.as_str().map(str::trim).map_or_default(str::to_owned))
 }
 
 /// 容错解析快捷词库快捷键：经 `serde_json::Value` 中转，非字符串一律回落空字符串（禁用）
@@ -495,11 +487,7 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value
-        .as_str()
-        .map(str::trim)
-        .map(str::to_owned)
-        .unwrap_or_default())
+    Ok(value.as_str().map(str::trim).map_or_default(str::to_owned))
 }
 
 /// 容错解析指令快捷键：经 `serde_json::Value` 中转，非字符串一律回落空字符串（禁用）
@@ -508,11 +496,7 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value
-        .as_str()
-        .map(str::trim)
-        .map(str::to_owned)
-        .unwrap_or_default())
+    Ok(value.as_str().map(str::trim).map_or_default(str::to_owned))
 }
 
 /// 容错解析快捷词库目标分组：空白与非字符串一律回落全局分组
@@ -565,7 +549,7 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value.as_str().map(str::to_owned).unwrap_or_default())
+    Ok(value.as_str().map_or_default(str::to_owned))
 }
 
 /// 标点集归一化：去空白、去重（保首次序）；写入侧唯一口径，纯函数可单测
@@ -1357,7 +1341,7 @@ fn migrate_v1_to_v2(map: &mut Map<String, Value>) {
     let Some(raw) = map.remove(LEGACY_KEY) else {
         return;
     };
-    let id = raw.as_str().map(str::trim).unwrap_or_default();
+    let id = raw.as_str().map_or_default(str::trim);
     if id.is_empty() || id == crate::cores::lexicon::GLOBAL_GROUP_ID {
         return;
     }

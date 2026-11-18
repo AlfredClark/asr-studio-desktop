@@ -345,8 +345,7 @@ pub fn stop_recording(app: &tauri::AppHandle) -> anyhow::Result<RecordResult> {
     let samples = session
         .samples
         .lock()
-        .map(|mut guard| std::mem::take(&mut *guard))
-        .unwrap_or_default();
+        .map_or_default(|mut guard| std::mem::take(&mut *guard));
     if session.truncated.load(Ordering::Relaxed) {
         log::warn!(
             "recording truncated at cap ({MAX_RECORD_SECONDS}s/{MAX_RECORD_SAMPLES} samples), archive is shorter than elapsed time"
@@ -416,7 +415,7 @@ fn prune_records(dir: &std::path::Path) {
         if !is_record {
             continue;
         }
-        let size = entry.metadata().map(|meta| meta.len()).unwrap_or_default();
+        let size = entry.metadata().map_or_default(|meta| meta.len());
         entries.push((path, size));
     }
     for victim in select_prune_targets(&entries, MAX_RECORD_FILES, MAX_RECORD_BYTES) {
