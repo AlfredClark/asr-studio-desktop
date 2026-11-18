@@ -29,6 +29,7 @@ const saved: Config_Serialize = {
   shortcut_quick_lexicon: "",
   shortcut_directive: "",
   quick_lexicon_group: "global",
+  asr_language: "chinese",
   schema_version: 1,
 };
 
@@ -145,6 +146,7 @@ describe("updateConfig", () => {
       shortcut_quick_lexicon: "",
       shortcut_directive: "",
       quick_lexicon_group: "global",
+      asr_language: "chinese",
       schema_version: 1,
     };
     configState.value = previous;
@@ -187,6 +189,7 @@ describe("updateConfig", () => {
       shortcut_quick_lexicon: "",
       shortcut_directive: "",
       quick_lexicon_group: "global",
+      asr_language: "chinese",
       schema_version: 1,
     };
     configState.value = previous;
@@ -224,6 +227,7 @@ describe("resetConfig", () => {
     shortcut_quick_lexicon: "",
     shortcut_directive: "",
     quick_lexicon_group: "global",
+    asr_language: "chinese",
     schema_version: 1,
   };
 

@@ -17,6 +17,8 @@ pub const STORE_FILE: &str = "config.json";
 const KEY_SCHEMA_VERSION: &str = "schema_version";
 /// 界面语言在配置文件中的键名
 const KEY_LOCALE: &str = "locale";
+/// 识别语言在配置文件中的键名：`auto` 跟随音频，`chinese` 统一按中文解码
+const KEY_ASR_LANGUAGE: &str = "asr_language";
 /// 开机自启在配置文件中的键名
 const KEY_AUTO_START: &str = "auto_start";
 /// 记住窗口状态在配置文件中的键名
@@ -85,6 +87,38 @@ impl CloseBehavior {
         match raw.trim() {
             "exit" => Self::Exit,
             "minimize_to_tray" => Self::MinimizeToTray,
+            _ => Self::default(),
+        }
+    }
+}
+
+/// 识别语言：落盘值为 `snake_case` 字符串，未知值回落默认（中文）
+///
+/// 语义值在这里统一，各模型族的实际参数名由 `features::asr` 映射
+/// （`SenseVoice` 用 `zh`、`FunASR` Nano 用 `中文`、`Qwen3-ASR` 用 `Chinese`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AsrLanguage {
+    /// 跟随音频自动判定
+    Auto,
+    /// 统一按中文解码（不做翻译）
+    #[default]
+    Chinese,
+}
+
+impl AsrLanguage {
+    /// 取对应的落盘标签，与 `serde` 值一致，前后端契约共用
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Chinese => "chinese",
+        }
+    }
+
+    /// 容错解析识别语言标签：未知或空标签一律回落默认（中文）
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim() {
+            "auto" => Self::Auto,
             _ => Self::default(),
         }
     }
@@ -265,6 +299,10 @@ pub struct Config {
     )]
     #[specta(type = bool)]
     pub pinyin_correction_apply_directive: bool,
+    /// 识别语言：缺失、类型不符或无法识别时回落中文，绝不让整包解析失败
+    #[serde(deserialize_with = "de_asr_language")]
+    #[specta(type = AsrLanguage)]
+    pub asr_language: AsrLanguage,
 }
 
 impl Default for Config {
@@ -292,6 +330,7 @@ impl Default for Config {
             pinyin_correction_rules: Vec::new(),
             pinyin_correction_apply_recognition: default_pinyin_correction_apply(),
             pinyin_correction_apply_directive: default_pinyin_correction_apply(),
+            asr_language: AsrLanguage::default(),
         }
     }
 }
@@ -357,6 +396,8 @@ pub struct ConfigPatch {
     pub pinyin_correction_apply_recognition: Option<bool>,
     /// 拼音纠正是否应用于指令
     pub pinyin_correction_apply_directive: Option<bool>,
+    /// 识别语言（自动 / 中文）
+    pub asr_language: Option<AsrLanguage>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -366,6 +407,15 @@ where
 {
     let value = Value::deserialize(deserializer)?;
     Ok(value.as_str().map(Locale::parse).unwrap_or_default())
+}
+
+/// 容错解析识别语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值（中文）
+fn de_asr_language<'de, D>(deserializer: D) -> Result<AsrLanguage, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(value.as_str().map(AsrLanguage::parse).unwrap_or_default())
 }
 
 /// 容错解析开机自启：经 `serde_json::Value` 中转，非布尔值一律回落默认值（`false`）
@@ -744,6 +794,7 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         pinyin_correction_rules: load_pinyin_correction_rules(app),
         pinyin_correction_apply_recognition: load_pinyin_correction_apply_recognition(app),
         pinyin_correction_apply_directive: load_pinyin_correction_apply_directive(app),
+        asr_language: load_asr_language(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -751,6 +802,17 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
 /// 读取持久化的界面语言；未设置、类型不符或无法识别时返回 `None`
 fn load_locale(app: &tauri::AppHandle) -> Option<Locale> {
     read_key(app, KEY_LOCALE)?.as_str().map(Locale::parse)
+}
+
+/// 读取持久化的识别语言；未设置、类型不符或无法识别时回落中文
+///
+/// 服务启动热路径走此单键读取，不拉全量 `load_config`
+pub fn load_asr_language(app: &tauri::AppHandle) -> AsrLanguage {
+    read_key(app, KEY_ASR_LANGUAGE).map_or_else(AsrLanguage::default, |value| {
+        value
+            .as_str()
+            .map_or_else(AsrLanguage::default, AsrLanguage::parse)
+    })
 }
 
 /// 读取持久化的开机自启；未设置或类型不符时回落默认值（`false`）
@@ -1059,6 +1121,7 @@ fn reset_patch() -> ConfigPatch {
         pinyin_correction_rules: Some(Vec::new()),
         pinyin_correction_apply_recognition: Some(default_pinyin_correction_apply()),
         pinyin_correction_apply_directive: Some(default_pinyin_correction_apply()),
+        asr_language: Some(AsrLanguage::default()),
     }
 }
 
@@ -1212,6 +1275,9 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
         ));
     }
     entries.extend(write_pinyin_correction_entries(patch));
+    if let Some(asr_language) = patch.asr_language {
+        entries.push((KEY_ASR_LANGUAGE, Value::from(asr_language.as_str())));
+    }
     entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
     entries
 }
@@ -1428,6 +1494,7 @@ mod tests {
         assert_eq!(config.pinyin_correction_rules.len(), 0);
         assert!(config.pinyin_correction_apply_recognition);
         assert!(config.pinyin_correction_apply_directive);
+        assert_eq!(config.asr_language, AsrLanguage::Chinese);
         assert_eq!(config.schema_version, 0);
     }
 
@@ -1458,12 +1525,13 @@ mod tests {
             pinyin_correction_rules: vec![String::from("z_zh"), String::from("n_l")],
             pinyin_correction_apply_recognition: true,
             pinyin_correction_apply_directive: false,
+            asr_language: AsrLanguage::Auto,
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "shortcut_paste_shortcut": "ctrl_shift_v", "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "pinyin_correction_enabled": true, "pinyin_correction_rules": ["z_zh", "n_l"], "pinyin_correction_apply_recognition": true, "pinyin_correction_apply_directive": false, "schema_version": 2 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "shortcut_paste_shortcut": "ctrl_shift_v", "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "pinyin_correction_enabled": true, "pinyin_correction_rules": ["z_zh", "n_l"], "pinyin_correction_apply_recognition": true, "pinyin_correction_apply_directive": false, "asr_language": "auto", "schema_version": 2 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -2049,6 +2117,7 @@ mod tests {
             pinyin_correction_rules: Some(vec![String::from("z_zh")]),
             pinyin_correction_apply_recognition: Some(true),
             pinyin_correction_apply_directive: Some(false),
+            asr_language: Some(AsrLanguage::Auto),
         });
         assert_eq!(
             keys_of(&patched),
@@ -2074,6 +2143,7 @@ mod tests {
                 KEY_PINYIN_CORRECTION_RULES,
                 KEY_PINYIN_CORRECTION_APPLY_RECOGNITION,
                 KEY_PINYIN_CORRECTION_APPLY_DIRECTIVE,
+                KEY_ASR_LANGUAGE,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -2098,6 +2168,23 @@ mod tests {
         assert_eq!(patched[18].1, json!(["z_zh"]));
         assert_eq!(patched[19].1, json!(true));
         assert_eq!(patched[20].1, json!(false));
+        assert_eq!(patched[21].1, json!("auto"));
+    }
+
+    #[test]
+    fn asr_language_falls_back_to_chinese() {
+        assert_eq!(AsrLanguage::parse("auto"), AsrLanguage::Auto);
+        assert_eq!(AsrLanguage::parse("chinese"), AsrLanguage::Chinese);
+        assert_eq!(AsrLanguage::parse("fr"), AsrLanguage::Chinese);
+        assert_eq!(AsrLanguage::parse(""), AsrLanguage::Chinese);
+
+        // 读取侧容错：未知标签与非字符串都回落中文，绝不让整包解析失败
+        let unknown: Config =
+            serde_json::from_value(json!({ "asr_language": "fr" })).expect("config parsed");
+        assert_eq!(unknown.asr_language, AsrLanguage::Chinese);
+        let wrong_type: Config =
+            serde_json::from_value(json!({ "asr_language": 1 })).expect("config parsed");
+        assert_eq!(wrong_type.asr_language, AsrLanguage::Chinese);
     }
 
     #[test]
@@ -2125,6 +2212,7 @@ mod tests {
             pinyin_correction_rules: Some(vec![String::from("z_zh")]),
             pinyin_correction_apply_recognition: Some(true),
             pinyin_correction_apply_directive: Some(true),
+            asr_language: Some(AsrLanguage::Auto),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -2153,7 +2241,8 @@ mod tests {
         assert_eq!(entries[18].1, json!([]));
         assert_eq!(entries[19].1, json!(true));
         assert_eq!(entries[20].1, json!(true));
-        assert_eq!(entries[21].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[21].1, json!(AsrLanguage::default().as_str()));
+        assert_eq!(entries[22].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -2180,6 +2269,7 @@ mod tests {
             pinyin_correction_rules: Vec::new(),
             pinyin_correction_apply_recognition: default_pinyin_correction_apply(),
             pinyin_correction_apply_directive: default_pinyin_correction_apply(),
+            asr_language: AsrLanguage::default(),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));

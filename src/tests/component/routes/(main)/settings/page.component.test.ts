@@ -66,6 +66,7 @@ const defaults: Config_Serialize = {
   shortcut_quick_lexicon: "",
   shortcut_directive: "",
   quick_lexicon_group: "global",
+  asr_language: "chinese",
   schema_version: 1,
 };
 

@@ -162,6 +162,18 @@ export type ActionDirection =
 "release";
 
 /**
+ *  识别语言：落盘值为 `snake_case` 字符串，未知值回落默认（中文）
+ * 
+ *  语义值在这里统一，各模型族的实际参数名由 `features::asr` 映射
+ *  （`SenseVoice` 用 `zh`、`FunASR` Nano 用 `中文`、`Qwen3-ASR` 用 `Chinese`）。
+ */
+export type AsrLanguage = 
+/**  跟随音频自动判定 */
+"auto" | 
+/**  统一按中文解码（不做翻译） */
+"chinese";
+
+/**
  *  录音设备条目：`id` 即设备名（热插拔下序号会漂移，名制更稳定），重名设备以去重保留第一个；
  *  “系统默认”合成项的 id 为 `DEFAULT_DEVICE_ID`，启动时实时解析跟随系统切换
  */
@@ -246,6 +258,8 @@ export type ConfigPatch = {
 	pinyin_correction_apply_recognition?: boolean | null,
 	/**  拼音纠正是否应用于指令 */
 	pinyin_correction_apply_directive?: boolean | null,
+	/**  识别语言（自动 / 中文） */
+	asr_language?: AsrLanguage | null,
 };
 
 /**
@@ -310,6 +324,8 @@ export type Config_Deserialize = {
 	pinyin_correction_apply_recognition?: boolean,
 	/**  拼音纠正是否应用于指令：缺失或类型不符时回落 `true` */
 	pinyin_correction_apply_directive?: boolean,
+	/**  识别语言：缺失、类型不符或无法识别时回落中文，绝不让整包解析失败 */
+	asr_language?: AsrLanguage,
 };
 
 /**
@@ -374,6 +390,8 @@ export type Config_Serialize = {
 	pinyin_correction_apply_recognition: boolean,
 	/**  拼音纠正是否应用于指令：缺失或类型不符时回落 `true` */
 	pinyin_correction_apply_directive: boolean,
+	/**  识别语言：缺失、类型不符或无法识别时回落中文，绝不让整包解析失败 */
+	asr_language: AsrLanguage,
 };
 
 /**  指令：触发文本命中后回放整套按键事件 */

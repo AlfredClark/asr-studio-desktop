@@ -361,6 +361,33 @@ export async function stopService(): Promise<void> {
   await syncStatus();
 }
 
+/** 重启当前服务：语言等“加载时生效”的配置变更后调用；未运行或切换中直接跳过。返回是否仍处于运行态。 */
+export async function restartService(): Promise<boolean> {
+  const id = serviceState.selectedModel;
+  if (id == null || serviceState.switching) return false;
+  if (serviceState.status?.state !== "running") return true;
+  serviceState.switching = true;
+  let started = false;
+  try {
+    await commands.stopService().result();
+    await commands
+      .startService(id)
+      .success(() => {
+        started = true;
+        toast.success(m.service_started());
+      })
+      .failed((failure) => {
+        toast.error(m.service_start_failed());
+        reportCommandFailure("[service] restart failed", failure);
+      });
+    await syncStatus();
+  } finally {
+    serviceState.switching = false;
+  }
+  if (started) await warnIfShortcutsInactive();
+  return started;
+}
+
 /** 选择模型：运行中切模型自动走“停旧启新”串行段，期间整组禁用； 停止态只记录选择，由启动按钮生效。 */
 export async function selectModel(id: string): Promise<void> {
   // 切换中重复点选直接忽略：先判后写，避免选中态与实际运行长期不一致

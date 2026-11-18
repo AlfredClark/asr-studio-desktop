@@ -5,6 +5,7 @@
 //! 识别器全局单例常驻内存（`SERVICE`），转写时取出独占使用后归还；
 //! 快捷键触发的识别复用同一入口（`transcribe_file`），不经过命令层。
 
+use crate::cores::config::AsrLanguage;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -58,6 +59,49 @@ struct LoadedService {
     /// 服务代际：每次 `start` 占位即领新号；停启交错时旧任务的归还/清理只认同代，
     /// 跨代写入一律丢弃（旧识别器不塞进新服务，新占位不被旧失败清掉）
     generation: u64,
+    /// Qwen3-ASR 的按 stream 语言约束（其他模型族为 `None`，由识别器配置承载）
+    stream_language: Option<&'static str>,
+}
+
+/// `SenseVoice` 的语言码：自动跟随音频；强制中文时标准款用 `zh`、粤语增强款保留 `yue`
+const fn sense_voice_language(
+    spec: &crate::features::models::ModelSpec,
+    language: AsrLanguage,
+) -> &'static str {
+    match (language, spec.sense_voice_cantonese) {
+        (AsrLanguage::Auto, _) => "auto",
+        (AsrLanguage::Chinese, true) => "yue",
+        (AsrLanguage::Chinese, false) => "zh",
+    }
+}
+
+/// `FunASR` Nano 的语言提示：拼进用户提示词“语音转写成{language}”；
+/// 自动模式不指定语言，保持上游默认“语音转写：”
+const fn funasr_nano_language(language: AsrLanguage) -> Option<&'static str> {
+    match language {
+        AsrLanguage::Auto => None,
+        AsrLanguage::Chinese => Some("中文"),
+    }
+}
+
+/// `Qwen3-ASR` 的语言约束：只能按 stream 设置，值是英文语言名（不是 `zh`）
+const fn qwen3_stream_language(language: AsrLanguage) -> Option<&'static str> {
+    match language {
+        AsrLanguage::Auto => None,
+        AsrLanguage::Chinese => Some("Chinese"),
+    }
+}
+
+/// 按模型族取 stream 级语言：仅 `Qwen3-ASR` 需要，其余模型族由识别器配置承载
+const fn stream_language_for(
+    category: crate::features::models::ModelCategory,
+    language: AsrLanguage,
+) -> Option<&'static str> {
+    match category {
+        crate::features::models::ModelCategory::Qwen3Asr => qwen3_stream_language(language),
+        crate::features::models::ModelCategory::FunasrNano
+        | crate::features::models::ModelCategory::SenseVoice => None,
+    }
 }
 
 /// 领新代际号；`wrapping` 防极端长运行回绕（回绕后仍靠“槽空 + 同代”双条件兜底）
@@ -156,6 +200,9 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
     use anyhow::Context;
 
     let spec = crate::features::models::find_spec(model_id).context("unknown model id")?;
+    // 语言在加载时定格：SenseVoice / FunASR Nano 写进识别器配置，Qwen3 存到服务实例；
+    // 运行中改配置需重启服务才生效（前端据此走停旧启新）
+    let language = crate::cores::config::load_asr_language(app);
     let generation = next_generation();
     {
         // 单守卫内检查并占位：两路并发 `start` 不会同时通过检查（TOCTOU 已堵）
@@ -170,6 +217,7 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
             recognizer: None,
             busy: false,
             generation,
+            stream_language: stream_language_for(spec.category, language),
         });
     }
     let report = crate::features::models::verify_model(app, spec.id)?;
@@ -179,7 +227,7 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
     }
 
     let dir = crate::features::models::resolve_model_dir(app, spec)?;
-    let config = build_recognizer_config(spec, &dir);
+    let config = build_recognizer_config(spec, &dir, language);
     let started = std::time::Instant::now();
     let mut load_task =
         tokio::task::spawn_blocking(move || sherpa_onnx::OfflineRecognizer::create(&config));
@@ -262,10 +310,12 @@ pub fn sync_directive_shortcut(app: &tauri::AppHandle) {
 /// 按分类组装识别器配置：文件路径全部派生自模型目录，不手写绝对路径；
 ///
 /// `SenseVoice` 的模型文件与逆文本正则化按 `ModelSpec` 取值（int8/全精度与标点支持因包而异）。
+/// `SenseVoice` / `FunASR` Nano 的语言在加载时定格（Qwen3 走按 stream 约束，见 `transcribe_blocking`）。
 /// qwen3 的生成长度按评测结论放大（默认 128 会截断长音频）。
 fn build_recognizer_config(
     spec: &'static crate::features::models::ModelSpec,
     dir: &std::path::Path,
+    language: AsrLanguage,
 ) -> sherpa_onnx::OfflineRecognizerConfig {
     use sherpa_onnx::{
         OfflineFunASRNanoModelConfig, OfflineQwen3ASRModelConfig, OfflineRecognizerConfig,
@@ -284,6 +334,14 @@ fn build_recognizer_config(
                 embedding: file(spec.funasr_embedding),
                 llm: file(spec.funasr_llm),
                 tokenizer: file("Qwen3-0.6B"),
+                // Rust binding 的默认值是 0/1.0/1.0/0，与 C++ 侧默认不一致：
+                // 不显式写死会变成随机采样，输出容易跑偏、语言漂移
+                max_new_tokens: 512,
+                temperature: 1e-6,
+                top_p: 0.8,
+                seed: 42,
+                language: funasr_nano_language(language).map(str::to_owned),
+                itn: 1,
                 ..Default::default()
             };
         }
@@ -301,8 +359,8 @@ fn build_recognizer_config(
         crate::features::models::ModelCategory::SenseVoice => {
             config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
                 model: file(spec.model_file),
+                language: Some(sense_voice_language(spec, language).to_owned()),
                 use_itn: spec.use_itn,
-                ..Default::default()
             };
             config.model_config.tokens = file("tokens.txt");
         }
@@ -329,7 +387,8 @@ fn transcribe_queue_lock() -> &'static tokio::sync::Mutex<()> {
 /// 取出识别器独占使用，连同代际号一起交调用方；服务未运行、启动中、
 /// 已有转写占用三种情况错误各异，调用方负责按代归还（`put_back_recognizer`），
 /// 超时分离回收同样按代归还
-fn take_recognizer() -> anyhow::Result<(u64, sherpa_onnx::OfflineRecognizer)> {
+fn take_recognizer() -> anyhow::Result<(u64, sherpa_onnx::OfflineRecognizer, Option<&'static str>)>
+{
     use anyhow::Context;
 
     let mut guard = lock_service();
@@ -347,7 +406,7 @@ fn take_recognizer() -> anyhow::Result<(u64, sherpa_onnx::OfflineRecognizer)> {
                 .take()
                 .context("service is not running")?;
             service.busy = true;
-            Ok((service.generation, recognizer))
+            Ok((service.generation, recognizer, service.stream_language))
         }
     }
 }
@@ -496,7 +555,7 @@ async fn transcribe_file_inner(
     )
     .await
     .map_err(|_| busy_or_stopped_error())?;
-    let (generation, recognizer) = take_recognizer()?;
+    let (generation, recognizer, stream_language) = take_recognizer()?;
     // 进入解码等待即清掉陈旧取消（停服务残留的置位不应误杀下一次转写）
     take_transcribe_cancel();
     // 取消感知的等待：onnx 解码不可中断，取消/超时均分离等待其结束再按代归还，
@@ -505,7 +564,7 @@ async fn transcribe_file_inner(
         .checked_add(std::time::Duration::from_secs(TRANSCRIBE_TIMEOUT_SECS))
         .unwrap_or_else(std::time::Instant::now);
     let mut task = tokio::task::spawn_blocking(move || {
-        let outcome = transcribe_blocking(&recognizer, &canonical);
+        let outcome = transcribe_blocking(&recognizer, &canonical, stream_language);
         (recognizer, outcome)
     });
     let task_outcome = loop {
@@ -581,6 +640,7 @@ pub async fn transcribe_file_raw(
 fn transcribe_blocking(
     recognizer: &sherpa_onnx::OfflineRecognizer,
     path: &std::path::Path,
+    stream_language: Option<&str>,
 ) -> anyhow::Result<TranscribeResult> {
     use anyhow::Context;
 
@@ -590,6 +650,10 @@ fn transcribe_blocking(
     #[allow(clippy::cast_precision_loss)]
     let audio_sec = wave.samples().len() as f64 / f64::from(wave.sample_rate());
     let stream = recognizer.create_stream();
+    // Qwen3-ASR 的语言只能按 stream 传入；其他模型族此值为 `None`，不碰 stream 选项
+    if let Some(language) = stream_language {
+        stream.set_option("language", language);
+    }
     let started = std::time::Instant::now();
     stream.accept_waveform(wave.sample_rate(), wave.samples());
     recognizer.decode(&stream);
@@ -660,6 +724,67 @@ mod tests {
     #[test]
     fn num_cpus_is_positive() {
         assert!(num_cpus() >= 1);
+    }
+
+    #[test]
+    fn language_hints_map_per_model_family() {
+        use crate::features::models::{ModelCategory, find_spec};
+
+        let sense = find_spec("sense-voice-int8").expect("sense voice spec");
+        assert_eq!(sense_voice_language(sense, AsrLanguage::Auto), "auto");
+        assert_eq!(sense_voice_language(sense, AsrLanguage::Chinese), "zh");
+
+        // 粤语增强款保留 yue，不强制普通话，避免识别质量下降
+        let yue = find_spec("sense-voice-yue-int8").expect("yue spec");
+        assert_eq!(sense_voice_language(yue, AsrLanguage::Chinese), "yue");
+
+        assert_eq!(funasr_nano_language(AsrLanguage::Auto), None);
+        assert_eq!(funasr_nano_language(AsrLanguage::Chinese), Some("中文"));
+        assert_eq!(qwen3_stream_language(AsrLanguage::Auto), None);
+        assert_eq!(qwen3_stream_language(AsrLanguage::Chinese), Some("Chinese"));
+        assert_eq!(
+            stream_language_for(ModelCategory::Qwen3Asr, AsrLanguage::Chinese),
+            Some("Chinese")
+        );
+        assert_eq!(
+            stream_language_for(ModelCategory::SenseVoice, AsrLanguage::Chinese),
+            None
+        );
+    }
+
+    #[test]
+    fn config_applies_chinese_hints() {
+        use crate::features::models::find_spec;
+
+        let dir = std::path::Path::new("/models");
+        let sense = find_spec("sense-voice-int8").expect("sense voice spec");
+        let sense = build_recognizer_config(sense, dir, AsrLanguage::Chinese);
+        assert_eq!(
+            sense.model_config.sense_voice.language.as_deref(),
+            Some("zh")
+        );
+
+        let nano = find_spec("funasr-nano-int8").expect("funasr spec");
+        let nano = build_recognizer_config(nano, dir, AsrLanguage::Chinese);
+        assert_eq!(
+            nano.model_config.funasr_nano.language.as_deref(),
+            Some("中文")
+        );
+        assert_eq!(nano.model_config.funasr_nano.itn, 1);
+        // Rust binding 默认 0/1.0/1.0/0，必须显式覆盖为贪心解码
+        assert_eq!(nano.model_config.funasr_nano.max_new_tokens, 512);
+        assert_eq!(nano.model_config.funasr_nano.temperature, 1e-6);
+        assert_eq!(nano.model_config.funasr_nano.top_p, 0.8);
+        assert_eq!(nano.model_config.funasr_nano.seed, 42);
+
+        // 自动模式不指定语言，保持上游默认行为
+        let auto = find_spec("funasr-nano-int8").expect("funasr spec");
+        let auto = build_recognizer_config(auto, dir, AsrLanguage::Auto);
+        assert_eq!(auto.model_config.funasr_nano.language, None);
+
+        let qwen = find_spec("qwen3-0.6b-int8").expect("qwen3 spec");
+        let qwen = build_recognizer_config(qwen, dir, AsrLanguage::Chinese);
+        assert!(qwen.model_config.qwen3_asr.tokenizer.is_some());
     }
 
     #[test]

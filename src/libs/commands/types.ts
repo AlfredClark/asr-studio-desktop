@@ -1,5 +1,6 @@
 import type {
   ActionDirection,
+  AsrLanguage,
   AudioDevice,
   CloseBehavior,
   CommandError,
@@ -59,6 +60,7 @@ export type EnhancedCommands = { [K in keyof CommandsMap]: WrappedFn<CommandsMap
 
 export type {
   ActionDirection,
+  AsrLanguage,
   AudioDevice,
   CloseBehavior,
   CommandError,

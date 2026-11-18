@@ -19,7 +19,7 @@
   } from "#components/shadcn-svelte/select";
   import { m } from "#libs/i18n/paraglide/messages";
   import { configValue, updateConfig } from "#libs/hooks/config.svelte";
-  import type { PasteShortcut } from "#libs/commands/types";
+  import type { AsrLanguage, PasteShortcut } from "#libs/commands/types";
   import { toast } from "#libs/utils/toast";
   import { groupLabel, lexiconState } from "#libs/hooks/lexicon.svelte";
   import PinyinCorrectionDialog from "./pinyin-correction-dialog.svelte";
@@ -28,6 +28,7 @@
     deviceLabel,
     cancelTranscription,
     refreshDevices,
+    restartService,
     selectDevice,
     selectModel,
     serviceState,
@@ -43,6 +44,29 @@
   const transitioning = $derived(
     serviceState.switching || serviceState.status?.state === "starting",
   );
+
+  /** 识别语言：后端配置为真值，水合前按中文渲染 */
+  const asrLanguage = $derived(configValue("asr_language", "chinese"));
+
+  /** 识别语言选项：值与后端 `AsrLanguage` 落盘标签一一对应 */
+  const asrLanguageItems: { value: AsrLanguage; label: string }[] = [
+    { value: "auto", label: m.service_asr_language_option_auto() },
+    { value: "chinese", label: m.service_asr_language_option_chinese() },
+  ];
+
+  /** 识别语言变更：先落盘；运行中再走停旧启新，让加载期定格的参数立即生效 */
+  async function handleAsrLanguageChange(value: string): Promise<void> {
+    const language = asrLanguageItems.find((item) => item.value === value)?.value;
+    if (!language || language === asrLanguage) return;
+    if (!(await updateConfig({ asr_language: language }))) {
+      toast.error(m.service_asr_language_update_failed());
+      return;
+    }
+    toast.success(m.service_asr_language_updated());
+    if (running && !(await restartService())) {
+      toast.error(m.service_asr_language_restart_failed());
+    }
+  }
 
   /** 状态徽标文案：四态一一对应，未水合按停止渲染 */
   function statusLabel(): string {
@@ -251,6 +275,32 @@
         {:else}
           <p class="text-sm text-muted-foreground">{m.service_model_empty()}</p>
         {/if}
+      {/snippet}
+    </CardRow>
+    <CardRow
+      label={m.service_asr_language_label()}
+      description={m.service_asr_language_description()}
+    >
+      {#snippet control()}
+        <Select
+          type="single"
+          value={asrLanguage}
+          items={asrLanguageItems}
+          onValueChange={(value) => void handleAsrLanguageChange(value)}
+          disabled={transitioning || serviceState.recording || serviceState.recognizing}
+        >
+          <SelectTrigger
+            class="w-(--control-column-width)"
+            aria-label={m.service_asr_language_label()}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {#each asrLanguageItems as item (item.value)}
+              <SelectItem value={item.value}>{item.label}</SelectItem>
+            {/each}
+          </SelectContent>
+        </Select>
       {/snippet}
     </CardRow>
     <CardRow label={m.service_device_label()} description={m.service_device_description()}>
