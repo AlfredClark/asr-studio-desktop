@@ -1,10 +1,10 @@
 <script lang="ts">
-  // 指令列表项：选中态按钮 + 启用徽标 + 开关 / 编辑 / 拖拽手柄 / 删除，全常驻。
-  // 排序走拖拽（手柄 mousedown 后行可拖）；键盘聚焦手柄按上下键单步移动。
-  import { Badge } from "#components/shadcn-svelte/badge";
+  // 指令列表项：选中态按钮 + 开关 / 上移 / 下移 / 编辑 / 删除，全常驻。
+  // 启用状态只由开关表达，避免与详情页徽标重复。
   import { Button } from "#components/shadcn-svelte/button";
   import { Switch } from "#components/shadcn-svelte/switch";
-  import GripVerticalIcon from "@lucide/svelte/icons/grip-vertical";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import ChevronUpIcon from "@lucide/svelte/icons/chevron-up";
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import TrashIcon from "@lucide/svelte/icons/trash-2";
   import { cn } from "#libs/utils/shadcn-svelte";
@@ -17,22 +17,25 @@
     onSelect,
     onToggle,
     onEdit,
+    canMoveUp,
+    canMoveDown,
+    moving,
     onMove,
     onDelete,
-    onGripReady,
-    onGripCancel,
   }: {
     directive: Directive;
     selected: boolean;
     onSelect: () => void;
     onToggle: () => void;
     onEdit: () => void;
+    /** 是否可上移：首行禁用 */
+    canMoveUp: boolean;
+    /** 是否可下移：末行禁用 */
+    canMoveDown: boolean;
+    /** 移动请求进行中：两个移动按钮同时禁用 */
+    moving: boolean;
     onMove: (direction: "up" | "down") => void;
     onDelete: () => void;
-    /** 手柄按下：通知页武装本行拖拽（`draggable` 由页按行开关） */
-    onGripReady: () => void;
-    /** 手柄松开（未拖拽）：解除武装，避免整行可拖 */
-    onGripCancel: () => void;
   } = $props();
 </script>
 
@@ -47,35 +50,34 @@
       <span class="min-w-0 flex-1 truncate text-left text-sm">
         {directive.name}
       </span>
-      {#if directive.enabled}
-        <Badge>{m.directives_enabled()}</Badge>
-      {/if}
     </Button>
     <Switch
       checked={directive.enabled}
       onCheckedChange={onToggle}
       aria-label={directive.enabled ? m.directives_disable() : m.directives_enable()}
     />
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      class="cursor-grab active:cursor-grabbing"
-      onmousedown={onGripReady}
-      onmouseup={onGripCancel}
-      onkeydown={(event) => {
-        if (event.key === "ArrowUp") {
-          event.preventDefault();
-          onMove("up");
-        } else if (event.key === "ArrowDown") {
-          event.preventDefault();
-          onMove("down");
-        }
-      }}
-      aria-label={m.directives_reorder()}
-      title={m.directives_reorder()}
-    >
-      <GripVerticalIcon />
-    </Button>
+    <div class="flex shrink-0 items-center gap-0.5">
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        disabled={!canMoveUp || moving}
+        onclick={() => onMove("up")}
+        aria-label={m.directives_move_up()}
+        title={m.directives_move_up()}
+      >
+        <ChevronUpIcon />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        disabled={!canMoveDown || moving}
+        onclick={() => onMove("down")}
+        aria-label={m.directives_move_down()}
+        title={m.directives_move_down()}
+      >
+        <ChevronDownIcon />
+      </Button>
+    </div>
     <Button
       variant="ghost"
       size="icon-sm"

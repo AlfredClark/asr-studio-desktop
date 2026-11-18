@@ -234,186 +234,186 @@
   }
 </script>
 
-<ScrollArea class="h-full">
-  <div class="flex h-full flex-col gap-2 p-4">
-    <div class="flex shrink-0 items-center justify-between gap-2">
-      <h2 class="text-sm font-medium">{m.lexicon_entries_title()}</h2>
-      <div class="flex shrink-0 items-center gap-2">
-        {#if checked.size > 0}
-          {#key batchKey}
-            <DropdownMenuPrimitive.Root>
-              <DropdownMenuPrimitive.Trigger>
-                {#snippet child({ props })}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    {...props}
-                    aria-label={`${m.lexicon_batch_actions()} (${checked.size})`}
-                    disabled={copyMoveBusy}
-                  >
-                    {m.lexicon_batch_actions()} ({checked.size})
-                  </Button>
-                {/snippet}
-              </DropdownMenuPrimitive.Trigger>
-              <DropdownMenuPrimitive.Content
-                align="end"
-                sideOffset={4}
-                class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+<div class="flex h-full flex-col gap-2 p-4">
+  <div class="flex shrink-0 items-center justify-between gap-2">
+    <h2 class="text-sm font-medium">{m.lexicon_entries_title()}</h2>
+    <div class="flex shrink-0 items-center gap-2">
+      {#if checked.size > 0}
+        {#key batchKey}
+          <DropdownMenuPrimitive.Root>
+            <DropdownMenuPrimitive.Trigger>
+              {#snippet child({ props })}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  {...props}
+                  aria-label={`${m.lexicon_batch_actions()} (${checked.size})`}
+                  disabled={copyMoveBusy}
+                >
+                  {m.lexicon_batch_actions()} ({checked.size})
+                </Button>
+              {/snippet}
+            </DropdownMenuPrimitive.Trigger>
+            <DropdownMenuPrimitive.Content
+              align="end"
+              sideOffset={4}
+              class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+            >
+              <DropdownMenuPrimitive.Item
+                class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                onSelect={() => void handleBatchAction("delete")}
               >
-                <DropdownMenuPrimitive.Item
-                  class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-                  onSelect={() => void handleBatchAction("delete")}
-                >
-                  {m.lexicon_batch_delete()}
-                </DropdownMenuPrimitive.Item>
-                <DropdownMenuPrimitive.Item
-                  class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-                  onSelect={() => void handleBatchAction("enable")}
-                >
-                  {m.lexicon_batch_enable()}
-                </DropdownMenuPrimitive.Item>
-                <DropdownMenuPrimitive.Item
-                  class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-                  onSelect={() => void handleBatchAction("disable")}
-                >
-                  {m.lexicon_batch_disable()}
-                </DropdownMenuPrimitive.Item>
-                <DropdownMenuPrimitive.Sub>
-                  <DropdownMenuPrimitive.SubTrigger
-                    class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-                    disabled={copyTargets.length === 0 || copyMoveBusy}
-                  >
-                    <span>{m.lexicon_batch_copy()}</span>
-                    <ChevronRightIcon class="ml-auto size-4" />
-                  </DropdownMenuPrimitive.SubTrigger>
-                  <DropdownMenuPrimitive.SubContent
-                    sideOffset={8}
-                    class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
-                  >
-                    {#each copyTargets as target (target.id)}
-                      <DropdownMenuPrimitive.Item
-                        class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-                        disabled={copyMoveBusy}
-                        onSelect={() => void handleBatchCopy(target.id)}
-                      >
-                        {groupLabel(target)} ({entriesOfGroup(lexiconState.value.entries, target.id)
-                          .length})
-                      </DropdownMenuPrimitive.Item>
-                    {/each}
-                  </DropdownMenuPrimitive.SubContent>
-                </DropdownMenuPrimitive.Sub>
-                <DropdownMenuPrimitive.Sub>
-                  <DropdownMenuPrimitive.SubTrigger
-                    class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-                    disabled={copyTargets.length === 0 || copyMoveBusy}
-                  >
-                    <span>{m.lexicon_batch_move()}</span>
-                    <ChevronRightIcon class="ml-auto size-4" />
-                  </DropdownMenuPrimitive.SubTrigger>
-                  <DropdownMenuPrimitive.SubContent
-                    sideOffset={8}
-                    class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
-                  >
-                    {#each copyTargets as target (target.id)}
-                      <DropdownMenuPrimitive.Item
-                        class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-                        disabled={copyMoveBusy}
-                        onSelect={() => void handleBatchMove(target.id)}
-                      >
-                        {groupLabel(target)} ({entriesOfGroup(lexiconState.value.entries, target.id)
-                          .length})
-                      </DropdownMenuPrimitive.Item>
-                    {/each}
-                  </DropdownMenuPrimitive.SubContent>
-                </DropdownMenuPrimitive.Sub>
-              </DropdownMenuPrimitive.Content>
-            </DropdownMenuPrimitive.Root>
-          {/key}
-        {/if}
-        <Select
-          type="single"
-          value={sortMode}
-          items={sortItems}
-          onValueChange={(value) => handleSortChange(value)}
-        >
-          <SelectTrigger class="w-(--control-column-width)" aria-label={m.lexicon_sort_label()}>
-            <SelectValue placeholder={m.lexicon_sort_label()} />
-          </SelectTrigger>
-          <SelectContent>
-            {#each sortItems as item (item.value)}
-              <SelectItem value={item.value}>{item.label}</SelectItem>
-            {/each}
-          </SelectContent>
-        </Select>
-        <Select
-          type="single"
-          value={filterMode}
-          items={filterItems}
-          onValueChange={(value) => handleFilterChange(value)}
-        >
-          <SelectTrigger class="w-(--control-column-width)" aria-label={m.lexicon_filter_label()}>
-            <SelectValue placeholder={m.lexicon_filter_label()} />
-          </SelectTrigger>
-          <SelectContent>
-            {#each filterItems as item (item.value)}
-              <SelectItem value={item.value}>{item.label}</SelectItem>
-            {/each}
-          </SelectContent>
-        </Select>
-        <Button variant="outline" size="sm" onclick={openBatchAdd}>
-          {m.lexicon_batch_add_limited({ limit: LEXICON_BATCH_ADD_LIMIT })}
-        </Button>
-        <Button size="sm" onclick={openCreateEntry}>
-          {m.lexicon_new_entry()}
-        </Button>
-        <DropdownMenuPrimitive.Root>
-          <DropdownMenuPrimitive.Trigger>
-            {#snippet child({ props })}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                {...props}
-                aria-label={m.lexicon_selection_menu()}
-                title={m.lexicon_selection_menu()}
+                {m.lexicon_batch_delete()}
+              </DropdownMenuPrimitive.Item>
+              <DropdownMenuPrimitive.Item
+                class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                onSelect={() => void handleBatchAction("enable")}
               >
-                <MenuIcon />
-              </Button>
-            {/snippet}
-          </DropdownMenuPrimitive.Trigger>
-          <DropdownMenuPrimitive.Content
-            align="end"
-            sideOffset={4}
-            class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+                {m.lexicon_batch_enable()}
+              </DropdownMenuPrimitive.Item>
+              <DropdownMenuPrimitive.Item
+                class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                onSelect={() => void handleBatchAction("disable")}
+              >
+                {m.lexicon_batch_disable()}
+              </DropdownMenuPrimitive.Item>
+              <DropdownMenuPrimitive.Sub>
+                <DropdownMenuPrimitive.SubTrigger
+                  class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                  disabled={copyTargets.length === 0 || copyMoveBusy}
+                >
+                  <span>{m.lexicon_batch_copy()}</span>
+                  <ChevronRightIcon class="ml-auto size-4" />
+                </DropdownMenuPrimitive.SubTrigger>
+                <DropdownMenuPrimitive.SubContent
+                  sideOffset={8}
+                  class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+                >
+                  {#each copyTargets as target (target.id)}
+                    <DropdownMenuPrimitive.Item
+                      class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                      disabled={copyMoveBusy}
+                      onSelect={() => void handleBatchCopy(target.id)}
+                    >
+                      {groupLabel(target)} ({entriesOfGroup(lexiconState.value.entries, target.id)
+                        .length})
+                    </DropdownMenuPrimitive.Item>
+                  {/each}
+                </DropdownMenuPrimitive.SubContent>
+              </DropdownMenuPrimitive.Sub>
+              <DropdownMenuPrimitive.Sub>
+                <DropdownMenuPrimitive.SubTrigger
+                  class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                  disabled={copyTargets.length === 0 || copyMoveBusy}
+                >
+                  <span>{m.lexicon_batch_move()}</span>
+                  <ChevronRightIcon class="ml-auto size-4" />
+                </DropdownMenuPrimitive.SubTrigger>
+                <DropdownMenuPrimitive.SubContent
+                  sideOffset={8}
+                  class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+                >
+                  {#each copyTargets as target (target.id)}
+                    <DropdownMenuPrimitive.Item
+                      class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+                      disabled={copyMoveBusy}
+                      onSelect={() => void handleBatchMove(target.id)}
+                    >
+                      {groupLabel(target)} ({entriesOfGroup(lexiconState.value.entries, target.id)
+                        .length})
+                    </DropdownMenuPrimitive.Item>
+                  {/each}
+                </DropdownMenuPrimitive.SubContent>
+              </DropdownMenuPrimitive.Sub>
+            </DropdownMenuPrimitive.Content>
+          </DropdownMenuPrimitive.Root>
+        {/key}
+      {/if}
+      <Select
+        type="single"
+        value={sortMode}
+        items={sortItems}
+        onValueChange={(value) => handleSortChange(value)}
+      >
+        <SelectTrigger class="w-(--control-column-width)" aria-label={m.lexicon_sort_label()}>
+          <SelectValue placeholder={m.lexicon_sort_label()} />
+        </SelectTrigger>
+        <SelectContent>
+          {#each sortItems as item (item.value)}
+            <SelectItem value={item.value}>{item.label}</SelectItem>
+          {/each}
+        </SelectContent>
+      </Select>
+      <Select
+        type="single"
+        value={filterMode}
+        items={filterItems}
+        onValueChange={(value) => handleFilterChange(value)}
+      >
+        <SelectTrigger class="w-(--control-column-width)" aria-label={m.lexicon_filter_label()}>
+          <SelectValue placeholder={m.lexicon_filter_label()} />
+        </SelectTrigger>
+        <SelectContent>
+          {#each filterItems as item (item.value)}
+            <SelectItem value={item.value}>{item.label}</SelectItem>
+          {/each}
+        </SelectContent>
+      </Select>
+      <Button variant="outline" size="sm" onclick={openBatchAdd}>
+        {m.lexicon_batch_add_limited({ limit: LEXICON_BATCH_ADD_LIMIT })}
+      </Button>
+      <Button size="sm" onclick={openCreateEntry}>
+        {m.lexicon_new_entry()}
+      </Button>
+      <DropdownMenuPrimitive.Root>
+        <DropdownMenuPrimitive.Trigger>
+          {#snippet child({ props })}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              {...props}
+              aria-label={m.lexicon_selection_menu()}
+              title={m.lexicon_selection_menu()}
+            >
+              <MenuIcon />
+            </Button>
+          {/snippet}
+        </DropdownMenuPrimitive.Trigger>
+        <DropdownMenuPrimitive.Content
+          align="end"
+          sideOffset={4}
+          class="z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+        >
+          <DropdownMenuPrimitive.Item
+            class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+            disabled={visibleEntries.length === 0}
+            onSelect={() => selectAllVisible()}
           >
-            <DropdownMenuPrimitive.Item
-              class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-              disabled={visibleEntries.length === 0}
-              onSelect={() => selectAllVisible()}
-            >
-              {m.lexicon_select_all()}
-            </DropdownMenuPrimitive.Item>
-            <DropdownMenuPrimitive.Item
-              class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
-              disabled={baseEntries.length === 0}
-              onSelect={() => {
-                confirmClearAll = true;
-              }}
-            >
-              {m.lexicon_clear_all()}
-            </DropdownMenuPrimitive.Item>
-          </DropdownMenuPrimitive.Content>
-        </DropdownMenuPrimitive.Root>
-      </div>
+            {m.lexicon_select_all()}
+          </DropdownMenuPrimitive.Item>
+          <DropdownMenuPrimitive.Item
+            class="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+            disabled={baseEntries.length === 0}
+            onSelect={() => {
+              confirmClearAll = true;
+            }}
+          >
+            {m.lexicon_clear_all()}
+          </DropdownMenuPrimitive.Item>
+        </DropdownMenuPrimitive.Content>
+      </DropdownMenuPrimitive.Root>
     </div>
-    <p class="shrink-0 text-xs text-muted-foreground">{m.lexicon_rule_hint()}</p>
-    {#if visibleEntries.length === 0}
-      <div class="flex min-h-0 flex-1 items-center justify-center">
-        <p class="text-sm text-muted-foreground">
-          {baseEntries.length === 0 ? m.lexicon_empty_entries() : m.lexicon_empty_filter()}
-        </p>
-      </div>
-    {:else}
-      <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+  </div>
+  <p class="shrink-0 text-xs text-muted-foreground">{m.lexicon_rule_hint()}</p>
+  {#if visibleEntries.length === 0}
+    <div class="flex min-h-0 flex-1 items-center justify-center">
+      <p class="text-sm text-muted-foreground">
+        {baseEntries.length === 0 ? m.lexicon_empty_entries() : m.lexicon_empty_filter()}
+      </p>
+    </div>
+  {:else}
+    <ScrollArea class="min-h-0 flex-1">
+      <div class="flex flex-col gap-1 pr-1">
         {#each visibleEntries as entry (entry.id)}
           <div class="flex items-center gap-2 rounded-lg bg-muted/50 px-2.5 py-2">
             <input
@@ -459,9 +459,9 @@
           </div>
         {/each}
       </div>
-    {/if}
-  </div>
-</ScrollArea>
+    </ScrollArea>
+  {/if}
+</div>
 
 <EntryEditorDialog bind:open={editorOpen} editing={editingEntry} defaultGroupId={groupId} />
 

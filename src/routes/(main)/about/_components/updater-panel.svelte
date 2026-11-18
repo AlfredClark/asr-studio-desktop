@@ -4,6 +4,7 @@
   import { downloadAndInstall, restartApp, updaterState } from "#libs/hooks/updater.svelte";
   import { Button } from "#components/shadcn-svelte/button";
   import { Progress } from "#components/shadcn-svelte/progress";
+  import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import { m } from "#libs/i18n/paraglide/messages";
 
   /** 下载百分比；服务端未给总量时回落不确定进度 */
@@ -18,9 +19,10 @@
       {m.updater_update_available()}：{updaterState.latest.version}
     </p>
     {#if updaterState.latest.body}
-      <pre
-        class="max-h-40 overflow-auto rounded-lg bg-muted p-3 text-xs whitespace-pre-wrap">{updaterState
-          .latest.body}</pre>
+      <!-- ScrollArea 需要确定高度：固定可视高度，避免 max-height 下 viewport 高度不收敛 -->
+      <ScrollArea class="h-40 rounded-lg bg-muted">
+        <pre class="p-3 text-xs whitespace-pre-wrap">{updaterState.latest.body}</pre>
+      </ScrollArea>
     {/if}
     <div>
       <Button onclick={() => void downloadAndInstall()}>

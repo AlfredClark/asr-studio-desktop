@@ -36,17 +36,18 @@ export async function refreshDirectives(): Promise<boolean> {
   return true;
 }
 
-/** 同步快照并提示成功；调用方按返回值决定是否收起表单 */
+/** 同步快照并提示成功；`notify=false` 用于高频排序操作，避免连续 toast */
 async function settle(
   result: { status: "ok"; data: unknown } | { status: "error"; error: unknown },
   scope: string,
+  notify = true,
 ): Promise<boolean> {
   if (result.status === "error") {
     toast.error(m.directives_update_failed());
     reportCommandFailure(`[directives] ${scope} failed`, result.error);
     return false;
   }
-  toast.success(m.directives_updated());
+  if (notify) toast.success(m.directives_updated());
   await refreshDirectives();
   return true;
 }
@@ -129,14 +130,9 @@ export async function deleteDirective(id: string): Promise<boolean> {
   return settle(await commands.deleteDirective(id).result(), "delete directive");
 }
 
-/** 移动指令：列表内换位；触顶 / 触底原地不动 */
+/** 移动指令：列表内换位；触顶 / 触底原地不动；成功不弹 toast，避免连续排序刷屏 */
 export async function moveDirective(id: string, direction: "up" | "down"): Promise<boolean> {
-  return settle(await commands.moveDirective(id, direction).result(), "move directive");
-}
-
-/** 移动指令到指定序号：拖拽排序用；越界后端钳制 */
-export async function moveDirectiveTo(id: string, index: number): Promise<boolean> {
-  return settle(await commands.moveDirectiveTo(id, index).result(), "move directive");
+  return settle(await commands.moveDirective(id, direction).result(), "move directive", false);
 }
 
 /** 设置指令启用状态 */

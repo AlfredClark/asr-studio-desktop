@@ -13,6 +13,7 @@
   } from "#libs/hooks/dashboard.svelte";
   import { getSharedIsMobile } from "#libs/hooks/is-mobile.svelte";
   import { buttonVariants } from "#components/shadcn-svelte/button";
+  import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import * as Tooltip from "#components/shadcn-svelte/tooltip/index.js";
   import Copyright from "#components/layout/parts/copyright.svelte";
   import DashboardNavBar from "#components/layout/parts/dashboard-nav-bar.svelte";
@@ -39,12 +40,14 @@
   <div class={cn("flex min-h-0 w-full flex-1 flex-row overflow-hidden")}>
     <aside
       class={cn(
-        "flex shrink-0 flex-col overflow-x-hidden overflow-y-auto border-r transition-[width] duration-200",
+        "flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200",
         compact ? "w-14" : "w-52",
       )}
     >
       <Tooltip.Provider delayDuration={0}>
-        <DashboardNavBar {compact} />
+        <ScrollArea class="min-h-0 flex-1">
+          <DashboardNavBar {compact} />
+        </ScrollArea>
         {#if !isMobile.current}
           <div class={cn("mt-auto shrink-0 p-2")}>
             <Tooltip.Root>
@@ -89,7 +92,8 @@
         {/if}
       </Tooltip.Provider>
     </aside>
-    <main class={cn("flex min-h-0 flex-1 flex-col overflow-y-auto")}>
+    <!-- 页面自管滚动：与 tabs 布局一致，主区不再出现原生滚动条 -->
+    <main class={cn("flex min-h-0 flex-1 flex-col overflow-hidden")}>
       {@render children()}
     </main>
   </div>

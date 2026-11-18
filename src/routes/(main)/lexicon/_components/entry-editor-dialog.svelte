@@ -4,6 +4,7 @@
   // 打开时从编辑目标回填（编辑视为已手改拼音），新建默认落到传入分组。
   import { Button } from "#components/shadcn-svelte/button";
   import { Input } from "#components/shadcn-svelte/input";
+  import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import { Switch } from "#components/shadcn-svelte/switch";
   import {
     Dialog,
@@ -143,91 +144,99 @@
 </script>
 
 <Dialog bind:open>
-  <DialogContent aria-label={editing == null ? m.lexicon_new_entry() : m.lexicon_edit()}>
-    <DialogHeader>
+  <DialogContent
+    aria-label={editing == null ? m.lexicon_new_entry() : m.lexicon_edit()}
+    class="flex max-h-[90vh] min-h-0 flex-col"
+  >
+    <DialogHeader class="shrink-0">
       <DialogTitle>
         {editing == null ? m.lexicon_new_entry() : m.lexicon_edit()}
       </DialogTitle>
       <DialogDescription>{m.lexicon_editor_hint()}</DialogDescription>
     </DialogHeader>
-    <div class="flex flex-col gap-3">
-      <label class="flex flex-col gap-1 text-sm">
-        <span class="font-medium">{m.lexicon_entry_text()}</span>
-        <Input
-          value={draftText}
-          oninput={(event) => {
-            draftText = event.currentTarget.value;
-            suggestFailed = false;
-          }}
-        />
-      </label>
-      <label class="flex flex-col gap-1 text-sm">
-        <span class="font-medium">{m.lexicon_entry_pinyin()}</span>
-        <div class="flex items-center gap-2">
+    <ScrollArea class="min-h-0 flex-1">
+      <div class="flex flex-col gap-3 pr-1">
+        <label class="flex flex-col gap-1 text-sm">
+          <span class="font-medium">{m.lexicon_entry_text()}</span>
           <Input
-            value={draftPinyin}
+            value={draftText}
             oninput={(event) => {
-              pinyinTouched = true;
-              draftPinyin = event.currentTarget.value;
+              draftText = event.currentTarget.value;
+              suggestFailed = false;
             }}
-            class="min-w-0 flex-1"
           />
-          <Button
-            variant="outline"
-            size="sm"
-            onclick={() => void handleRegeneratePinyin()}
-            disabled={editorBusy || draftText.trim() === ""}
-          >
-            {m.lexicon_regenerate_pinyin()}
-          </Button>
-        </div>
-        {#if suggestFailed}
-          <p class="text-xs text-destructive">{m.lexicon_pinyin_suggest_failed()}</p>
-        {/if}
-      </label>
-      <div class="flex items-center gap-3">
-        <div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-          <label class="flex items-center gap-2">
-            <span class="shrink-0 font-medium">{m.lexicon_entry_weight()}</span>
+        </label>
+        <label class="flex flex-col gap-1 text-sm">
+          <span class="font-medium">{m.lexicon_entry_pinyin()}</span>
+          <div class="flex items-center gap-2">
             <Input
-              type="number"
-              min={-100}
-              max={100}
-              value={draftWeightText}
-              oninput={(event) => (draftWeightText = event.currentTarget.value)}
+              value={draftPinyin}
+              oninput={(event) => {
+                pinyinTouched = true;
+                draftPinyin = event.currentTarget.value;
+              }}
               class="min-w-0 flex-1"
             />
-          </label>
-          <p class="text-xs text-muted-foreground">{m.lexicon_weight_scale()}</p>
-        </div>
-        <label class="flex shrink-0 items-center gap-2 text-sm">
-          <span class="font-medium">{m.lexicon_entry_enabled()}</span>
-          <Switch checked={draftEnabled} onCheckedChange={(checked) => (draftEnabled = checked)} />
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={() => void handleRegeneratePinyin()}
+              disabled={editorBusy || draftText.trim() === ""}
+            >
+              {m.lexicon_regenerate_pinyin()}
+            </Button>
+          </div>
+          {#if suggestFailed}
+            <p class="text-xs text-destructive">{m.lexicon_pinyin_suggest_failed()}</p>
+          {/if}
         </label>
+        <div class="flex items-center gap-3">
+          <div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
+            <label class="flex items-center gap-2">
+              <span class="shrink-0 font-medium">{m.lexicon_entry_weight()}</span>
+              <Input
+                type="number"
+                min={-100}
+                max={100}
+                value={draftWeightText}
+                oninput={(event) => (draftWeightText = event.currentTarget.value)}
+                class="min-w-0 flex-1"
+              />
+            </label>
+            <p class="text-xs text-muted-foreground">{m.lexicon_weight_scale()}</p>
+          </div>
+          <label class="flex shrink-0 items-center gap-2 text-sm">
+            <span class="font-medium">{m.lexicon_entry_enabled()}</span>
+            <Switch
+              checked={draftEnabled}
+              onCheckedChange={(checked) => (draftEnabled = checked)}
+            />
+          </label>
+        </div>
+        <div class="flex items-center gap-2 text-sm">
+          <span class="shrink-0 font-medium">{m.lexicon_move_group()}</span>
+          <Select
+            type="single"
+            value={draftGroupId}
+            items={lexiconState.value.groups.map((group) => ({
+              value: group.id,
+              label: groupLabel(group),
+            }))}
+            onValueChange={(value) => (draftGroupId = value)}
+          >
+            <SelectTrigger class="min-w-0 flex-1" aria-label={m.lexicon_move_group()}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {#each lexiconState.value.groups as group (group.id)}
+                <SelectItem value={group.id}>{groupLabel(group)}</SelectItem>
+              {/each}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
-      <div class="flex items-center gap-2 text-sm">
-        <span class="shrink-0 font-medium">{m.lexicon_move_group()}</span>
-        <Select
-          type="single"
-          value={draftGroupId}
-          items={lexiconState.value.groups.map((group) => ({
-            value: group.id,
-            label: groupLabel(group),
-          }))}
-          onValueChange={(value) => (draftGroupId = value)}
-        >
-          <SelectTrigger class="min-w-0 flex-1" aria-label={m.lexicon_move_group()}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {#each lexiconState.value.groups as group (group.id)}
-              <SelectItem value={group.id}>{groupLabel(group)}</SelectItem>
-            {/each}
-          </SelectContent>
-        </Select>
-      </div>
-    </div>
-    <DialogFooter>
+    </ScrollArea>
+    <DialogFooter class="shrink-0">
       <Button variant="outline" onclick={() => (open = false)}>
         {m.lexicon_cancel()}
       </Button>

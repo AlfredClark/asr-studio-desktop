@@ -29,7 +29,6 @@ const createMock = vi.hoisted(() => vi.fn());
 const updateMock = vi.hoisted(() => vi.fn());
 const deleteMock = vi.hoisted(() => vi.fn());
 const moveMock = vi.hoisted(() => vi.fn());
-const moveToMock = vi.hoisted(() => vi.fn());
 const enableMock = vi.hoisted(() => vi.fn());
 const suggestMock = vi.hoisted(() => vi.fn());
 const toastMocks = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
@@ -62,7 +61,6 @@ vi.mock("#libs/hooks/directives.svelte", async (importOriginal) => {
     updateDirective: updateMock,
     deleteDirective: deleteMock,
     moveDirective: moveMock,
-    moveDirectiveTo: moveToMock,
     setDirectiveEnabled: enableMock,
     suggestDirectivePinyin: suggestMock,
   };
@@ -81,7 +79,6 @@ beforeEach(() => {
   updateMock.mockResolvedValue(true);
   deleteMock.mockResolvedValue(true);
   moveMock.mockResolvedValue(true);
-  moveToMock.mockResolvedValue(true);
   enableMock.mockResolvedValue(true);
   suggestMock.mockResolvedValue("fu zhi");
 });
@@ -129,6 +126,19 @@ describe("指令页", () => {
     expect(screen.getAllByText("打开计算器").length).toBeGreaterThan(0);
   });
 
+  it("详情常驻展示启用状态徽标", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+
+    // 首项启用：详情展示「已启用」
+    expect(within(screen.getByTestId("directive-detail")).getByText("Enabled")).not.toBeNull();
+
+    // 次项禁用：详情展示「已禁用」，列表项本身不再出现状态徽标
+    await user.click(screen.getByText("计算器"));
+    expect(within(screen.getByTestId("directive-detail")).getByText("Disabled")).not.toBeNull();
+    expect(screen.queryByText("Enabled")).toBeNull();
+  });
+
   it("演示暂停后可手动步进且首尾循环", async () => {
     const user = userEvent.setup();
     await renderReady();
@@ -153,31 +163,23 @@ describe("指令页", () => {
     expect(stepText()).toBe(start);
   });
 
-  it("拖拽手柄排序透传目标序号", async () => {
+  it("上下移按钮透传并禁用首尾边界", async () => {
+    const user = userEvent.setup();
     await renderReady();
 
-    const grips = screen.getAllByRole("button", { name: "Drag to reorder" });
-    // 手柄按下武装首行：包装器变为可拖拽
-    fireEvent.mouseDown(grips[0]);
-    const firstRow = grips[0].closest("div.relative") as HTMLElement;
-    expect(firstRow.getAttribute("draggable")).toBe("true");
+    const upButtons = screen.getAllByRole("button", { name: "Move directive up" });
+    const downButtons = screen.getAllByRole("button", { name: "Move directive down" });
+    // 首行不可上移，末行不可下移
+    expect((upButtons[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((downButtons[downButtons.length - 1] as HTMLButtonElement).disabled).toBe(true);
 
-    // 拖首行到次行下半：目标序号 = 1 + 1 - 1（源在上扣除移除位移）
-    fireEvent.dragStart(firstRow);
-    const secondRow = grips[1].closest("div.relative") as HTMLElement;
-    fireEvent.dragOver(secondRow);
-    fireEvent.drop(secondRow);
-
-    expect(moveToMock).toHaveBeenCalledWith("d-1", 1);
-  });
-
-  it("手柄键盘方向键单步移动", async () => {
-    await renderReady();
-
-    const grips = screen.getAllByRole("button", { name: "Drag to reorder" });
-    fireEvent.keyDown(grips[0], { key: "ArrowDown" });
-
+    await user.click(downButtons[0]);
     expect(moveMock).toHaveBeenCalledWith("d-1", "down");
+
+    // 移动请求结算前所有移动按钮禁用，结算后恢复
+    await waitFor(() => expect((upButtons[1] as HTMLButtonElement).disabled).toBe(false));
+    await user.click(upButtons[1]);
+    expect(moveMock).toHaveBeenCalledWith("d-2", "up");
   });
 
   it("启用切换透传", async () => {

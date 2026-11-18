@@ -82,11 +82,11 @@
   }
 </script>
 
-<ScrollArea class="h-full">
-  <div class="flex h-full flex-col gap-2 p-4">
-    <h2 class="shrink-0 text-sm font-medium">{m.lexicon_groups_title()}</h2>
-    <p class="shrink-0 text-xs text-muted-foreground">{m.lexicon_global_hint()}</p>
-    <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+<div class="flex h-full flex-col gap-2 p-4">
+  <h2 class="shrink-0 text-sm font-medium">{m.lexicon_groups_title()}</h2>
+  <p class="shrink-0 text-xs text-muted-foreground">{m.lexicon_global_hint()}</p>
+  <ScrollArea class="min-h-0 flex-1">
+    <div class="flex flex-col gap-1 pr-1">
       {#each lexiconState.value.groups as group, groupIndex (group.id)}
         {@const selected = group.id === selectedId}
         {@const count = entriesOfGroup(lexiconState.value.entries, group.id).length}
@@ -203,28 +203,28 @@
         </div>
       {/each}
     </div>
-    <form
-      class="flex shrink-0 items-center gap-2"
-      onsubmit={(event) => {
-        event.preventDefault();
-        void handleCreateGroup();
-      }}
-    >
-      <Button type="button" variant="outline" size="sm" onclick={() => void handleImportGroup()}>
-        {m.lexicon_import_group()}
-      </Button>
-      <Input
-        value={newGroupName}
-        oninput={(event) => (newGroupName = event.currentTarget.value)}
-        aria-label={m.lexicon_group_name()}
-        placeholder={m.lexicon_group_name()}
-      />
-      <Button type="submit" size="sm" disabled={newGroupName.trim() === "" || creatingGroup}>
-        {m.lexicon_new_group()}
-      </Button>
-    </form>
-  </div>
-</ScrollArea>
+  </ScrollArea>
+  <form
+    class="flex shrink-0 items-center gap-2"
+    onsubmit={(event) => {
+      event.preventDefault();
+      void handleCreateGroup();
+    }}
+  >
+    <Button type="button" variant="outline" size="sm" onclick={() => void handleImportGroup()}>
+      {m.lexicon_import_group()}
+    </Button>
+    <Input
+      value={newGroupName}
+      oninput={(event) => (newGroupName = event.currentTarget.value)}
+      aria-label={m.lexicon_group_name()}
+      placeholder={m.lexicon_group_name()}
+    />
+    <Button type="submit" size="sm" disabled={newGroupName.trim() === "" || creatingGroup}>
+      {m.lexicon_new_group()}
+    </Button>
+  </form>
+</div>
 
 <ConfirmDialog
   bind:open={confirmDeleteGroup}

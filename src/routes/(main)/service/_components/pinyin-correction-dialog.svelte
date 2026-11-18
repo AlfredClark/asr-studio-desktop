@@ -3,6 +3,7 @@
   // 打开时从后端配置回填，取消直接丢弃；总开关由两应用开关派生（任一开即启用）。
   import { SvelteSet } from "svelte/reactivity";
   import { Button } from "#components/shadcn-svelte/button";
+  import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import { Switch } from "#components/shadcn-svelte/switch";
   import {
     Dialog,
@@ -109,60 +110,66 @@
 </script>
 
 <Dialog bind:open>
-  <DialogContent aria-label={m.service_pinyin_dialog_title()} class="sm:max-w-4xl">
-    <DialogHeader>
+  <DialogContent
+    aria-label={m.service_pinyin_dialog_title()}
+    class="flex max-h-[90vh] min-h-0 flex-col sm:max-w-4xl"
+  >
+    <DialogHeader class="shrink-0">
       <DialogTitle>{m.service_pinyin_dialog_title()}</DialogTitle>
       <DialogDescription>{m.service_pinyin_dialog_description()}</DialogDescription>
     </DialogHeader>
-    <div class="flex max-h-[70vh] min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto py-1">
-      {#each PINYIN_CORRECTION_GROUPS as group (group.id)}
-        <section class="flex flex-col gap-1.5">
-          <div class="flex items-center justify-between gap-2">
-            <h3 class="text-sm font-medium">{groupLabel(group)}</h3>
-            <Button variant="ghost" size="sm" onclick={() => toggleGroup(group)}>
-              {m.service_pinyin_select_all()}
-            </Button>
-          </div>
-          <div class="grid grid-cols-2 gap-1.5 md:grid-cols-4">
-            {#each group.rules as rule (rule)}
-              <label
-                class="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg bg-muted/50 px-2.5 py-2 text-sm"
-              >
-                <input
-                  type="checkbox"
-                  class="size-4 shrink-0 accent-primary"
-                  checked={draftRules.has(rule)}
-                  onchange={() => toggleRule(rule)}
-                  aria-label={PINYIN_CORRECTION_RULE_META[rule]}
-                />
-                <span class="min-w-0 flex-1 break-words">{PINYIN_CORRECTION_RULE_META[rule]}</span>
-              </label>
-            {/each}
-          </div>
-        </section>
-      {/each}
-      <div class="grid grid-cols-2 gap-1.5">
-        <label
-          class="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2.5 py-2 text-sm"
-        >
-          <span class="min-w-0 flex-1 font-medium">{m.service_pinyin_apply_recognition()}</span>
-          <Switch
-            bind:checked={draftApplyRecognition}
-            aria-label={m.service_pinyin_apply_recognition()}
-          />
-        </label>
-        <label
-          class="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2.5 py-2 text-sm"
-        >
-          <span class="min-w-0 flex-1 font-medium">{m.service_pinyin_apply_directive()}</span>
-          <Switch
-            bind:checked={draftApplyDirective}
-            aria-label={m.service_pinyin_apply_directive()}
-          />
-        </label>
+    <ScrollArea class="min-h-0 flex-1">
+      <div class="flex flex-col gap-4 py-1 pr-1">
+        {#each PINYIN_CORRECTION_GROUPS as group (group.id)}
+          <section class="flex flex-col gap-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-sm font-medium">{groupLabel(group)}</h3>
+              <Button variant="ghost" size="sm" onclick={() => toggleGroup(group)}>
+                {m.service_pinyin_select_all()}
+              </Button>
+            </div>
+            <div class="grid grid-cols-2 gap-1.5 md:grid-cols-4">
+              {#each group.rules as rule (rule)}
+                <label
+                  class="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg bg-muted/50 px-2.5 py-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    class="size-4 shrink-0 accent-primary"
+                    checked={draftRules.has(rule)}
+                    onchange={() => toggleRule(rule)}
+                    aria-label={PINYIN_CORRECTION_RULE_META[rule]}
+                  />
+                  <span class="min-w-0 flex-1 break-words">{PINYIN_CORRECTION_RULE_META[rule]}</span
+                  >
+                </label>
+              {/each}
+            </div>
+          </section>
+        {/each}
+        <div class="grid grid-cols-2 gap-1.5">
+          <label
+            class="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2.5 py-2 text-sm"
+          >
+            <span class="min-w-0 flex-1 font-medium">{m.service_pinyin_apply_recognition()}</span>
+            <Switch
+              bind:checked={draftApplyRecognition}
+              aria-label={m.service_pinyin_apply_recognition()}
+            />
+          </label>
+          <label
+            class="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2.5 py-2 text-sm"
+          >
+            <span class="min-w-0 flex-1 font-medium">{m.service_pinyin_apply_directive()}</span>
+            <Switch
+              bind:checked={draftApplyDirective}
+              aria-label={m.service_pinyin_apply_directive()}
+            />
+          </label>
+        </div>
       </div>
-    </div>
-    <DialogFooter>
+    </ScrollArea>
+    <DialogFooter class="shrink-0">
       <Button variant="outline" onclick={() => (open = false)} disabled={saving}>
         {m.service_pinyin_cancel()}
       </Button>

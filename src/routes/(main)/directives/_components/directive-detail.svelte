@@ -2,6 +2,7 @@
   // 指令详情：只读展示，空选中给引导；序列 chips 与编辑器预览同口径（`keyLabel` + ↓/↑）。
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
+  import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import type { Directive } from "#libs/commands/types";
   import { keyLabel } from "#libs/directives/key-registry";
   import { m } from "#libs/i18n/paraglide/messages";
@@ -19,9 +20,9 @@
     <div class="flex shrink-0 items-center justify-between gap-2">
       <h3 class="min-w-0 flex-1 truncate text-sm font-medium">{directive.name}</h3>
       <div class="flex shrink-0 items-center gap-2">
-        {#if directive.enabled}
-          <Badge>{m.directives_enabled()}</Badge>
-        {/if}
+        <Badge variant={directive.enabled ? "default" : "secondary"}>
+          {directive.enabled ? m.directives_enabled() : m.directives_disabled()}
+        </Badge>
         <Button variant="outline" size="sm" onclick={onEdit}>{m.directives_edit()}</Button>
       </div>
     </div>
@@ -43,14 +44,16 @@
       <p class="shrink-0 text-sm font-medium">
         {m.directives_actions()} ({directive.actions.length})
       </p>
-      <div class="flex flex-wrap gap-1.5 overflow-y-auto">
-        {#each directive.actions as action, index (index)}
-          <Badge variant={action.direction === "press" ? "default" : "secondary"} class="h-7">
-            {index + 1}. {keyLabel(action.key)}
-            {action.direction === "press" ? "↓" : "↑"}
-          </Badge>
-        {/each}
-      </div>
+      <ScrollArea class="min-h-0 flex-1">
+        <div class="flex flex-wrap gap-1.5 pr-1">
+          {#each directive.actions as action, index (index)}
+            <Badge variant={action.direction === "press" ? "default" : "secondary"} class="h-7">
+              {index + 1}. {keyLabel(action.key)}
+              {action.direction === "press" ? "↓" : "↑"}
+            </Badge>
+          {/each}
+        </div>
+      </ScrollArea>
     </div>
     <div class="flex shrink-0 flex-col gap-1.5">
       <p class="text-sm font-medium">{m.directives_demo_title()}</p>

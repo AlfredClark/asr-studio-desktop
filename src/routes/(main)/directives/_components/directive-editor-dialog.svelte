@@ -5,6 +5,7 @@
   import { Badge } from "#components/shadcn-svelte/badge";
   import { Button } from "#components/shadcn-svelte/button";
   import { Input } from "#components/shadcn-svelte/input";
+  import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import { Switch } from "#components/shadcn-svelte/switch";
   import XIcon from "@lucide/svelte/icons/x";
   import {
@@ -279,10 +280,10 @@
   <DialogContent
     aria-label={editing == null ? m.directives_new_title() : m.directives_edit_title()}
     class={step === 1
-      ? "max-h-[90vh] overflow-y-auto sm:max-w-2xl"
-      : "max-h-[90vh] overflow-y-auto sm:max-w-5xl"}
+      ? "flex max-h-[90vh] min-h-0 flex-col sm:max-w-2xl"
+      : "flex max-h-[90vh] min-h-0 flex-col sm:max-w-5xl"}
   >
-    <DialogHeader>
+    <DialogHeader class="shrink-0">
       <DialogTitle>
         {editing == null ? m.directives_new_title() : m.directives_edit_title()}
       </DialogTitle>
@@ -310,224 +311,236 @@
         3. {m.directives_step_review()}
       </li>
     </ol>
-    {#if step === 1}
-      <div class="flex flex-col gap-3">
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label class="flex flex-col gap-1 text-sm">
-            <span class="font-medium">{m.directives_name()}</span>
-            <Input
-              value={draftName}
-              oninput={(event) => {
-                draftName = event.currentTarget.value;
-                errors = { ...errors, name: undefined };
-              }}
-              aria-invalid={errors.name != null}
-            />
-            {#if errors.name != null}
-              <span class="text-xs text-destructive">{errors.name}</span>
-            {/if}
-          </label>
-          <div class="flex flex-col gap-1 text-sm">
-            <span class="font-medium">{m.directives_trigger_text()}</span>
-            <Input
-              value={draftTrigger}
-              oninput={(event) => {
-                draftTrigger = event.currentTarget.value;
-                errors = { ...errors, trigger: undefined };
-              }}
-              aria-label={m.directives_trigger_text()}
-              aria-invalid={errors.trigger != null}
-            />
-            {#if errors.trigger != null}
-              <span class="text-xs text-destructive">{errors.trigger}</span>
-            {/if}
-          </div>
-          <div class="flex flex-col gap-1 text-sm sm:col-span-2">
-            <span class="font-medium">{m.directives_trigger_pinyin()}</span>
-            <div class="flex items-center gap-2">
-              <Input
-                value={draftPinyin}
-                oninput={(event) => {
-                  pinyinTouched = true;
-                  draftPinyin = event.currentTarget.value;
-                }}
-                class="min-w-0 flex-1"
-                aria-label={m.directives_trigger_pinyin()}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onclick={() => void handleRegeneratePinyin()}
-                disabled={saving || draftTrigger.trim() === ""}
-              >
-                {m.directives_regenerate_pinyin()}
-              </Button>
-            </div>
-          </div>
-          <div class="flex flex-col gap-1 text-sm">
-            <span class="font-medium">{m.directives_interval()}</span>
-            <div class="flex items-center gap-2">
-              <Input
-                type="number"
-                min={DIRECTIVE_INTERVAL_MIN}
-                max={DIRECTIVE_INTERVAL_MAX}
-                value={draftInterval}
-                oninput={(event) => (draftInterval = event.currentTarget.value)}
-                class="min-w-0 flex-1"
-                aria-label={m.directives_interval()}
-              />
-              <label class="flex shrink-0 items-center gap-2 text-sm">
-                <span class="font-medium">{m.directives_enabled_label()}</span>
-                <Switch
-                  checked={draftEnabled}
-                  onCheckedChange={(checked) => (draftEnabled = checked)}
+    <ScrollArea class="min-h-0 flex-1">
+      <div class="pr-1">
+        {#if step === 1}
+          <div class="flex flex-col gap-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label class="flex flex-col gap-1 text-sm">
+                <span class="font-medium">{m.directives_name()}</span>
+                <Input
+                  value={draftName}
+                  oninput={(event) => {
+                    draftName = event.currentTarget.value;
+                    errors = { ...errors, name: undefined };
+                  }}
+                  aria-invalid={errors.name != null}
                 />
+                {#if errors.name != null}
+                  <span class="text-xs text-destructive">{errors.name}</span>
+                {/if}
               </label>
-            </div>
-            <p class="text-xs text-muted-foreground">{m.directives_interval_hint()}</p>
-          </div>
-          <div class="flex flex-col gap-1 text-sm">
-            <span class="font-medium">{m.directives_tolerance()}</span>
-            <div class="flex items-center gap-2">
-              <Input
-                type="number"
-                min={1}
-                max={DIRECTIVE_TOLERANCE_MAX}
-                value={draftTolerance}
-                oninput={(event) => (draftTolerance = event.currentTarget.value)}
-                class="min-w-0 flex-1"
-                aria-label={m.directives_tolerance()}
-                disabled={!draftFuzzy}
-              />
-              <label class="flex shrink-0 items-center gap-2 text-sm">
-                <span class="font-medium">{m.directives_enabled_label()}</span>
-                <Switch
-                  checked={draftFuzzy}
-                  onCheckedChange={(checked) => (draftFuzzy = checked)}
+              <div class="flex flex-col gap-1 text-sm">
+                <span class="font-medium">{m.directives_trigger_text()}</span>
+                <Input
+                  value={draftTrigger}
+                  oninput={(event) => {
+                    draftTrigger = event.currentTarget.value;
+                    errors = { ...errors, trigger: undefined };
+                  }}
+                  aria-label={m.directives_trigger_text()}
+                  aria-invalid={errors.trigger != null}
                 />
-              </label>
+                {#if errors.trigger != null}
+                  <span class="text-xs text-destructive">{errors.trigger}</span>
+                {/if}
+              </div>
+              <div class="flex flex-col gap-1 text-sm sm:col-span-2">
+                <span class="font-medium">{m.directives_trigger_pinyin()}</span>
+                <div class="flex items-center gap-2">
+                  <Input
+                    value={draftPinyin}
+                    oninput={(event) => {
+                      pinyinTouched = true;
+                      draftPinyin = event.currentTarget.value;
+                    }}
+                    class="min-w-0 flex-1"
+                    aria-label={m.directives_trigger_pinyin()}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onclick={() => void handleRegeneratePinyin()}
+                    disabled={saving || draftTrigger.trim() === ""}
+                  >
+                    {m.directives_regenerate_pinyin()}
+                  </Button>
+                </div>
+              </div>
+              <div class="flex flex-col gap-1 text-sm">
+                <span class="font-medium">{m.directives_interval()}</span>
+                <div class="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={DIRECTIVE_INTERVAL_MIN}
+                    max={DIRECTIVE_INTERVAL_MAX}
+                    value={draftInterval}
+                    oninput={(event) => (draftInterval = event.currentTarget.value)}
+                    class="min-w-0 flex-1"
+                    aria-label={m.directives_interval()}
+                  />
+                  <label class="flex shrink-0 items-center gap-2 text-sm">
+                    <span class="font-medium">{m.directives_enabled_label()}</span>
+                    <Switch
+                      checked={draftEnabled}
+                      onCheckedChange={(checked) => (draftEnabled = checked)}
+                    />
+                  </label>
+                </div>
+                <p class="text-xs text-muted-foreground">{m.directives_interval_hint()}</p>
+              </div>
+              <div class="flex flex-col gap-1 text-sm">
+                <span class="font-medium">{m.directives_tolerance()}</span>
+                <div class="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={DIRECTIVE_TOLERANCE_MAX}
+                    value={draftTolerance}
+                    oninput={(event) => (draftTolerance = event.currentTarget.value)}
+                    class="min-w-0 flex-1"
+                    aria-label={m.directives_tolerance()}
+                    disabled={!draftFuzzy}
+                  />
+                  <label class="flex shrink-0 items-center gap-2 text-sm">
+                    <span class="font-medium">{m.directives_enabled_label()}</span>
+                    <Switch
+                      checked={draftFuzzy}
+                      onCheckedChange={(checked) => (draftFuzzy = checked)}
+                    />
+                  </label>
+                </div>
+                <p class="text-xs text-muted-foreground">{m.directives_tolerance_hint()}</p>
+              </div>
             </div>
-            <p class="text-xs text-muted-foreground">{m.directives_tolerance_hint()}</p>
           </div>
-        </div>
-      </div>
-    {:else if step === 2}
-      <div class="flex flex-col gap-1.5">
-        <div class="flex items-center justify-between gap-2">
-          <span class="min-w-0 flex-1 truncate text-sm font-medium">
-            {m.directives_actions()} ({draftActions.length}){#if unclosed.length > 0}<span
-                class="font-normal text-muted-foreground"
-              >
-                · {m.directives_holding()}：{unclosed.map((key) => keyLabel(key)).join(", ")}
-              </span>{/if}{#if errors.balance != null}<span class="font-normal text-destructive">
-                · {errors.balance}
-              </span>{/if}
-          </span>
-          <div class="flex items-center gap-2">
-            {#if unclosed.length > 0}
-              <Button variant="outline" size="sm" onclick={handleAutoClose}>
-                {m.directives_auto_close()}
-              </Button>
-            {/if}
-            <Button
-              variant="ghost"
-              size="sm"
-              onclick={() => (draftActions = [])}
-              disabled={draftActions.length === 0}
-            >
-              {m.directives_clear_actions()}
-            </Button>
-          </div>
-        </div>
-        {#if draftActions.length === 0}
-          <p class="text-sm text-muted-foreground">{m.directives_actions_empty()}</p>
-        {:else}
-          <div class="flex flex-wrap items-center gap-1.5">
-            {#each draftActions as action, index (index)}
-              <span class="inline-flex items-center">
-                <Badge variant={action.direction === "press" ? "default" : "secondary"} class="h-7">
-                  {index + 1}. {keyLabel(action.key)}
-                  {action.direction === "press" ? "↓" : "↑"}
-                </Badge>
+        {:else if step === 2}
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <span class="min-w-0 flex-1 truncate text-sm font-medium">
+                {m.directives_actions()} ({draftActions.length}){#if unclosed.length > 0}<span
+                    class="font-normal text-muted-foreground"
+                  >
+                    · {m.directives_holding()}：{unclosed.map((key) => keyLabel(key)).join(", ")}
+                  </span>{/if}{#if errors.balance != null}<span
+                    class="font-normal text-destructive"
+                  >
+                    · {errors.balance}
+                  </span>{/if}
+              </span>
+              <div class="flex items-center gap-2">
+                {#if unclosed.length > 0}
+                  <Button variant="outline" size="sm" onclick={handleAutoClose}>
+                    {m.directives_auto_close()}
+                  </Button>
+                {/if}
                 <Button
                   variant="ghost"
-                  size="icon-xs"
-                  onclick={() => removeAction(index)}
-                  aria-label={m.directives_remove_action()}
-                  title={m.directives_remove_action()}
+                  size="sm"
+                  onclick={() => (draftActions = [])}
+                  disabled={draftActions.length === 0}
                 >
-                  <XIcon />
+                  {m.directives_clear_actions()}
                 </Button>
-              </span>
-            {/each}
+              </div>
+            </div>
+            {#if draftActions.length === 0}
+              <p class="text-sm text-muted-foreground">{m.directives_actions_empty()}</p>
+            {:else}
+              <div class="flex flex-wrap items-center gap-1.5">
+                {#each draftActions as action, index (index)}
+                  <span class="inline-flex items-center">
+                    <Badge
+                      variant={action.direction === "press" ? "default" : "secondary"}
+                      class="h-7"
+                    >
+                      {index + 1}. {keyLabel(action.key)}
+                      {action.direction === "press" ? "↓" : "↑"}
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onclick={() => removeAction(index)}
+                      aria-label={m.directives_remove_action()}
+                      title={m.directives_remove_action()}
+                    >
+                      <XIcon />
+                    </Button>
+                  </span>
+                {/each}
+              </div>
+            {/if}
+            <div class="flex items-center gap-1" role="group" aria-label={m.directives_actions()}>
+              <Button
+                variant={recordMode === "hold" ? "default" : "outline"}
+                size="sm"
+                onclick={() => (recordMode = "hold")}
+              >
+                {m.directives_record_hold()}
+              </Button>
+              <Button
+                variant={recordMode === "toggle" ? "default" : "outline"}
+                size="sm"
+                onclick={() => (recordMode = "toggle")}
+              >
+                {m.directives_record_toggle()}
+              </Button>
+            </div>
+            <ScrollArea orientation="horizontal" class="w-full">
+              <KeyboardRecorder
+                actions={draftActions}
+                mode={recordMode}
+                onPress={handleKeyPress}
+                onRelease={handleKeyRelease}
+                onToggle={handleKeyToggle}
+              />
+            </ScrollArea>
+          </div>
+        {:else}
+          <div class="flex flex-col gap-3">
+            <dl class="grid shrink-0 grid-cols-2 gap-2 text-sm">
+              <div class="flex min-w-0 gap-2">
+                <dt class="shrink-0 font-medium">{m.directives_directive_name()}</dt>
+                <dd class="min-w-0 flex-1 truncate">{draftName.trim()}</dd>
+              </div>
+              <div class="flex min-w-0 gap-2">
+                <dt class="shrink-0 font-medium">{m.directives_trigger_text()}</dt>
+                <dd class="min-w-0 flex-1 truncate">{draftTrigger.trim()}</dd>
+              </div>
+              <div class="flex min-w-0 gap-2">
+                <dt class="shrink-0 font-medium">{m.directives_interval_label()}</dt>
+                <dd class="shrink-0 tabular-nums">{parseIntervalMs()} ms</dd>
+              </div>
+              <div class="flex min-w-0 gap-2">
+                <dt class="shrink-0 font-medium">{m.directives_trigger_pinyin_label()}</dt>
+                <dd class="min-w-0 flex-1 truncate text-muted-foreground">{draftPinyin}</dd>
+              </div>
+            </dl>
+            <div class="flex flex-col gap-1.5">
+              <p class="text-sm font-medium">
+                {m.directives_actions()} ({draftActions.length})
+              </p>
+              <div class="flex flex-wrap gap-1.5">
+                {#each draftActions as action, index (index)}
+                  <Badge
+                    variant={action.direction === "press" ? "default" : "secondary"}
+                    class="h-7"
+                  >
+                    {index + 1}. {keyLabel(action.key)}
+                    {action.direction === "press" ? "↓" : "↑"}
+                  </Badge>
+                {/each}
+              </div>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <p class="text-sm font-medium">{m.directives_demo_title()}</p>
+              <DirectiveDemo actions={draftActions} intervalMs={parseIntervalMs()} />
+            </div>
           </div>
         {/if}
-        <div class="flex items-center gap-1" role="group" aria-label={m.directives_actions()}>
-          <Button
-            variant={recordMode === "hold" ? "default" : "outline"}
-            size="sm"
-            onclick={() => (recordMode = "hold")}
-          >
-            {m.directives_record_hold()}
-          </Button>
-          <Button
-            variant={recordMode === "toggle" ? "default" : "outline"}
-            size="sm"
-            onclick={() => (recordMode = "toggle")}
-          >
-            {m.directives_record_toggle()}
-          </Button>
-        </div>
-        <div class="overflow-x-auto">
-          <KeyboardRecorder
-            actions={draftActions}
-            mode={recordMode}
-            onPress={handleKeyPress}
-            onRelease={handleKeyRelease}
-            onToggle={handleKeyToggle}
-          />
-        </div>
       </div>
-    {:else}
-      <div class="flex flex-col gap-3">
-        <dl class="grid shrink-0 grid-cols-2 gap-2 text-sm">
-          <div class="flex min-w-0 gap-2">
-            <dt class="shrink-0 font-medium">{m.directives_directive_name()}</dt>
-            <dd class="min-w-0 flex-1 truncate">{draftName.trim()}</dd>
-          </div>
-          <div class="flex min-w-0 gap-2">
-            <dt class="shrink-0 font-medium">{m.directives_trigger_text()}</dt>
-            <dd class="min-w-0 flex-1 truncate">{draftTrigger.trim()}</dd>
-          </div>
-          <div class="flex min-w-0 gap-2">
-            <dt class="shrink-0 font-medium">{m.directives_interval_label()}</dt>
-            <dd class="shrink-0 tabular-nums">{parseIntervalMs()} ms</dd>
-          </div>
-          <div class="flex min-w-0 gap-2">
-            <dt class="shrink-0 font-medium">{m.directives_trigger_pinyin_label()}</dt>
-            <dd class="min-w-0 flex-1 truncate text-muted-foreground">{draftPinyin}</dd>
-          </div>
-        </dl>
-        <div class="flex flex-col gap-1.5">
-          <p class="text-sm font-medium">
-            {m.directives_actions()} ({draftActions.length})
-          </p>
-          <div class="flex flex-wrap gap-1.5">
-            {#each draftActions as action, index (index)}
-              <Badge variant={action.direction === "press" ? "default" : "secondary"} class="h-7">
-                {index + 1}. {keyLabel(action.key)}
-                {action.direction === "press" ? "↓" : "↑"}
-              </Badge>
-            {/each}
-          </div>
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <p class="text-sm font-medium">{m.directives_demo_title()}</p>
-          <DirectiveDemo actions={draftActions} intervalMs={parseIntervalMs()} />
-        </div>
-      </div>
-    {/if}
-    <DialogFooter>
+    </ScrollArea>
+    <DialogFooter class="shrink-0">
       <Button variant="outline" onclick={() => (open = false)}>
         {m.directives_cancel()}
       </Button>

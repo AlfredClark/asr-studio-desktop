@@ -2,6 +2,7 @@
   // 批量添加弹窗：输入多行词面 → 防抖逐词解析拼音 → 预览新增/跳过数 → 落盘。
   // 打开时输入清空、目标锁定父组件传入的分组快照，切组不影响已开弹窗。
   import { Button } from "#components/shadcn-svelte/button";
+  import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import { Textarea } from "#components/shadcn-svelte/textarea";
   import {
     Dialog,
@@ -117,40 +118,45 @@
 </script>
 
 <Dialog bind:open>
-  <DialogContent aria-label={m.lexicon_batch_add()} class="sm:max-w-2xl">
-    <DialogHeader>
+  <DialogContent
+    aria-label={m.lexicon_batch_add()}
+    class="flex max-h-[90vh] min-h-0 flex-col sm:max-w-2xl"
+  >
+    <DialogHeader class="shrink-0">
       <DialogTitle>{m.lexicon_batch_add()}</DialogTitle>
       <DialogDescription>{m.lexicon_batch_add_hint()}</DialogDescription>
     </DialogHeader>
-    <div class="flex flex-col gap-3">
-      <p class="text-sm text-muted-foreground">
-        {m.lexicon_move_group()}：{targetGroupName}
-      </p>
-      <label class="flex flex-col gap-1 text-sm">
-        <span class="font-medium">{m.lexicon_batch_add_label()}</span>
-        <Textarea
-          bind:value={batchInput}
-          rows={10}
-          disabled={batchBusy}
-          placeholder={m.lexicon_batch_add_placeholder()}
-          aria-label={m.lexicon_batch_add_label()}
-        />
-      </label>
-      {#if batchCapped.length > 0 && !batchReady}
-        <p class="text-sm text-muted-foreground" aria-live="polite">
-          {m.lexicon_batch_add_resolving()}
+    <ScrollArea class="min-h-0 flex-1">
+      <div class="flex flex-col gap-3 pr-1">
+        <p class="text-sm text-muted-foreground">
+          {m.lexicon_move_group()}：{targetGroupName}
         </p>
-      {/if}
-      {#if batchReady}
-        <p class="text-sm text-muted-foreground" aria-live="polite">
-          {m.lexicon_batch_add_preview({ count: batchNewCount, skipped: batchSkipCount })}
-        </p>
-      {/if}
-      {#if batchTruncated}
-        <p class="text-sm text-muted-foreground">{m.lexicon_batch_add_truncated()}</p>
-      {/if}
-    </div>
-    <DialogFooter>
+        <label class="flex flex-col gap-1 text-sm">
+          <span class="font-medium">{m.lexicon_batch_add_label()}</span>
+          <Textarea
+            bind:value={batchInput}
+            rows={10}
+            disabled={batchBusy}
+            placeholder={m.lexicon_batch_add_placeholder()}
+            aria-label={m.lexicon_batch_add_label()}
+          />
+        </label>
+        {#if batchCapped.length > 0 && !batchReady}
+          <p class="text-sm text-muted-foreground" aria-live="polite">
+            {m.lexicon_batch_add_resolving()}
+          </p>
+        {/if}
+        {#if batchReady}
+          <p class="text-sm text-muted-foreground" aria-live="polite">
+            {m.lexicon_batch_add_preview({ count: batchNewCount, skipped: batchSkipCount })}
+          </p>
+        {/if}
+        {#if batchTruncated}
+          <p class="text-sm text-muted-foreground">{m.lexicon_batch_add_truncated()}</p>
+        {/if}
+      </div>
+    </ScrollArea>
+    <DialogFooter class="shrink-0">
       <Button variant="outline" onclick={() => (open = false)} disabled={batchBusy}>
         {m.lexicon_cancel()}
       </Button>

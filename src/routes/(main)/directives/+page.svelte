@@ -1,6 +1,6 @@
 <script lang="ts">
   // 指令页组装：左列表右详情，选中态放页面局部；数据来自跨页面共享的 directiveState。
-  // 左栏列表项复用词库分组行的图标操作（启用切换/编辑/更多），右栏详情只读展示。
+  // 左栏列表项走常驻图标操作（启用切换/上移/下移/编辑/删除），右栏详情只读展示。
   import { onMount } from "svelte";
   import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import { Button } from "#components/shadcn-svelte/button";
@@ -16,7 +16,6 @@
     deleteDirective,
     directiveState,
     moveDirective,
-    moveDirectiveTo,
     refreshDirectives,
     setDirectiveEnabled,
   } from "#libs/hooks/directives.svelte";
@@ -39,12 +38,8 @@
   let confirmDelete = $state(false);
   let deletingId = $state<string | null>(null);
 
-  /** 拖拽武装的行 id：仅手柄按下后对应行可拖；松开/放下/结束即解除 */
-  let armedId = $state<string | null>(null);
-  /** 拖拽中的指令 id：放置时读它，不受手柄松开影响 */
-  let draggingId = $state<string | null>(null);
-  /** 放置指示：目标行序号 + 行上半/下半 */
-  let dropTarget = $state<{ index: number; pos: "before" | "after" } | null>(null);
+  /** 正在移动的指令 id：期间禁用移动按钮，避免并发请求 */
+  let movingId = $state<string | null>(null);
 
   /** 当前选中的指令：被删即为空，交回落逻辑处理 */
   const selected = $derived(
@@ -79,51 +74,15 @@
     await deleteDirective(id);
   }
 
-  /** 拖拽开始：记下拖拽源（放置时读它），顺手写一份给 Firefox */
-  function handleDragStart(event: DragEvent, id: string): void {
-    draggingId = id;
-    event.dataTransfer?.setData("text/plain", id);
-    if (event.dataTransfer != null) event.dataTransfer.effectAllowed = "move";
-  }
-
-  /** 拖拽经过：仅拖拽会话内指示放置位（行上半/下半） */
-  function handleDragOver(event: DragEvent, index: number): void {
-    if (draggingId == null) return;
-    event.preventDefault();
-    if (event.dataTransfer != null) event.dataTransfer.dropEffect = "move";
-    dropTarget = { index, pos: dropPos(event) };
-  }
-
-  /** 按指针纵坐标判定放行上半还是下半 */
-  function dropPos(event: DragEvent): "before" | "after" {
-    const rect =
-      event.currentTarget instanceof HTMLElement
-        ? event.currentTarget.getBoundingClientRect()
-        : null;
-    return rect != null && event.clientY - rect.top < rect.height / 2 ? "before" : "after";
-  }
-
-  /** 放置：按源与目标行算出定点序号（源在上则扣除移除位移），一次落盘 */
-  async function handleDrop(event: DragEvent, index: number): Promise<void> {
-    event.preventDefault();
-    const id = draggingId;
-    armedId = null;
-    draggingId = null;
-    dropTarget = null;
-    if (id == null) return;
-    const from = directiveState.value.findIndex((directive) => directive.id === id);
-    if (from === -1) return;
-    let to = index + (dropPos(event) === "after" ? 1 : 0);
-    if (from < to) to -= 1;
-    if (from === to) return;
-    await moveDirectiveTo(id, to);
-  }
-
-  /** 拖拽结束：无论放下与否都清理拖拽态 */
-  function handleDragEnd(): void {
-    armedId = null;
-    draggingId = null;
-    dropTarget = null;
+  /** 上移 / 下移单步：一次只放行一个请求，落盘后由 hook 刷新列表 */
+  async function handleMove(id: string, direction: "up" | "down"): Promise<void> {
+    if (movingId != null) return;
+    movingId = id;
+    try {
+      await moveDirective(id, direction);
+    } finally {
+      movingId = null;
+    }
   }
 
   /** 拉取指令表：挂载与重试共用，失败切错误态 */
@@ -172,56 +131,37 @@
               <p class="text-sm text-muted-foreground">{m.directives_empty()}</p>
             </div>
           {:else}
-            <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-              {#each directiveState.value as directive, directiveIndex (directive.id)}
-                <div
-                  class="relative"
-                  role="listitem"
-                  draggable={armedId === directive.id}
-                  ondragstart={(event) => handleDragStart(event, directive.id)}
-                  ondragover={(event) => handleDragOver(event, directiveIndex)}
-                  ondrop={(event) => void handleDrop(event, directiveIndex)}
-                  ondragend={handleDragEnd}
-                >
-                  {#if dropTarget?.index === directiveIndex && dropTarget.pos === "before"}
-                    <div
-                      class="absolute inset-x-1 top-0 h-0.5 rounded-full bg-primary"
-                      aria-hidden="true"
-                    ></div>
-                  {/if}
-                  <DirectiveListItem
-                    {directive}
-                    selected={directive.id === selected?.id}
-                    onSelect={() => (selectedId = directive.id)}
-                    onToggle={() => void setDirectiveEnabled(directive.id, !directive.enabled)}
-                    onEdit={() => openEdit(directive)}
-                    onMove={(direction) => void moveDirective(directive.id, direction)}
-                    onGripReady={() => (armedId = directive.id)}
-                    onGripCancel={() => (armedId = null)}
-                    onDelete={() => {
-                      deletingId = directive.id;
-                      confirmDelete = true;
-                    }}
-                  />
-                  {#if dropTarget?.index === directiveIndex && dropTarget.pos === "after"}
-                    <div
-                      class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-primary"
-                      aria-hidden="true"
-                    ></div>
-                  {/if}
-                </div>
-              {/each}
-            </div>
+            <ScrollArea class="min-h-0 flex-1">
+              <div class="flex flex-col gap-1 pr-1">
+                {#each directiveState.value as directive, directiveIndex (directive.id)}
+                  <div class="relative" role="listitem">
+                    <DirectiveListItem
+                      {directive}
+                      selected={directive.id === selected?.id}
+                      onSelect={() => (selectedId = directive.id)}
+                      onToggle={() => void setDirectiveEnabled(directive.id, !directive.enabled)}
+                      onEdit={() => openEdit(directive)}
+                      canMoveUp={directiveIndex > 0}
+                      canMoveDown={directiveIndex < directiveState.value.length - 1}
+                      moving={movingId != null}
+                      onMove={(direction) => void handleMove(directive.id, direction)}
+                      onDelete={() => {
+                        deletingId = directive.id;
+                        confirmDelete = true;
+                      }}
+                    />
+                  </div>
+                {/each}
+              </div>
+            </ScrollArea>
           {/if}
         </div>
       </ResizablePane>
       <ResizableHandle withHandle />
       <ResizablePane defaultSize={70} minSize={45}>
-        <ScrollArea class="h-full">
-          <div class="flex h-full flex-col gap-2 p-4">
-            <DirectiveDetail directive={selected} onEdit={() => selected && openEdit(selected)} />
-          </div>
-        </ScrollArea>
+        <div class="flex h-full flex-col gap-2 p-4">
+          <DirectiveDetail directive={selected} onEdit={() => selected && openEdit(selected)} />
+        </div>
       </ResizablePane>
     </ResizablePaneGroup>
   {/if}

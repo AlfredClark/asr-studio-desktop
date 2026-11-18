@@ -3,6 +3,15 @@ import { cleanup, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import Component from "../../../../../../routes/(main)/about/_components/updater-panel.svelte";
 
+// bits-ui ScrollArea 在 jsdom 下依赖 ResizeObserver，就地补齐。
+if (typeof ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver;
+}
+
 // 纯替身：更新全局状态全部 mock，只验证更新面板各阶段的展示与入口接线。
 const updaterStateMock = vi.hoisted(
   (): {
