@@ -140,8 +140,9 @@
                     onchange={() => toggleRule(rule)}
                     aria-label={PINYIN_CORRECTION_RULE_META[rule]}
                   />
-                  <span class="min-w-0 flex-1 break-words">{PINYIN_CORRECTION_RULE_META[rule]}</span
-                  >
+                  <span class="min-w-0 flex-1 break-words">
+                    {PINYIN_CORRECTION_RULE_META[rule]}
+                  </span>
                 </label>
               {/each}
             </div>

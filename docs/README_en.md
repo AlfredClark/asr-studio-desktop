@@ -56,12 +56,12 @@ Directive list on the left (e.g. "delete paragraph" enabled); trigger text, trig
 
 - Frontend: SvelteKit 2 (SPA, `adapter-static`) + Svelte 5 (runes) + Tailwind CSS v4 + shadcn-svelte + Paraglide (`en` / `zh-CN`) + tauri-specta generated frontend/backend contract bindings.
 - Backend: Tauri v2 + Rust (edition 2024, toolchain pinned to `1.100.0`); speech via `sherpa-onnx`, recording via `cpal`, pinyin via `pinyin`, key replay via `enigo`.
-- Tooling: `pnpm@12.21.0` (Node `>= 24`); both `pnpm-lock.yaml` and `Cargo.lock` are committed.
+- Tooling: `pnpm@12.23.0` (Node `>= 24`); both `pnpm-lock.yaml` and `Cargo.lock` are committed.
 
 ## Quickstart
 
 ```bash
-# Prereqs: Node >= 24, pnpm@12.21.0, Rust 1.100.0
+# Prereqs: Node >= 24, pnpm@12.23.0, Rust 1.100.0
 # Linux additionally needs system deps (WebKitGTK etc.), see the Dependencies step in .github/workflows/release.yml
 
 pnpm install --frozen-lockfile   # install from lockfiles

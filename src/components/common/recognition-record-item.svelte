@@ -74,9 +74,11 @@
     {:else if record.segments.length > 0}
       <p class={open ? "text-sm whitespace-pre-wrap" : "line-clamp-2 text-sm"}>
         {#each record.segments as segment, index (index)}
-          {#if segment.kind === "original"}<s class="text-muted-foreground">{segment.text}</s
-            >{:else if segment.kind === "replacement"}<strong>{segment.text}</strong
-            >{:else}{segment.text}{/if}
+          {#if segment.kind === "original"}<s class="text-muted-foreground">
+              {segment.text}
+            </s>{:else if segment.kind === "replacement"}<strong>
+              {segment.text}
+            </strong>{:else}{segment.text}{/if}
         {/each}
       </p>
     {:else}
