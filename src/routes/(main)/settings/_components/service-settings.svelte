@@ -165,29 +165,33 @@
     {/snippet}
   </CardRow>
   {#if isExternal}
-    <CardRow
-      label={m.settings_service_server_path_label()}
-      description={m.settings_service_server_path_description()}
-    >
-      {#snippet control()}
-        <div class="flex w-(--control-column-width) items-center gap-2">
-          <Input
-            value={pathDraft ?? configValue("service_server_path", "")}
-            placeholder={m.settings_service_server_path_placeholder()}
-            aria-label={m.settings_service_server_path_label()}
-            class="min-w-0 flex-1"
-            oninput={(event) => (pathDraft = event.currentTarget.value)}
-            onblur={() => void handleServerPathSave()}
-            onkeydown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-            }}
-          />
-          <Button variant="outline" size="sm" onclick={() => void handleBrowseServerPath()}>
-            {m.settings_service_server_path_browse()}
-          </Button>
-        </div>
-      {/snippet}
-    </CardRow>
+    <div>
+      <CardRow
+        label={m.settings_service_server_path_label()}
+        description={m.settings_service_server_path_description()}
+      />
+      <div class="flex items-center gap-2 pb-3">
+        <Input
+          value={pathDraft ?? configValue("service_server_path", "")}
+          placeholder={m.settings_service_server_path_placeholder()}
+          aria-label={m.settings_service_server_path_label()}
+          class="min-w-0 flex-1"
+          oninput={(event) => (pathDraft = event.currentTarget.value)}
+          onblur={() => void handleServerPathSave()}
+          onkeydown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          class="shrink-0"
+          onclick={() => void handleBrowseServerPath()}
+        >
+          {m.settings_service_server_path_browse()}
+        </Button>
+      </div>
+    </div>
     <CardRow
       label={m.settings_service_port_label()}
       description={m.settings_service_port_description()}
