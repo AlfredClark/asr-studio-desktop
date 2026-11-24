@@ -1224,6 +1224,8 @@ pub fn update(app: &tauri::AppHandle, patch: &ConfigPatch) -> anyhow::Result<Con
     let before = load_config(app);
     // 跨键规整先于一切副作用与落盘：规整后的补丁即生效值，写后值直接返回给前端
     let patch = coerce_patch(&before, patch);
+    // 写入校验先于一切副作用与落盘：非法补丁直接失败，错误前置到调用方
+    validate_service_server_path(&patch)?;
     if let Some(target) = wants_autostart_sync(&patch, before.auto_start) {
         sync_autostart(app, target)?;
     }
@@ -1239,6 +1241,21 @@ pub fn update(app: &tauri::AppHandle, patch: &ConfigPatch) -> anyhow::Result<Con
     let after = load_config(app);
     apply_runtime_effects(app, &before, &after);
     Ok(after)
+}
+
+/// 服务程序路径的写入校验：空串表示未指定（允许清空），非空必须为绝对路径；
+///
+/// 相对路径按进程工作目录解析，桌面应用的工作目录不稳定，落盘即埋雷；
+/// 与用户指定模型目录（`set_custom_model_dir`）同口径，报错前置到设置页。
+fn validate_service_server_path(patch: &ConfigPatch) -> anyhow::Result<()> {
+    let Some(raw) = patch.service_server_path.as_deref() else {
+        return Ok(());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || std::path::Path::new(trimmed).is_absolute() {
+        return Ok(());
+    }
+    anyhow::bail!("service server path must be an absolute path")
 }
 
 /// 跨键规整补丁：托盘关闭时“最小化到托盘”无处可去，一律回落弹窗提示并写盘，
@@ -2492,6 +2509,29 @@ mod tests {
         let wrong_type: Config =
             serde_json::from_value(json!({ "asr_language": 1 })).expect("config parsed");
         assert_eq!(wrong_type.asr_language, AsrLanguage::Chinese);
+    }
+
+    #[test]
+    fn service_server_path_write_validation() {
+        for raw in [
+            "/opt/sherpa-onnx/bin/server",
+            "  /opt/sherpa-onnx/bin/server  ",
+            "",
+            "   ",
+        ] {
+            let patch = ConfigPatch {
+                service_server_path: Some(String::from(raw)),
+                ..ConfigPatch::default()
+            };
+            assert!(validate_service_server_path(&patch).is_ok(), "{raw:?}");
+        }
+        assert!(validate_service_server_path(&ConfigPatch::default()).is_ok());
+        let relative = ConfigPatch {
+            service_server_path: Some(String::from("sherpa-onnx/server")),
+            ..ConfigPatch::default()
+        };
+        let err = validate_service_server_path(&relative).expect_err("relative rejected");
+        assert!(format!("{err:#}").contains("absolute"));
     }
 
     #[test]

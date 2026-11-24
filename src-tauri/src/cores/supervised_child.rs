@@ -39,19 +39,82 @@ pub fn kill_child() {
     *guard = None;
 }
 
-/// 查杀单个句柄：已退出也视为成功，失败只记日志不抛错（退出兜底路径不允许失败）
+/// 查杀后回收轮询上限：`kill` 只发信号不同步回收，短轮询确认僵尸已收；
+/// 超限未回收记日志放弃（进程退出时由 init 接管回收）
+const REAP_POLLS: u32 = 10;
+/// 查杀后回收轮询间隔毫秒
+const REAP_POLL_MS: u64 = 10;
+
+/// 查杀单个句柄并同步回收：已退出也视为成功，失败只记日志不抛错（退出兜底路径不允许失败）
 fn kill_handle(child: &mut std::process::Child) {
     match child.try_wait() {
         Ok(Some(status)) => {
             log::info!("supervised child already exited: {status}");
+            return;
         }
         Ok(None) => {
             if let Err(err) = child.kill() {
                 log::warn!("failed to kill supervised child: {err:#}");
+                return;
             }
         }
         Err(err) => {
             log::warn!("failed to poll supervised child: {err:#}");
+            return;
         }
+    }
+    // 同步回收：`kill` 只发信号，轮询 `try_wait` 把僵尸收掉，避免停启累积
+    for _ in 0..REAP_POLLS {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(REAP_POLL_MS)),
+            Err(err) => {
+                log::warn!("failed to reap supervised child: {err:#}");
+                return;
+            }
+        }
+    }
+    log::warn!("supervised child not reaped after kill, leaving it for init");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kill_child_without_slot_is_noop() {
+        kill_child();
+        kill_child();
+    }
+
+    /// 杀后必须回收、不留僵尸：以 `/proc` 为准（僵尸仍占 PID），
+    /// 注意 `try_wait` 会缓存退出状态，不能用它二次探测——收过尸再查仍返回 `Some`。
+    /// 先观测、后兜底清理、再断言，失败时也不留 `sleep` 进程。
+    #[cfg(unix)]
+    #[test]
+    fn killed_child_is_reaped_without_zombie() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("sleep spawns");
+        let pid = child.id();
+        // 解析有效性：活进程必须读出运行态，否则下面的 `None` 断言是空转
+        assert!(
+            matches!(proc_state(pid), Some('R' | 'S' | 'D' | 'T')),
+            "live sleep {pid} unreadable"
+        );
+        kill_handle(&mut child);
+        let state = proc_state(pid);
+        // 兜底清理：无论断言成败都不留 `sleep` 进程
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(state.is_none(), "killed child {pid} left zombie: {state:?}");
+    }
+
+    /// 读 `/proc/<pid>/stat` 的进程状态；进程已回收（无僵尸）返回 `None`
+    #[cfg(unix)]
+    fn proc_state(pid: u32) -> Option<char> {
+        let content = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        content.rsplit(')').next()?.trim_start().chars().next()
     }
 }

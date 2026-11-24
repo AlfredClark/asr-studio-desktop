@@ -1,3 +1,4 @@
+#![cfg(not(any(target_os = "android", target_os = "ios")))]
 //! 外部语音服务：拉起用户本机的 `sherpa-onnx-offline-websocket-server` 进程，
 //! 经本机回环 `ws` 转写（GPU 加速走这里）。
 //!
