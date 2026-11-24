@@ -80,6 +80,14 @@
     }
   }
 
+  /** 后端徽标文案：配置的服务模式为准；外部模式附带端口 */
+  function backendLabel(): string {
+    if (configValue("service_mode", "internal") === "external") {
+      return m.service_backend_external({ port: configValue("service_port", 6006) });
+    }
+    return m.service_backend_internal();
+  }
+
   /** 录制按钮是否可点：运行中、未录制、未识别、未切换且已选设备 */
   const canRecord = $derived(
     running &&
@@ -200,9 +208,12 @@
 <ScrollArea class="h-full">
   <div class="flex flex-col gap-2 p-4">
     <div class="flex shrink-0 items-center justify-between gap-2">
-      <Badge variant={running ? "default" : "secondary"}>
-        {serviceState.switching ? m.service_switching() : statusLabel()}
-      </Badge>
+      <div class="flex shrink-0 items-center gap-2">
+        <Badge variant={running ? "default" : "secondary"}>
+          {serviceState.switching ? m.service_switching() : statusLabel()}
+        </Badge>
+        <Badge variant="outline">{backendLabel()}</Badge>
+      </div>
       <div class="flex shrink-0 items-center gap-2">
         {#if serviceState.recording}
           <Button variant="destructive" size="sm" onclick={() => void stopTestRecording()}>

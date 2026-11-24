@@ -19,6 +19,16 @@ const KEY_SCHEMA_VERSION: &str = "schema_version";
 const KEY_LOCALE: &str = "locale";
 /// 识别语言在配置文件中的键名：`auto` 跟随音频，`chinese` 统一按中文解码
 const KEY_ASR_LANGUAGE: &str = "asr_language";
+/// 服务模式在配置文件中的键名：`internal` 用应用内嵌识别器，`external` 调外部服务进程
+const KEY_SERVICE_MODE: &str = "service_mode";
+/// 外部服务程序路径在配置文件中的键名；空串表示未指定
+const KEY_SERVICE_SERVER_PATH: &str = "service_server_path";
+/// 外部服务端口在配置文件中的键名；缺失或非法时回落默认端口
+const KEY_SERVICE_PORT: &str = "service_port";
+/// 外部服务线程数在配置文件中的键名；`0` 表示跟随内部模式（可用核数减一）
+const KEY_SERVICE_THREADS: &str = "service_threads";
+/// 外部服务推理后端在配置文件中的键名：`cpu` / `cuda` / `coreml`
+const KEY_SERVICE_PROVIDER: &str = "service_provider";
 /// 开机自启在配置文件中的键名
 const KEY_AUTO_START: &str = "auto_start";
 /// 记住窗口状态在配置文件中的键名
@@ -119,6 +129,71 @@ impl AsrLanguage {
     pub fn parse(raw: &str) -> Self {
         match raw.trim() {
             "auto" => Self::Auto,
+            _ => Self::default(),
+        }
+    }
+}
+
+/// 服务模式：落盘值为 `snake_case` 字符串，未知值回落内部服务
+///
+/// 内部模式用应用内嵌的 `sherpa-onnx` 识别器；外部模式拉起用户指定的
+/// `sherpa-onnx-offline-websocket-server` 进程并经本机回环转写（GPU 加速走这里）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceMode {
+    /// 应用内嵌识别器：默认选项，开箱即用
+    #[default]
+    Internal,
+    /// 用户本机的外部服务进程：需另配程序路径与端口
+    External,
+}
+
+impl ServiceMode {
+    /// 取对应的落盘标签，与 `serde` 值一致，前后端契约共用
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Internal => "internal",
+            Self::External => "external",
+        }
+    }
+
+    /// 容错解析服务模式标签：未知或空标签一律回落内部服务
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim() {
+            "external" => Self::External,
+            _ => Self::default(),
+        }
+    }
+}
+
+/// 外部服务的推理后端：落盘值为小写字符串，未知值回落 CPU
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceProvider {
+    /// CPU 推理：默认选项，全平台可用
+    #[default]
+    Cpu,
+    /// NVIDIA CUDA 推理：需外部服务程序自带 CUDA 支持
+    Cuda,
+    /// Apple `CoreML` 推理：仅 macOS 有效
+    Coreml,
+}
+
+impl ServiceProvider {
+    /// 取对应的落盘标签，与 `serde` 值一致，前后端契约共用
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Cuda => "cuda",
+            Self::Coreml => "coreml",
+        }
+    }
+
+    /// 容错解析推理后端标签：未知或空标签一律回落 CPU
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim() {
+            "cuda" => Self::Cuda,
+            "coreml" => Self::Coreml,
             _ => Self::default(),
         }
     }
@@ -303,6 +378,26 @@ pub struct Config {
     #[serde(deserialize_with = "de_asr_language")]
     #[specta(type = AsrLanguage)]
     pub asr_language: AsrLanguage,
+    /// 服务模式：缺失、类型不符或无法识别时回落内部服务，绝不让整包解析失败
+    #[serde(deserialize_with = "de_service_mode")]
+    #[specta(type = ServiceMode)]
+    pub service_mode: ServiceMode,
+    /// 外部服务程序路径：缺失或类型不符时回落空串（未指定）
+    #[serde(deserialize_with = "de_service_server_path")]
+    #[specta(type = String)]
+    pub service_server_path: String,
+    /// 外部服务端口：缺失、类型不符或非法时回落默认端口
+    #[serde(deserialize_with = "de_service_port")]
+    #[specta(type = u16)]
+    pub service_port: u16,
+    /// 外部服务线程数：`0` 表示跟随内部模式（可用核数减一）；缺失或脏值回落 `0`
+    #[serde(deserialize_with = "de_service_threads")]
+    #[specta(type = u32)]
+    pub service_threads: u32,
+    /// 外部服务推理后端：缺失、类型不符或无法识别时回落 CPU
+    #[serde(deserialize_with = "de_service_provider")]
+    #[specta(type = ServiceProvider)]
+    pub service_provider: ServiceProvider,
 }
 
 impl Default for Config {
@@ -331,8 +426,18 @@ impl Default for Config {
             pinyin_correction_apply_recognition: default_pinyin_correction_apply(),
             pinyin_correction_apply_directive: default_pinyin_correction_apply(),
             asr_language: AsrLanguage::default(),
+            service_mode: ServiceMode::default(),
+            service_server_path: String::new(),
+            service_port: default_service_port(),
+            service_threads: 0,
+            service_provider: ServiceProvider::default(),
         }
     }
+}
+
+/// 外部服务端口的默认值：与 `sherpa-onnx-offline-websocket-server` 的 `--port` 默认一致
+const fn default_service_port() -> u16 {
+    6006
 }
 
 /// 拼音纠正应用范围开关的默认值：启用后默认识别与指令都生效
@@ -398,6 +503,16 @@ pub struct ConfigPatch {
     pub pinyin_correction_apply_directive: Option<bool>,
     /// 识别语言（自动 / 中文）
     pub asr_language: Option<AsrLanguage>,
+    /// 服务模式（内部 / 本机外部服务）
+    pub service_mode: Option<ServiceMode>,
+    /// 外部服务程序路径（空串表示未指定）
+    pub service_server_path: Option<String>,
+    /// 外部服务端口
+    pub service_port: Option<u16>,
+    /// 外部服务线程数（`0` 表示自动）
+    pub service_threads: Option<u32>,
+    /// 外部服务推理后端
+    pub service_provider: Option<ServiceProvider>,
 }
 
 /// 容错解析界面语言：经 `serde_json::Value` 中转，非字符串或未知标签一律回落默认值
@@ -415,7 +530,97 @@ where
     D: Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
-    Ok(value.as_str().map_or_default(AsrLanguage::parse))
+    Ok(parse_asr_language(Some(&value)))
+}
+
+/// 识别语言标签的唯一转换口径：缺失、非字符串或未知标签一律回落默认（中文）
+fn parse_asr_language(value: Option<&Value>) -> AsrLanguage {
+    value
+        .and_then(Value::as_str)
+        .map_or_else(AsrLanguage::default, AsrLanguage::parse)
+}
+
+/// 容错解析服务模式：经 `serde_json::Value` 中转，非字符串或未知标签一律回落内部服务
+fn de_service_mode<'de, D>(deserializer: D) -> Result<ServiceMode, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_service_mode(Some(&value)))
+}
+
+/// 服务模式标签的唯一转换口径：缺失、非字符串或未知标签一律回落内部服务
+fn parse_service_mode(value: Option<&Value>) -> ServiceMode {
+    value
+        .and_then(Value::as_str)
+        .map_or_else(ServiceMode::default, ServiceMode::parse)
+}
+
+/// 容错解析外部服务程序路径：经 `serde_json::Value` 中转，非字符串一律回落空串
+fn de_service_server_path<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_service_server_path(Some(&value)))
+}
+
+/// 服务程序路径的唯一转换口径：缺失或非字符串回落空串，其余 trim 后原样保留
+fn parse_service_server_path(value: Option<&Value>) -> String {
+    value
+        .and_then(Value::as_str)
+        .map_or_default(|raw| raw.trim().to_owned())
+}
+
+/// 容错解析外部服务端口：经 `serde_json::Value` 中转，非 `u16` 或 `0` 一律回落默认端口
+fn de_service_port<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_service_port(Some(&value)))
+}
+
+/// 服务端口的唯一转换口径：缺失、非数字、超 `u16` 范围或 `0` 一律回落默认端口
+fn parse_service_port(value: Option<&Value>) -> u16 {
+    value
+        .and_then(Value::as_u64)
+        .and_then(|raw| u16::try_from(raw).ok())
+        .filter(|port| *port != 0)
+        .unwrap_or_else(default_service_port)
+}
+
+/// 容错解析外部服务线程数：经 `serde_json::Value` 中转，非数字一律回落 `0`（自动）
+fn de_service_threads<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_service_threads(Some(&value)))
+}
+
+/// 服务线程数的唯一转换口径：缺失、非数字或超 `u32` 范围一律回落 `0`（自动）
+fn parse_service_threads(value: Option<&Value>) -> u32 {
+    value
+        .and_then(Value::as_u64)
+        .and_then(|raw| u32::try_from(raw).ok())
+        .unwrap_or_default()
+}
+
+/// 容错解析外部服务推理后端：经 `serde_json::Value` 中转，非字符串或未知标签一律回落 CPU
+fn de_service_provider<'de, D>(deserializer: D) -> Result<ServiceProvider, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_service_provider(Some(&value)))
+}
+
+/// 推理后端标签的唯一转换口径：缺失、非字符串或未知标签一律回落 CPU
+fn parse_service_provider(value: Option<&Value>) -> ServiceProvider {
+    value
+        .and_then(Value::as_str)
+        .map_or_else(ServiceProvider::default, ServiceProvider::parse)
 }
 
 /// 容错解析开机自启：经 `serde_json::Value` 中转，非布尔值一律回落默认值（`false`）
@@ -779,6 +984,11 @@ pub fn load_config(app: &tauri::AppHandle) -> Config {
         pinyin_correction_apply_recognition: load_pinyin_correction_apply_recognition(app),
         pinyin_correction_apply_directive: load_pinyin_correction_apply_directive(app),
         asr_language: load_asr_language(app),
+        service_mode: load_service_mode(app),
+        service_server_path: load_service_server_path(app),
+        service_port: load_service_port(app),
+        service_threads: load_service_threads(app),
+        service_provider: load_service_provider(app),
         schema_version: load_schema_version(app),
     }
 }
@@ -792,11 +1002,7 @@ fn load_locale(app: &tauri::AppHandle) -> Option<Locale> {
 ///
 /// 服务启动热路径走此单键读取，不拉全量 `load_config`
 pub fn load_asr_language(app: &tauri::AppHandle) -> AsrLanguage {
-    read_key(app, KEY_ASR_LANGUAGE).map_or_else(AsrLanguage::default, |value| {
-        value
-            .as_str()
-            .map_or_else(AsrLanguage::default, AsrLanguage::parse)
-    })
+    parse_asr_language(read_key(app, KEY_ASR_LANGUAGE).as_ref())
 }
 
 /// 读取持久化的开机自启；未设置或类型不符时回落默认值（`false`）
@@ -953,6 +1159,33 @@ pub fn load_pinyin_correction_apply_directive(app: &tauri::AppHandle) -> bool {
         .unwrap_or_else(default_pinyin_correction_apply)
 }
 
+/// 读取持久化的服务模式；未设置、类型不符或无法识别时回落内部服务
+///
+/// 服务启动热路径走此单键读取，不拉全量 `load_config`
+pub fn load_service_mode(app: &tauri::AppHandle) -> ServiceMode {
+    parse_service_mode(read_key(app, KEY_SERVICE_MODE).as_ref())
+}
+
+/// 读取持久化的外部服务程序路径；未设置或类型不符时回落空串（未指定）
+pub fn load_service_server_path(app: &tauri::AppHandle) -> String {
+    parse_service_server_path(read_key(app, KEY_SERVICE_SERVER_PATH).as_ref())
+}
+
+/// 读取持久化的外部服务端口；未设置、类型不符或非法时回落默认端口
+pub fn load_service_port(app: &tauri::AppHandle) -> u16 {
+    parse_service_port(read_key(app, KEY_SERVICE_PORT).as_ref())
+}
+
+/// 读取持久化的外部服务线程数；未设置或类型不符时回落 `0`（自动）
+pub fn load_service_threads(app: &tauri::AppHandle) -> u32 {
+    parse_service_threads(read_key(app, KEY_SERVICE_THREADS).as_ref())
+}
+
+/// 读取持久化的外部服务推理后端；未设置、类型不符或无法识别时回落 CPU
+pub fn load_service_provider(app: &tauri::AppHandle) -> ServiceProvider {
+    parse_service_provider(read_key(app, KEY_SERVICE_PROVIDER).as_ref())
+}
+
 /// 读取持久化的配置结构版本；未设置或类型不符时回落 `0`
 fn load_schema_version(app: &tauri::AppHandle) -> u32 {
     parse_schema_version(read_key(app, KEY_SCHEMA_VERSION).as_ref())
@@ -1106,6 +1339,11 @@ fn reset_patch() -> ConfigPatch {
         pinyin_correction_apply_recognition: Some(default_pinyin_correction_apply()),
         pinyin_correction_apply_directive: Some(default_pinyin_correction_apply()),
         asr_language: Some(AsrLanguage::default()),
+        service_mode: Some(ServiceMode::default()),
+        service_server_path: Some(String::new()),
+        service_port: Some(default_service_port()),
+        service_threads: Some(0),
+        service_provider: Some(ServiceProvider::default()),
     }
 }
 
@@ -1259,10 +1497,35 @@ fn write_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
         ));
     }
     entries.extend(write_pinyin_correction_entries(patch));
+    entries.extend(write_asr_service_entries(patch));
+    entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
+    entries
+}
+
+/// 服务（含识别语言）补丁对应的待写键值对：`write_entries` 的子清单，保持主清单在行数门禁内
+fn write_asr_service_entries(patch: &ConfigPatch) -> Vec<(&'static str, Value)> {
+    let mut entries = Vec::new();
     if let Some(asr_language) = patch.asr_language {
         entries.push((KEY_ASR_LANGUAGE, Value::from(asr_language.as_str())));
     }
-    entries.push((KEY_SCHEMA_VERSION, Value::from(CURRENT_SCHEMA_VERSION)));
+    if let Some(service_mode) = patch.service_mode {
+        entries.push((KEY_SERVICE_MODE, Value::from(service_mode.as_str())));
+    }
+    if let Some(service_server_path) = patch.service_server_path.as_deref() {
+        entries.push((
+            KEY_SERVICE_SERVER_PATH,
+            Value::from(service_server_path.trim()),
+        ));
+    }
+    if let Some(service_port) = patch.service_port {
+        entries.push((KEY_SERVICE_PORT, Value::from(service_port)));
+    }
+    if let Some(service_threads) = patch.service_threads {
+        entries.push((KEY_SERVICE_THREADS, Value::from(service_threads)));
+    }
+    if let Some(service_provider) = patch.service_provider {
+        entries.push((KEY_SERVICE_PROVIDER, Value::from(service_provider.as_str())));
+    }
     entries
 }
 
@@ -1479,6 +1742,11 @@ mod tests {
         assert!(config.pinyin_correction_apply_recognition);
         assert!(config.pinyin_correction_apply_directive);
         assert_eq!(config.asr_language, AsrLanguage::Chinese);
+        assert_eq!(config.service_mode, ServiceMode::Internal);
+        assert_eq!(config.service_server_path, "");
+        assert_eq!(config.service_port, 6006);
+        assert_eq!(config.service_threads, 0);
+        assert_eq!(config.service_provider, ServiceProvider::Cpu);
         assert_eq!(config.schema_version, 0);
     }
 
@@ -1510,12 +1778,17 @@ mod tests {
             pinyin_correction_apply_recognition: true,
             pinyin_correction_apply_directive: false,
             asr_language: AsrLanguage::Auto,
+            service_mode: ServiceMode::External,
+            service_server_path: String::from("/opt/sherpa-onnx/bin/server"),
+            service_port: 7006,
+            service_threads: 4,
+            service_provider: ServiceProvider::Cuda,
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         let raw = serde_json::to_value(&config).expect("config serializes");
         assert_eq!(
             raw,
-            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "shortcut_paste_shortcut": "ctrl_shift_v", "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "pinyin_correction_enabled": true, "pinyin_correction_rules": ["z_zh", "n_l"], "pinyin_correction_apply_recognition": true, "pinyin_correction_apply_directive": false, "asr_language": "auto", "schema_version": 2 })
+            json!({ "locale": "zh-CN", "auto_start": true, "remember_window": true, "auto_check_update": true, "tray_enabled": false, "close_behavior": "minimize_to_tray", "shortcut_quick_open": "Ctrl+Shift+O", "shortcut_voice": "Ctrl+Alt+V", "shortcut_quick_lexicon": "Ctrl+Alt+Q", "shortcut_directive": "Ctrl+Alt+D", "quick_lexicon_group": "g-work", "shortcut_output": "paste", "shortcut_paste_restore": true, "shortcut_paste_shortcut": "ctrl_shift_v", "custom_model_dirs": { "sense-voice-int8": "/models/custom" }, "active_lexicon_groups": ["work", "dialect"], "strip_trailing_punct": "，。！", "pinyin_correction_enabled": true, "pinyin_correction_rules": ["z_zh", "n_l"], "pinyin_correction_apply_recognition": true, "pinyin_correction_apply_directive": false, "asr_language": "auto", "service_mode": "external", "service_server_path": "/opt/sherpa-onnx/bin/server", "service_port": 7006, "service_threads": 4, "service_provider": "cuda", "schema_version": 2 })
         );
         let back: Config = serde_json::from_value(raw).expect("config deserializes");
         assert_eq!(back, config);
@@ -2068,6 +2341,41 @@ mod tests {
     }
 
     #[test]
+    fn patch_parses_service_keys() {
+        let absent: ConfigPatch = serde_json::from_value(json!({})).expect("patch deserializes");
+        assert_eq!(absent.service_mode, None);
+        assert_eq!(absent.service_server_path, None);
+        assert_eq!(absent.service_port, None);
+        assert_eq!(absent.service_threads, None);
+        assert_eq!(absent.service_provider, None);
+
+        let mode: ConfigPatch =
+            serde_json::from_value(json!({ "service_mode": "external" })).expect("mode parsed");
+        assert_eq!(mode.service_mode, Some(ServiceMode::External));
+
+        let server_path: ConfigPatch = serde_json::from_value(
+            json!({ "service_server_path": "  /opt/sherpa-onnx/bin/server  " }),
+        )
+        .expect("server path parsed");
+        assert_eq!(
+            server_path.service_server_path,
+            Some(String::from("  /opt/sherpa-onnx/bin/server  "))
+        );
+
+        let port: ConfigPatch =
+            serde_json::from_value(json!({ "service_port": 7006 })).expect("port parsed");
+        assert_eq!(port.service_port, Some(7006));
+
+        let threads: ConfigPatch =
+            serde_json::from_value(json!({ "service_threads": 4 })).expect("threads parsed");
+        assert_eq!(threads.service_threads, Some(4));
+
+        let provider: ConfigPatch =
+            serde_json::from_value(json!({ "service_provider": "cuda" })).expect("provider parsed");
+        assert_eq!(provider.service_provider, Some(ServiceProvider::Cuda));
+    }
+
+    #[test]
     fn patch_writes_only_submitted_keys() {
         let untouched = write_entries(&ConfigPatch::default());
         assert_eq!(
@@ -2102,6 +2410,11 @@ mod tests {
             pinyin_correction_apply_recognition: Some(true),
             pinyin_correction_apply_directive: Some(false),
             asr_language: Some(AsrLanguage::Auto),
+            service_mode: Some(ServiceMode::External),
+            service_server_path: Some(String::from("/opt/sherpa-onnx/bin/server")),
+            service_port: Some(7006),
+            service_threads: Some(4),
+            service_provider: Some(ServiceProvider::Cuda),
         });
         assert_eq!(
             keys_of(&patched),
@@ -2128,6 +2441,11 @@ mod tests {
                 KEY_PINYIN_CORRECTION_APPLY_RECOGNITION,
                 KEY_PINYIN_CORRECTION_APPLY_DIRECTIVE,
                 KEY_ASR_LANGUAGE,
+                KEY_SERVICE_MODE,
+                KEY_SERVICE_SERVER_PATH,
+                KEY_SERVICE_PORT,
+                KEY_SERVICE_THREADS,
+                KEY_SERVICE_PROVIDER,
                 KEY_SCHEMA_VERSION
             ]
         );
@@ -2153,6 +2471,11 @@ mod tests {
         assert_eq!(patched[19].1, json!(true));
         assert_eq!(patched[20].1, json!(false));
         assert_eq!(patched[21].1, json!("auto"));
+        assert_eq!(patched[22].1, json!("external"));
+        assert_eq!(patched[23].1, json!("/opt/sherpa-onnx/bin/server"));
+        assert_eq!(patched[24].1, json!(7006));
+        assert_eq!(patched[25].1, json!(4));
+        assert_eq!(patched[26].1, json!("cuda"));
     }
 
     #[test]
@@ -2169,6 +2492,122 @@ mod tests {
         let wrong_type: Config =
             serde_json::from_value(json!({ "asr_language": 1 })).expect("config parsed");
         assert_eq!(wrong_type.asr_language, AsrLanguage::Chinese);
+    }
+
+    #[test]
+    fn service_mode_round_trips_through_as_str() {
+        for mode in [ServiceMode::Internal, ServiceMode::External] {
+            assert_eq!(ServiceMode::parse(mode.as_str()), mode);
+        }
+    }
+
+    #[test]
+    fn service_provider_round_trips_through_as_str() {
+        for provider in [
+            ServiceProvider::Cpu,
+            ServiceProvider::Cuda,
+            ServiceProvider::Coreml,
+        ] {
+            assert_eq!(ServiceProvider::parse(provider.as_str()), provider);
+        }
+    }
+
+    #[test]
+    fn service_mode_falls_back_to_internal() {
+        for (raw, expected) in [
+            (json!({}), ServiceMode::Internal),
+            (json!({ "service_mode": "internal" }), ServiceMode::Internal),
+            (json!({ "service_mode": "external" }), ServiceMode::External),
+            (
+                json!({ "service_mode": "  external  " }),
+                ServiceMode::External,
+            ),
+            (json!({ "service_mode": "remote" }), ServiceMode::Internal),
+            (json!({ "service_mode": "" }), ServiceMode::Internal),
+            (json!({ "service_mode": 5 }), ServiceMode::Internal),
+            (json!({ "service_mode": null }), ServiceMode::Internal),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("config parsed");
+            assert_eq!(config.service_mode, expected);
+        }
+    }
+
+    #[test]
+    fn service_server_path_falls_back_to_empty() {
+        for (raw, expected) in [
+            (json!({}), ""),
+            (
+                json!({ "service_server_path": "/opt/sherpa-onnx/bin/server" }),
+                "/opt/sherpa-onnx/bin/server",
+            ),
+            (
+                json!({ "service_server_path": "  /opt/sherpa-onnx/bin/server  " }),
+                "/opt/sherpa-onnx/bin/server",
+            ),
+            (json!({ "service_server_path": "" }), ""),
+            (json!({ "service_server_path": 5 }), ""),
+            (json!({ "service_server_path": null }), ""),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("config parsed");
+            assert_eq!(config.service_server_path, expected);
+        }
+    }
+
+    #[test]
+    fn service_port_falls_back_to_default() {
+        for (raw, expected) in [
+            (json!({}), 6006_u16),
+            (json!({ "service_port": 7006 }), 7006),
+            (json!({ "service_port": 1 }), 1),
+            (json!({ "service_port": 65535 }), 65535),
+            (json!({ "service_port": 0 }), 6006),
+            (json!({ "service_port": 65536 }), 6006),
+            (json!({ "service_port": -1 }), 6006),
+            (json!({ "service_port": "6006" }), 6006),
+            (json!({ "service_port": null }), 6006),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("config parsed");
+            assert_eq!(config.service_port, expected);
+        }
+    }
+
+    #[test]
+    fn service_threads_falls_back_to_auto() {
+        for (raw, expected) in [
+            (json!({}), 0_u32),
+            (json!({ "service_threads": 4 }), 4),
+            (json!({ "service_threads": 0 }), 0),
+            (json!({ "service_threads": -1 }), 0),
+            (json!({ "service_threads": "4" }), 0),
+            (json!({ "service_threads": null }), 0),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("config parsed");
+            assert_eq!(config.service_threads, expected);
+        }
+    }
+
+    #[test]
+    fn service_provider_falls_back_to_cpu() {
+        for (raw, expected) in [
+            (json!({}), ServiceProvider::Cpu),
+            (json!({ "service_provider": "cpu" }), ServiceProvider::Cpu),
+            (json!({ "service_provider": "cuda" }), ServiceProvider::Cuda),
+            (
+                json!({ "service_provider": "coreml" }),
+                ServiceProvider::Coreml,
+            ),
+            (
+                json!({ "service_provider": "  cuda  " }),
+                ServiceProvider::Cuda,
+            ),
+            (json!({ "service_provider": "rocm" }), ServiceProvider::Cpu),
+            (json!({ "service_provider": "" }), ServiceProvider::Cpu),
+            (json!({ "service_provider": 5 }), ServiceProvider::Cpu),
+            (json!({ "service_provider": null }), ServiceProvider::Cpu),
+        ] {
+            let config: Config = serde_json::from_value(raw).expect("config parsed");
+            assert_eq!(config.service_provider, expected);
+        }
     }
 
     #[test]
@@ -2197,6 +2636,11 @@ mod tests {
             pinyin_correction_apply_recognition: Some(true),
             pinyin_correction_apply_directive: Some(true),
             asr_language: Some(AsrLanguage::Auto),
+            service_mode: Some(ServiceMode::External),
+            service_server_path: Some(String::from("/opt/sherpa-onnx/bin/server")),
+            service_port: Some(7006),
+            service_threads: Some(4),
+            service_provider: Some(ServiceProvider::Cuda),
         };
         let entries = write_entries(&reset_patch());
         assert_eq!(
@@ -2226,7 +2670,12 @@ mod tests {
         assert_eq!(entries[19].1, json!(true));
         assert_eq!(entries[20].1, json!(true));
         assert_eq!(entries[21].1, json!(AsrLanguage::default().as_str()));
-        assert_eq!(entries[22].1, json!(CURRENT_SCHEMA_VERSION));
+        assert_eq!(entries[22].1, json!(ServiceMode::default().as_str()));
+        assert_eq!(entries[23].1, json!(""));
+        assert_eq!(entries[24].1, json!(default_service_port()));
+        assert_eq!(entries[25].1, json!(0));
+        assert_eq!(entries[26].1, json!(ServiceProvider::default().as_str()));
+        assert_eq!(entries[27].1, json!(CURRENT_SCHEMA_VERSION));
     }
 
     #[test]
@@ -2254,6 +2703,11 @@ mod tests {
             pinyin_correction_apply_recognition: default_pinyin_correction_apply(),
             pinyin_correction_apply_directive: default_pinyin_correction_apply(),
             asr_language: AsrLanguage::default(),
+            service_mode: ServiceMode::default(),
+            service_server_path: String::new(),
+            service_port: default_service_port(),
+            service_threads: 0,
+            service_provider: ServiceProvider::default(),
             schema_version: CURRENT_SCHEMA_VERSION,
         };
         assert!(!needs_locale_apply(&base, &base));

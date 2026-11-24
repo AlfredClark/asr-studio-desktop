@@ -51,7 +51,7 @@ vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 beforeEach(() => {
   vi.clearAllMocks();
   cleanup();
-  serviceState.status = { state: "running", modelId: "m", loadMs: 1 };
+  serviceState.status = { state: "running", modelId: "m", loadMs: 1, backend: "internal" };
   serviceState.selectedModel = "m";
   serviceState.selectedDevice = "d";
   serviceState.recording = true;

@@ -346,7 +346,7 @@ describe("识别服务状态", () => {
 
   it("运行中切模型自动停旧启新", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     const other = { ...model, id: "qwen3-0.6b-int8" };
 
     await selectModel(other.id);
@@ -367,7 +367,7 @@ describe("识别服务状态", () => {
 
   it("运行中切模型失败回滚选中", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedModel = model.id;
     mocked.startService.mockReturnValue(
       fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
@@ -400,7 +400,7 @@ describe("识别服务状态", () => {
 
   it("完整测试链路回写结果", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
 
     await startTestRecording();
@@ -428,7 +428,7 @@ describe("识别服务状态", () => {
 
   it("转写失败时报错且不回写结果", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
     mocked.transcribeFile.mockReturnValue(
       fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
@@ -444,7 +444,7 @@ describe("识别服务状态", () => {
 
   it("转写失败时不记入会话历史", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
     mocked.transcribeFile.mockReturnValue(
       fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,
@@ -458,7 +458,7 @@ describe("识别服务状态", () => {
 
   it("转写忙时提示稍候而非报失败", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
     mocked.transcribeFile.mockReturnValue(
       fakeCommand({
@@ -491,7 +491,7 @@ describe("识别服务状态", () => {
 
   it("会话历史超限截尾，最新在前", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
     serviceState.history = Array.from({ length: 100 }, (_, index) => ({
       text: `旧${index}`,
@@ -567,7 +567,7 @@ describe("识别服务状态", () => {
 
   it("快捷键热路径只同步状态不拉模型设备清单", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.models = [model];
     serviceState.selectedModel = model.id;
     serviceState.selectedDevice = device.id;
@@ -593,7 +593,7 @@ describe("识别服务状态", () => {
 
   it("快捷键录制中按第二次停止转写并输出", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
     serviceState.recording = true;
 
@@ -610,7 +610,7 @@ describe("识别服务状态", () => {
 
   it("快捷键降级输出时提示用户", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
     serviceState.recording = true;
     mocked.outputText.mockReturnValue(
@@ -629,7 +629,7 @@ describe("识别服务状态", () => {
 
   it("无可输入焦点时提示已存入剪贴板", async () => {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
     serviceState.recording = true;
     mocked.outputText.mockReturnValue(
@@ -729,7 +729,7 @@ describe("识别记录筛选", () => {
 describe("快捷词库触发", () => {
   function runningService(): void {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
   }
 
   function workLexicon(): void {
@@ -791,7 +791,7 @@ describe("快捷词库触发", () => {
   });
 
   it("服务未运行时直接忽略", async () => {
-    serviceState.status = { state: "stopped", modelId: null, loadMs: null };
+    serviceState.status = { state: "stopped", modelId: null, loadMs: null, backend: "internal" };
 
     await handleQuickLexiconTrigger();
 
@@ -802,7 +802,7 @@ describe("快捷词库触发", () => {
 describe("指令触发", () => {
   function runningRecording(): void {
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedDevice = device.id;
     serviceState.recording = true;
   }
@@ -884,7 +884,7 @@ describe("指令触发", () => {
   });
 
   it("服务未运行时直接忽略", async () => {
-    serviceState.status = { state: "stopped", modelId: null, loadMs: null };
+    serviceState.status = { state: "stopped", modelId: null, loadMs: null, backend: "internal" };
 
     await handleDirectiveTrigger();
 
@@ -965,7 +965,7 @@ describe("选中持久化", () => {
   it("切模型失败回滚落盘", async () => {
     const { setItem } = stubStorage();
     runningStatus();
-    serviceState.status = { state: "running", modelId: model.id, loadMs: 800 };
+    serviceState.status = { state: "running", modelId: model.id, loadMs: 800, backend: "internal" };
     serviceState.selectedModel = model.id;
     mocked.startService.mockReturnValue(
       fakeCommand({ status: "error", error: { kind: "Internal", message: "boom" } }) as never,

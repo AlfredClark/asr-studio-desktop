@@ -10,11 +10,13 @@ pub fn get_system_info() -> CommandResult<SystemInfo> {
     Ok(system::gather_system_info())
 }
 
-/// 真退出应用进程；调用后进程结束，结果体永不可达（按 `CommandResult<()>` 保持命令类型统一）
+/// 真退出应用进程；先停识别服务（外部服务进程随之查杀，不留孤儿），再退出；
+/// 调用后进程结束，结果体永不可达（按 `CommandResult<()>` 保持命令类型统一）
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::needless_pass_by_value)]
 pub fn quit_app(app: tauri::AppHandle) -> CommandResult<()> {
+    crate::features::asr::stop(&app);
     system::quit_app(&app);
     Ok(())
 }

@@ -1,6 +1,7 @@
 //! 通用能力与跨层共享类型：`types`（命令错误 / 结果）、`locale`（语言枚举）、
 //! `config`（应用配置持久化）、`deep_link`（深链 URL 提取纯函数，供单实例插件复用）、
-//! `specta`（绑定构建与导出）、`system`（panic 钩子与环境兼容）、
+//! `specta`（绑定构建与导出）、`supervised_child`（受管外部子进程，退出兜底查杀）、
+//! `system`（panic 钩子与环境兼容）、
 //! `tray`（系统托盘，仅桌面端）、`updater`（更新检查与安装，应用级基础设施）、
 //! `shortcut`（全局快捷键注册，仅桌面端）。
 //!
@@ -16,6 +17,7 @@ pub mod locale;
 pub mod pinyin_correction;
 pub mod shortcut;
 pub mod specta;
+pub mod supervised_child;
 pub mod system;
 pub mod tray;
 pub mod types;

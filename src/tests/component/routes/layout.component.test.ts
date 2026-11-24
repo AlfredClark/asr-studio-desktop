@@ -163,6 +163,11 @@ describe("根布局启动水合", () => {
     shortcut_directive: "",
     quick_lexicon_group: "global",
     asr_language: "chinese",
+    service_mode: "internal",
+    service_server_path: "",
+    service_port: 6006,
+    service_threads: 0,
+    service_provider: "cpu",
     schema_version: 1,
   };
 

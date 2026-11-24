@@ -1,5 +1,6 @@
 <script lang="ts">
-  // 设置页组装：滚动壳 + 标题 + 通用/外观/快捷键三分组 + 底部恢复默认按钮，无业务逻辑。
+  // 设置页组装：滚动壳 + 标题 + 通用/外观/服务/快捷键四分组 + 底部恢复默认按钮，无业务逻辑。
+  import ServiceSettings from "./_components/service-settings.svelte";
   import { ScrollArea } from "#components/shadcn-svelte/scroll-area";
   import { m } from "#libs/i18n/paraglide/messages";
   import AppearanceSettings from "./_components/appearance-settings.svelte";
@@ -15,6 +16,7 @@
 
     <GeneralSettings />
     <AppearanceSettings />
+    <ServiceSettings />
     <ShortcutSettings />
     <ResetSettings />
   </div>

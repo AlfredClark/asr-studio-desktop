@@ -8,6 +8,7 @@ import type {
   ModelEntry,
   OutputReport,
   OutputVia,
+  ServiceBackendKind,
   TextSegment,
 } from "#libs/commands/types";
 import { configValue } from "#libs/hooks/config.svelte";
@@ -30,6 +31,8 @@ export interface ServiceSnapshot {
   modelId: string | null;
   /** 加载耗时毫秒 */
   loadMs: number | null;
+  /** 当前后端；停止态回落内部服务，仅展示用 */
+  backend: ServiceBackendKind;
 }
 
 /** 单次识别测试的结果回显 */
@@ -220,6 +223,7 @@ async function syncStatus(): Promise<void> {
         state: status.state,
         modelId: status.model_id,
         loadMs: status.load_ms,
+        backend: status.backend,
       };
     })
     .failed((failure) => {

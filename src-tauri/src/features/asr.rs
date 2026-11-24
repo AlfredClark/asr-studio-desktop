@@ -21,6 +21,16 @@ pub enum ServiceState {
     Running,
 }
 
+/// 服务后端种类：状态快照用，前端据此渲染徽标
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceBackendKind {
+    /// 应用内嵌识别器
+    Internal,
+    /// 用户本机的外部服务进程
+    External,
+}
+
 /// 服务状态快照：前端据此渲染徽标与按钮可用性
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ServiceStatus {
@@ -32,6 +42,8 @@ pub struct ServiceStatus {
     pub display_name: Option<String>,
     /// 模型加载耗时毫秒（仅运行中有效）
     pub load_ms: Option<u32>,
+    /// 当前后端；停止态回落内部服务，仅展示用
+    pub backend: ServiceBackendKind,
 }
 
 /// 文件转写结果：文本 + 音频时长 + 推理耗时 + 词库替换片段，前端直接回显
@@ -47,24 +59,42 @@ pub struct TranscribeResult {
     pub segments: Vec<crate::features::lexicon::TextSegment>,
 }
 
-/// 服务单例：`None` 表示停止；转写时取出识别器独占使用后归还
+/// 服务后端：内嵌识别器常驻本进程内存，外部进程跑在本机回环上（句柄由
+/// `cores::supervised_child` 单槽位托管，停止服务与退出进程两路都会查杀）
+enum ServiceBackend {
+    /// 应用内嵌 `sherpa-onnx` 识别器
+    Internal {
+        /// 独占使用时被取出，转写结束归还；`None` 且未忙表示正在加载
+        recognizer: Option<sherpa_onnx::OfflineRecognizer>,
+        /// `Qwen3-ASR` 的按 stream 语言约束（其他模型族为 `None`，由识别器配置承载）
+        stream_language: Option<&'static str>,
+    },
+    /// 用户本机的 `sherpa-onnx-offline-websocket-server` 进程
+    External {
+        /// 服务监听端口（本机回环）
+        port: u16,
+        /// 就绪前快照报 `Starting`，就绪后报 `Running`
+        ready: bool,
+    },
+}
+
+/// 服务单例：`None` 表示停止；内部模式转写时取出识别器独占使用后归还，
+/// 外部模式转写时占忙位后经 `ws` 取回文本。
 struct LoadedService {
     model_id: &'static str,
     display_name: &'static str,
     load_ms: u64,
-    recognizer: Option<sherpa_onnx::OfflineRecognizer>,
-    /// 是否有转写正在占用识别器（取出未归还）；`busy` 为真且识别器为空即“忙”，
-    /// 为假且识别器为空即“启动中占位”，两者前端提示不同
+    backend: ServiceBackend,
+    /// 是否有转写正在占用解码位；内部模式为“取出未归还”，外部模式为“占位中”，
+    /// 两种语义共用同一互斥，调用方提示口径一致
     busy: bool,
     /// 服务代际：每次 `start` 占位即领新号；停启交错时旧任务的归还/清理只认同代，
     /// 跨代写入一律丢弃（旧识别器不塞进新服务，新占位不被旧失败清掉）
     generation: u64,
-    /// Qwen3-ASR 的按 stream 语言约束（其他模型族为 `None`，由识别器配置承载）
-    stream_language: Option<&'static str>,
 }
 
 /// `SenseVoice` 的语言码：自动跟随音频；强制中文时标准款用 `zh`、粤语增强款保留 `yue`
-const fn sense_voice_language(
+pub const fn sense_voice_language(
     spec: &crate::features::models::ModelSpec,
     language: AsrLanguage,
 ) -> &'static str {
@@ -77,7 +107,7 @@ const fn sense_voice_language(
 
 /// `FunASR` Nano 的语言提示：拼进用户提示词“语音转写成{language}”；
 /// 自动模式不指定语言，保持上游默认“语音转写：”
-const fn funasr_nano_language(language: AsrLanguage) -> Option<&'static str> {
+pub const fn funasr_nano_language(language: AsrLanguage) -> Option<&'static str> {
     match language {
         AsrLanguage::Auto => None,
         AsrLanguage::Chinese => Some("中文"),
@@ -168,35 +198,137 @@ fn lock_service() -> std::sync::MutexGuard<'static, Option<LoadedService>> {
 
 /// 查询服务状态快照；纯内存读，不碰模型
 pub fn status() -> ServiceStatus {
-    match lock_service().as_ref() {
+    // 锁只在快照块内持有：字段全部转自有后再组装，不带锁返回
+    let current = {
+        let guard = lock_service();
+        guard.as_ref().map(|service| {
+            let backend = match &service.backend {
+                ServiceBackend::Internal { .. } => ServiceBackendKind::Internal,
+                ServiceBackend::External { .. } => ServiceBackendKind::External,
+            };
+            (
+                is_backend_ready(&service.backend),
+                backend,
+                service.model_id.to_owned(),
+                service.display_name.to_owned(),
+                u32::try_from(service.load_ms).unwrap_or(u32::MAX),
+            )
+        })
+    };
+    match current {
         None => ServiceStatus {
             state: ServiceState::Stopped,
             model_id: None,
             display_name: None,
             load_ms: None,
+            backend: ServiceBackendKind::Internal,
         },
-        Some(service) if service.recognizer.is_some() => ServiceStatus {
-            state: ServiceState::Running,
-            model_id: Some(service.model_id.to_owned()),
-            display_name: Some(service.display_name.to_owned()),
-            load_ms: Some(u32::try_from(service.load_ms).unwrap_or(u32::MAX)),
-        },
-        Some(service) => ServiceStatus {
-            state: ServiceState::Starting,
-            model_id: Some(service.model_id.to_owned()),
-            display_name: Some(service.display_name.to_owned()),
-            load_ms: None,
+        Some((running, backend, model_id, display_name, load_ms)) => ServiceStatus {
+            state: if running {
+                ServiceState::Running
+            } else {
+                ServiceState::Starting
+            },
+            model_id: Some(model_id),
+            display_name: Some(display_name),
+            load_ms: running.then_some(load_ms),
+            backend,
         },
     }
 }
 
-/// 启动服务：先校验模型就绪（未下载或不完整直接拒绝），再阻塞加载；
+/// 启动服务：按配置的服务模式分发；内部模式走内嵌识别器，外部模式拉起本机服务进程。
+/// （仅桌面端，移动端直接报错）
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()> {
+    if crate::cores::config::load_service_mode(app) == crate::cores::config::ServiceMode::External {
+        return start_external(app, model_id).await;
+    }
+    start_internal(app, model_id).await
+}
+
+/// 外部模式启动：校验程序路径与模型就绪，拉起服务进程并等到就绪；
+///
+/// 占位与代际语义与内部模式一致：并发启动互斥，失败清占位；成功后注册语音快捷键。
+/// （仅桌面端）
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+async fn start_external(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use tauri::Manager;
+
+    let spec = crate::features::models::find_spec(model_id).context("unknown model id")?;
+    let language = crate::cores::config::load_asr_language(app);
+    let program = crate::cores::config::load_service_server_path(app);
+    crate::features::external::validate_program(&program)?;
+    let port = crate::cores::config::load_service_port(app);
+    let threads =
+        crate::features::external::resolve_threads(crate::cores::config::load_service_threads(app));
+    let provider = crate::cores::config::load_service_provider(app);
+    let generation = next_generation();
+    {
+        // 单守卫内检查并占位：两路并发 `start` 不会同时通过检查（TOCTOU 已堵）
+        let mut guard = lock_service();
+        if guard.is_some() {
+            anyhow::bail!("service is already running or starting");
+        }
+        *guard = Some(LoadedService {
+            model_id: spec.id,
+            display_name: spec.display_name,
+            load_ms: 0,
+            backend: ServiceBackend::External { port, ready: false },
+            busy: false,
+            generation,
+        });
+    }
+    let report = crate::features::models::verify_model(app, spec.id)?;
+    if report.status != crate::features::models::ModelStatus::Ready {
+        clear_placeholder(generation);
+        anyhow::bail!("model is not ready, download and verify it first");
+    }
+    let dir = crate::features::models::resolve_model_dir(app, spec)?;
+    let log_path = app
+        .path()
+        .app_data_dir()
+        .context("failed to resolve app data dir")?
+        .join(crate::features::external::SERVER_LOG_FILE_NAME);
+    let args = crate::features::external::build_server_args(
+        spec, &dir, language, threads, provider, port, &log_path,
+    );
+    let started = std::time::Instant::now();
+    if let Err(err) =
+        crate::features::external::spawn_and_wait_ready(&program, &args, port, &log_path).await
+    {
+        clear_placeholder(generation);
+        return Err(err);
+    }
+    let load_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+    let mut guard = lock_service();
+    // 只认同代占位：期间被停止重起（新代际）则丢弃，不覆盖新服务
+    if let Some(service) = guard.as_mut()
+        && service.generation == generation
+    {
+        service.load_ms = load_ms;
+        if let ServiceBackend::External { ready, .. } = &mut service.backend {
+            *ready = true;
+        }
+    }
+    drop(guard);
+    // 启动成功才开始监听语音、快捷词库与指令快捷键：注册存量组合，失败只记日志，
+    // 前端在启动结算后经 `is_shortcut_registered` 自行提示换组合
+    crate::cores::shortcut::set_voice_active(app, true);
+    crate::cores::shortcut::set_quick_lexicon_active(app, true);
+    crate::cores::shortcut::set_directive_active(app, true);
+    Ok(())
+}
+
+/// 内部模式启动：先校验模型就绪（未下载或不完整直接拒绝），再阻塞加载；
 ///
 /// 同一时刻只允许一个服务：运行中或启动中重复调用直接报错，
 /// 换模型由调用方先停再启（前端自动串行）。
 /// （仅桌面端，移动端直接报错）
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()> {
+async fn start_internal(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()> {
     use anyhow::Context;
 
     let spec = crate::features::models::find_spec(model_id).context("unknown model id")?;
@@ -214,10 +346,12 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
             model_id: spec.id,
             display_name: spec.display_name,
             load_ms: 0,
-            recognizer: None,
+            backend: ServiceBackend::Internal {
+                recognizer: None,
+                stream_language: stream_language_for(spec.category, language),
+            },
             busy: false,
             generation,
-            stream_language: stream_language_for(spec.category, language),
         });
     }
     let report = crate::features::models::verify_model(app, spec.id)?;
@@ -263,7 +397,12 @@ pub async fn start(app: &tauri::AppHandle, model_id: &str) -> anyhow::Result<()>
         && service.generation == generation
     {
         service.load_ms = load_ms;
-        service.recognizer = Some(recognizer);
+        if let ServiceBackend::Internal {
+            recognizer: slot, ..
+        } = &mut service.backend
+        {
+            *slot = Some(recognizer);
+        }
     }
     drop(guard);
     // 启动成功才开始监听语音、快捷词库与指令快捷键：注册存量组合，失败只记日志，
@@ -280,11 +419,13 @@ pub async fn start(_app: &tauri::AppHandle, _model_id: &str) -> anyhow::Result<(
     Err(anyhow::anyhow!("asr service is not supported on mobile"))
 }
 
-/// 停止服务：释放识别器占用的内存并解绑语音、快捷词库与指令快捷键；未运行视为成功（幂等）
+/// 停止服务：释放识别器占用的内存（内部模式）或查杀外部服务进程，并解绑语音、
+/// 快捷词库与指令快捷键；未运行视为成功（幂等）
 ///
 /// 同时置位转写取消：等待中的转写提前以取消结算，不再空等解码完成
 pub fn stop(app: &tauri::AppHandle) {
     request_cancel_transcription();
+    crate::cores::supervised_child::kill_child();
     *lock_service() = None;
     crate::cores::shortcut::set_voice_active(app, false);
     crate::cores::shortcut::set_quick_lexicon_active(app, false);
@@ -369,7 +510,7 @@ fn build_recognizer_config(
 }
 
 /// 推理线程数：全核减一，给录音回调与界面留一个核；单核机回落 1
-fn num_cpus() -> i32 {
+pub fn num_cpus() -> i32 {
     std::thread::available_parallelism()
         .ok()
         .and_then(|count| i32::try_from(count.get()).ok())
@@ -384,31 +525,64 @@ fn transcribe_queue_lock() -> &'static tokio::sync::Mutex<()> {
     QUEUE.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-/// 取出识别器独占使用，连同代际号一起交调用方；服务未运行、启动中、
-/// 已有转写占用三种情况错误各异，调用方负责按代归还（`put_back_recognizer`），
-/// 超时分离回收同样按代归还
-fn take_recognizer() -> anyhow::Result<(u64, sherpa_onnx::OfflineRecognizer, Option<&'static str>)>
-{
-    use anyhow::Context;
+/// 解码位：内部模式独占识别器句柄，外部模式占忙位后经 `ws` 取文本；
+///
+/// 调用方负责按代归还（内部 `put_back_recognizer`、外部 `clear_busy`），
+/// 超时分离回收同样按代处理。
+enum DecodeSlot {
+    /// 内嵌识别器独占使用权，连同代际号与 `stream` 语言约束一起交调用方
+    Internal {
+        generation: u64,
+        recognizer: sherpa_onnx::OfflineRecognizer,
+        stream_language: Option<&'static str>,
+    },
+    /// 外部服务占位，连同代际号与回环端口一起交调用方
+    External { generation: u64, port: u16 },
+}
 
+/// 取出解码位：服务未运行、启动中、已有转写占用三种情况错误各异，
+///
+/// 与旧 `take_recognizer` 同口径（忙、启动中、未运行三态），前端提示不变
+fn take_decode_slot() -> anyhow::Result<DecodeSlot> {
     let mut guard = lock_service();
-    match guard.as_mut() {
+    let slot = match guard.as_mut() {
         None => anyhow::bail!("service is not running"),
-        Some(service) if service.recognizer.is_none() => {
-            if service.busy {
-                anyhow::bail!(TRANSCRIBE_BUSY_MESSAGE);
+        Some(service) => match &mut service.backend {
+            ServiceBackend::Internal {
+                recognizer,
+                stream_language,
+            } => {
+                if let Some(taken) = recognizer.take() {
+                    service.busy = true;
+                    DecodeSlot::Internal {
+                        generation: service.generation,
+                        recognizer: taken,
+                        stream_language: *stream_language,
+                    }
+                } else {
+                    if service.busy {
+                        anyhow::bail!(TRANSCRIBE_BUSY_MESSAGE);
+                    }
+                    anyhow::bail!(SERVICE_STARTING_MESSAGE);
+                }
             }
-            anyhow::bail!(SERVICE_STARTING_MESSAGE);
-        }
-        Some(service) => {
-            let recognizer = service
-                .recognizer
-                .take()
-                .context("service is not running")?;
-            service.busy = true;
-            Ok((service.generation, recognizer, service.stream_language))
-        }
-    }
+            ServiceBackend::External { port, ready } => {
+                if !*ready {
+                    anyhow::bail!(SERVICE_STARTING_MESSAGE);
+                }
+                if service.busy {
+                    anyhow::bail!(TRANSCRIBE_BUSY_MESSAGE);
+                }
+                service.busy = true;
+                DecodeSlot::External {
+                    generation: service.generation,
+                    port: *port,
+                }
+            }
+        },
+    };
+    drop(guard);
+    Ok(slot)
 }
 
 /// 归还识别器：只认同代且槽空；期间被停止（无槽）或换新（新代际）则直接释放旧句柄，
@@ -418,8 +592,11 @@ fn put_back_recognizer(generation: u64, recognizer: sherpa_onnx::OfflineRecogniz
         && service.generation == generation
     {
         service.busy = false;
-        if service.recognizer.is_none() {
-            service.recognizer = Some(recognizer);
+        if let ServiceBackend::Internal {
+            recognizer: slot, ..
+        } = &mut service.backend
+        {
+            slot.get_or_insert(recognizer);
         }
     }
 }
@@ -434,12 +611,20 @@ fn clear_busy(generation: u64) {
     }
 }
 
+/// 后端是否已就绪（运行中）：内部看识别器是否就位，外部看 `ready` 标记
+const fn is_backend_ready(backend: &ServiceBackend) -> bool {
+    match backend {
+        ServiceBackend::Internal { recognizer, .. } => recognizer.is_some(),
+        ServiceBackend::External { ready, .. } => *ready,
+    }
+}
+
 /// 清启动占位：只认“同代且仍为空槽”（加载中）；停启交错产生的新占位不受旧失败牵连
 fn clear_placeholder(generation: u64) {
     let mut guard = lock_service();
-    let is_mine = guard
-        .as_ref()
-        .is_some_and(|service| service.generation == generation && service.recognizer.is_none());
+    let is_mine = guard.as_ref().is_some_and(|service| {
+        service.generation == generation && !is_backend_ready(&service.backend)
+    });
     if is_mine {
         *guard = None;
     }
@@ -555,7 +740,40 @@ async fn transcribe_file_inner(
     )
     .await
     .map_err(|_| busy_or_stopped_error())?;
-    let (generation, recognizer, stream_language) = take_recognizer()?;
+    match take_decode_slot()? {
+        DecodeSlot::Internal {
+            generation,
+            recognizer,
+            stream_language,
+        } => {
+            transcribe_internal(
+                app,
+                canonical,
+                generation,
+                recognizer,
+                stream_language,
+                post_process,
+            )
+            .await
+        }
+        DecodeSlot::External { generation, port } => {
+            transcribe_external(app, &canonical, generation, port, post_process).await
+        }
+    }
+}
+
+/// 内部模式转写：识别器取出独占使用后按代归还；取消/超时分离等待其结束再归还
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+async fn transcribe_internal(
+    app: &tauri::AppHandle,
+    canonical: std::path::PathBuf,
+    generation: u64,
+    recognizer: sherpa_onnx::OfflineRecognizer,
+    stream_language: Option<&'static str>,
+    post_process: bool,
+) -> anyhow::Result<TranscribeResult> {
+    use anyhow::Context;
+
     // 进入解码等待即清掉陈旧取消（停服务残留的置位不应误杀下一次转写）
     take_transcribe_cancel();
     // 取消感知的等待：onnx 解码不可中断，取消/超时均分离等待其结束再按代归还，
@@ -602,19 +820,80 @@ async fn transcribe_file_inner(
     if !post_process {
         return outcome;
     }
-    // 词库后处理 + 句末剥离：与投递文本同口径，记录、回显、投递三处一致
-    outcome.map(|mut result| {
-        let (text, mut segments) =
-            crate::features::lexicon::apply_lexicon_detailed(app, &result.text);
-        let strip_set = crate::cores::config::load_strip_trailing_punct(app);
-        let stripped = crate::features::output::strip_trailing_punct(&text, &strip_set);
-        crate::features::lexicon::truncate_segments(&mut segments, stripped.chars().count());
-        let stripped_len = stripped.len();
-        result.text = text;
-        result.text.truncate(stripped_len);
-        result.segments = segments;
-        result
-    })
+    outcome.map(|result| post_process_result(app, result))
+}
+
+/// 外部模式转写：经本机回环 `ws` 取文本，再套同一后处理链；
+///
+/// 取消/超时口径与内部模式一致（取消 200ms 内响应、超时按常量），忙位按代清理
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+async fn transcribe_external(
+    app: &tauri::AppHandle,
+    path: &std::path::Path,
+    generation: u64,
+    port: u16,
+    post_process: bool,
+) -> anyhow::Result<TranscribeResult> {
+    use anyhow::Context;
+
+    // 进入解码等待即清掉陈旧取消（停服务残留的置位不应误杀下一次转写）
+    take_transcribe_cancel();
+    let owned = path.to_owned();
+    let mut task =
+        tokio::spawn(async move { crate::features::external::decode_file(port, &owned).await });
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(TRANSCRIBE_TIMEOUT_SECS))
+        .unwrap_or_else(std::time::Instant::now);
+    let decoded = loop {
+        tokio::select! {
+            join = &mut task => {
+                break join.context("transcribe task failed")??;
+            }
+            () = tokio::time::sleep(std::time::Duration::from_millis(TRANSCRIBE_CANCEL_POLL_MS)) => {
+                if take_transcribe_cancel() {
+                    tokio::spawn(async move {
+                        let _ = task.await;
+                        clear_busy(generation);
+                    });
+                    return Err(anyhow::anyhow!(TRANSCRIBE_CANCELLED_MESSAGE));
+                }
+                if std::time::Instant::now() >= deadline {
+                    tokio::spawn(async move {
+                        let _ = task.await;
+                        clear_busy(generation);
+                    });
+                    return Err(busy_or_stopped_error()).context(format!(
+                        "transcription timed out after {TRANSCRIBE_TIMEOUT_SECS}s"
+                    ));
+                }
+            }
+        }
+    };
+    // 占位释放：按代清忙；期间被停止则槽已空，清忙为无操作
+    clear_busy(generation);
+    let result = TranscribeResult {
+        text: decoded.text,
+        audio_sec: decoded.audio_sec,
+        infer_ms: decoded.infer_ms,
+        segments: Vec::new(),
+    };
+    if !post_process {
+        return Ok(result);
+    }
+    Ok(post_process_result(app, result))
+}
+
+/// 词库后处理 + 句末剥离：与投递文本同口径，记录、回显、投递三处一致；内外模式共用
+fn post_process_result(app: &tauri::AppHandle, mut result: TranscribeResult) -> TranscribeResult {
+    let (text, mut segments) = crate::features::lexicon::apply_lexicon_detailed(app, &result.text);
+    let strip_set = crate::cores::config::load_strip_trailing_punct(app);
+    let stripped = crate::features::output::strip_trailing_punct(&text, &strip_set);
+    crate::features::lexicon::truncate_segments(&mut segments, stripped.chars().count());
+    let stripped_len = stripped.len();
+    result.text = text;
+    result.text.truncate(stripped_len);
+    result.segments = segments;
+    result
 }
 
 /// 转写音频文件；移动端无此能力，直接返回错误
@@ -697,12 +976,12 @@ mod tests {
     }
 
     #[test]
-    fn take_recognizer_rejects_stopped_service() {
-        // 全局单例被其他用例污染（运行中）时跳过：取出会真的拿走识别器
+    fn take_decode_slot_rejects_stopped_service() {
+        // 全局单例被其他用例污染（运行中）时跳过：取出会真的占住解码位
         if status().state != ServiceState::Stopped {
             return;
         }
-        let Err(err) = take_recognizer() else {
+        let Err(err) = take_decode_slot() else {
             panic!("stopped service must refuse take")
         };
         assert!(format!("{err:#}").contains("service is not running"));

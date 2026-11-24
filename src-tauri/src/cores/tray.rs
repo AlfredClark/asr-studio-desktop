@@ -70,14 +70,20 @@ fn build_menu(app: &AppHandle) -> anyhow::Result<tauri::menu::Menu<tauri::Wry>> 
     Ok(MenuBuilder::new(app).items(&[&toggle, &quit]).build()?)
 }
 
-/// 托盘菜单事件：切换主窗口显隐，真退出进程（`hide` 只藏窗口，不断进程）
+/// 托盘菜单事件：切换主窗口显隐，真退出进程（`hide` 只藏窗口，不断进程）；
+///
+/// 退出走 `quit_app` 统一漏斗：先查杀受管外部子进程（`cores` 不得依赖 `features`，
+/// 此处只做进程级兜底；服务状态清理由命令层 `quit_app` 的停服务覆盖）
 /// 回调签名由 `TrayIconBuilder` 固定，`event` 按值传递无法避免
 #[allow(clippy::needless_pass_by_value)]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     match event.id().as_ref() {
         MENU_TOGGLE => toggle_main_window(app),
-        MENU_QUIT => app.exit(0),
+        MENU_QUIT => {
+            crate::cores::supervised_child::kill_child();
+            crate::cores::system::quit_app(app);
+        }
         other => log::warn!("unhandled tray menu item: {other}"),
     }
 }

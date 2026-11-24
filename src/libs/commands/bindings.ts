@@ -124,7 +124,10 @@ export const commands = {
 	isShortcutRegistered: (shortcut: string) => typedError<boolean, CommandError>(__TAURI_INVOKE("is_shortcut_registered", { shortcut })),
 	/**  采集运行平台信息；单项缺失时回落 `"unknown"`，绝不抛错 */
 	getSystemInfo: () => typedError<SystemInfo, CommandError>(__TAURI_INVOKE("get_system_info")),
-	/**  真退出应用进程；调用后进程结束，结果体永不可达（按 `CommandResult<()>` 保持命令类型统一） */
+	/**
+	 *  真退出应用进程；先停识别服务（外部服务进程随之查杀，不留孤儿），再退出；
+	 *  调用后进程结束，结果体永不可达（按 `CommandResult<()>` 保持命令类型统一）
+	 */
 	quitApp: () => typedError<null, CommandError>(__TAURI_INVOKE("quit_app")),
 	/**  在系统文件管理器中打开日志目录 */
 	openLogDir: () => typedError<null, CommandError>(__TAURI_INVOKE("open_log_dir")),
@@ -260,6 +263,16 @@ export type ConfigPatch = {
 	pinyin_correction_apply_directive?: boolean | null,
 	/**  识别语言（自动 / 中文） */
 	asr_language?: AsrLanguage | null,
+	/**  服务模式（内部 / 本机外部服务） */
+	service_mode?: ServiceMode | null,
+	/**  外部服务程序路径（空串表示未指定） */
+	service_server_path?: string | null,
+	/**  外部服务端口 */
+	service_port?: number | null,
+	/**  外部服务线程数（`0` 表示自动） */
+	service_threads?: number | null,
+	/**  外部服务推理后端 */
+	service_provider?: ServiceProvider | null,
 };
 
 /**
@@ -326,6 +339,16 @@ export type Config_Deserialize = {
 	pinyin_correction_apply_directive?: boolean,
 	/**  识别语言：缺失、类型不符或无法识别时回落中文，绝不让整包解析失败 */
 	asr_language?: AsrLanguage,
+	/**  服务模式：缺失、类型不符或无法识别时回落内部服务，绝不让整包解析失败 */
+	service_mode?: ServiceMode,
+	/**  外部服务程序路径：缺失或类型不符时回落空串（未指定） */
+	service_server_path?: string,
+	/**  外部服务端口：缺失、类型不符或非法时回落默认端口 */
+	service_port?: number,
+	/**  外部服务线程数：`0` 表示跟随内部模式（可用核数减一）；缺失或脏值回落 `0` */
+	service_threads?: number,
+	/**  外部服务推理后端：缺失、类型不符或无法识别时回落 CPU */
+	service_provider?: ServiceProvider,
 };
 
 /**
@@ -392,6 +415,16 @@ export type Config_Serialize = {
 	pinyin_correction_apply_directive: boolean,
 	/**  识别语言：缺失、类型不符或无法识别时回落中文，绝不让整包解析失败 */
 	asr_language: AsrLanguage,
+	/**  服务模式：缺失、类型不符或无法识别时回落内部服务，绝不让整包解析失败 */
+	service_mode: ServiceMode,
+	/**  外部服务程序路径：缺失或类型不符时回落空串（未指定） */
+	service_server_path: string,
+	/**  外部服务端口：缺失、类型不符或非法时回落默认端口 */
+	service_port: number,
+	/**  外部服务线程数：`0` 表示跟随内部模式（可用核数减一）；缺失或脏值回落 `0` */
+	service_threads: number,
+	/**  外部服务推理后端：缺失、类型不符或无法识别时回落 CPU */
+	service_provider: ServiceProvider,
 };
 
 /**  指令：触发文本命中后回放整套按键事件 */
@@ -620,6 +653,34 @@ export type ReplayReport = {
 	executed: number,
 };
 
+/**  服务后端种类：状态快照用，前端据此渲染徽标 */
+export type ServiceBackendKind = 
+/**  应用内嵌识别器 */
+"internal" | 
+/**  用户本机的外部服务进程 */
+"external";
+
+/**
+ *  服务模式：落盘值为 `snake_case` 字符串，未知值回落内部服务
+ * 
+ *  内部模式用应用内嵌的 `sherpa-onnx` 识别器；外部模式拉起用户指定的
+ *  `sherpa-onnx-offline-websocket-server` 进程并经本机回环转写（GPU 加速走这里）。
+ */
+export type ServiceMode = 
+/**  应用内嵌识别器：默认选项，开箱即用 */
+"internal" | 
+/**  用户本机的外部服务进程：需另配程序路径与端口 */
+"external";
+
+/**  外部服务的推理后端：落盘值为小写字符串，未知值回落 CPU */
+export type ServiceProvider = 
+/**  CPU 推理：默认选项，全平台可用 */
+"cpu" | 
+/**  NVIDIA CUDA 推理：需外部服务程序自带 CUDA 支持 */
+"cuda" | 
+/**  Apple `CoreML` 推理：仅 macOS 有效 */
+"coreml";
+
 /**  服务状态：启动中与运行中互斥，同一时刻只加载一个模型 */
 export type ServiceState = 
 /**  未加载任何模型 */
@@ -639,6 +700,8 @@ export type ServiceStatus = {
 	display_name: string | null,
 	/**  模型加载耗时毫秒（仅运行中有效） */
 	load_ms: number | null,
+	/**  当前后端；停止态回落内部服务，仅展示用 */
+	backend: ServiceBackendKind,
 };
 
 /**

@@ -37,6 +37,8 @@ specta = "=2.0.0-rc.25"
 specta-typescript = "=0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["javascript", "typescript"] }
 anyhow = "1.0.104"
+# 外部语音服务 ws 客户端：只连本机回环 `ws://`，无 TLS 需求，用默认特性即可
+tokio-tungstenite = "0.30"
 tauri-plugin-system-fonts = "2.0.2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
