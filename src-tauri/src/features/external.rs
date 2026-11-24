@@ -28,8 +28,11 @@ const FUNASR_TEMPERATURE: &str = "1e-06";
 const FUNASR_TOP_P: &str = "0.8";
 /// `FunASR Nano` 随机种子：与内嵌配置同值
 const FUNASR_SEED: u32 = 42;
-/// `Qwen3-ASR` 生成长度：与内嵌配置同值（服务端默认 128 会截断长音频）
-const QWEN3_MAX_NEW_TOKENS: u32 = 1024;
+/// `Qwen3-ASR` 生成长度：短音频不及时吐 EOS 会拖出上千 token
+/// （1.7B 在 4070 上约 7 秒），256 覆盖约 30 秒中文语音（远超语音指令与测试录制
+/// 的典型长度），把最坏情况收敛到约 2 秒；超长音频会被截断（已知取舍）。
+/// 服务端默认 128 更激进，内嵌与外部保持一致。
+const QWEN3_MAX_NEW_TOKENS: u32 = 256;
 /// `Qwen3-ASR` 总长度上限：与内嵌配置同值（服务端默认 512 不够用）
 const QWEN3_MAX_TOTAL_LEN: u32 = 8192;
 /// `Qwen3-ASR` 采样温度：显式传入，免受服务端默认值漂移影响
@@ -381,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn qwen3_args_enlarge_generation_limits() {
+    fn qwen3_args_bound_generation_length() {
         let args = build_server_args(
             spec_of("qwen3-1.7b-int8"),
             std::path::Path::new("/models/qwen3"),
@@ -399,7 +402,7 @@ mod tests {
             "--qwen3-asr-conv-frontend=/models/qwen3/conv_frontend.onnx"
         ));
         assert!(has("--qwen3-asr-tokenizer=/models/qwen3/tokenizer"));
-        assert!(has("--qwen3-asr-max-new-tokens=1024"));
+        assert!(has("--qwen3-asr-max-new-tokens=256"));
         assert!(has("--qwen3-asr-max-total-len=8192"));
     }
 

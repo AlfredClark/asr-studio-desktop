@@ -452,7 +452,8 @@ pub fn sync_directive_shortcut(app: &tauri::AppHandle) {
 ///
 /// `SenseVoice` 的模型文件与逆文本正则化按 `ModelSpec` 取值（int8/全精度与标点支持因包而异）。
 /// `SenseVoice` / `FunASR` Nano 的语言在加载时定格（Qwen3 走按 stream 约束，见 `transcribe_blocking`）。
-/// qwen3 的生成长度按评测结论放大（默认 128 会截断长音频）。
+/// qwen3 的生成长度取 256（默认 128 会截断长音频，1024 则短音频拖尾时跑满约 7 秒）：
+/// 覆盖约 30 秒中文语音，超长音频会被截断（已知取舍，与外部服务一致）。
 fn build_recognizer_config(
     spec: &'static crate::features::models::ModelSpec,
     dir: &std::path::Path,
@@ -493,7 +494,7 @@ fn build_recognizer_config(
                 decoder: file("decoder.int8.onnx"),
                 tokenizer: file("tokenizer"),
                 max_total_len: 8192,
-                max_new_tokens: 1024,
+                max_new_tokens: 256,
                 ..Default::default()
             };
         }
