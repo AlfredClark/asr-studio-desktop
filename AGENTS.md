@@ -79,7 +79,7 @@ pnpm format → pnpm validate → 自查安全红线 → 汇报修改结果 → 
 **任务开始前：**
 
 1. 通读本文件，并按文档索引读取对应任务文档；
-2. 用 `git status / git diff` 确认工作区干净，从最新 `main` 拉分支 `feat/* | fix/* | chore/*`。
+2. 用 `git status / git diff` 确认工作区干净并同步最新 `main`；默认直接在 `main` 上修改，仅多人开发或多智能体协作时再从 `main` 拉分支 `feat/* | fix/* | chore/*`。
 
 **任务执行中：**
 

@@ -72,7 +72,7 @@ pnpm release                       # bumpp 联动升级三处版本号（package
 
 ## 发版流程
 
-必须由开发者手动发版：`main` 受保护 → 提 PR → CI 全绿 → Code Review → Squash 合并 → `pnpm release` 联动三处版本号（`package.json` + `src-tauri/tauri.conf.json` + `src-tauri/Cargo.toml`）→ 打 tag `vX.Y.Z`（须与 `tauri.conf.json` 一致）→ `release.yml` 自动打包 → `pnpm changelog` 生成日志。
+必须由开发者手动发版：默认直接在 `main` 上开发（`pnpm validate` 全绿后提交）；发版时 `pnpm release` 联动三处版本号（`package.json` + `src-tauri/tauri.conf.json` + `src-tauri/Cargo.toml`）→ 打 tag `vX.Y.Z`（须与 `tauri.conf.json` 一致）→ `release.yml` 自动打包 → `pnpm changelog` 生成日志。多人开发或多智能体协作时走分支 + PR（CI 全绿 → Code Review → Squash 合并）。
 
 发布流水线会校验三处版本号与 `v*` 标签一致。
 
